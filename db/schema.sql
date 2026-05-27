@@ -120,6 +120,9 @@ create table suppliers (
   last_contact    date,
   next_contact    date,
   notes           text,
+  -- Contact
+  contact_email     text,             -- primary contact for orders/replies
+  account_team_email text,            -- hyperscaler account team (AWS TAM, GCP CE, etc)
   -- Due diligence
   opencorporates_id text,
   sanctions_clear   boolean default true,
@@ -280,6 +283,8 @@ create table hyperscaler_positions (
   branch_id       uuid references branches(id),
   provider        text not null,   -- 'AWS' | 'GCP' | 'Azure'
   period          text not null,   -- '2026-05'
+  -- Link to contract (optional — hyperscaler EDP/CUD agreements)
+  contract_id     uuid references contracts(id),
   -- Commitment
   committed_eur   numeric(15,2),
   commitment_type text,            -- 'EDP' | 'CUD' | 'Reservation'

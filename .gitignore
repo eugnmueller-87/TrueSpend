@@ -32,6 +32,12 @@ logs/
 
 # Node
 node_modules/
+intake/dist/
+intake/.vite/
+
+# Docker volumes (if accidentally created locally)
+infra/n8n-data/
+infra/grafana-data/
 
 # Secrets
 *.pem
