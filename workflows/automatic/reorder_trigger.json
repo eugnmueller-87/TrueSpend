@@ -1,0 +1,460 @@
+{
+  "name": "TrueSpend — Automatic Reorder Trigger",
+  "description": "Runs every 6 hours. Detects when consumable items or recurring purchases need reordering based on consumption patterns, contract terms, and stock signals. For hardware bulk reorders within existing framework contracts (Dell, Lenovo, Apple) — checks: is this within existing contract terms? budget headroom? supplier health green? If all yes → places order automatically via supplier email + logs PO to Supabase. If one signal uncertain → one-touch Slack confirm to manager. Novel or above threshold → escalate Jira.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 */6 * * *" }]
+        }
+      },
+      "position": [0, 300]
+    },
+    {
+      "id": "fetch_reorder_candidates",
+      "name": "Fetch Reorder Candidates",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "contracts",
+        "filterType": "string",
+        "filters": "category.in.(hardware,saas_license)&auto_renew.eq.true&status.eq.active"
+      },
+      "position": [200, 300]
+    },
+    {
+      "id": "fetch_budget_signals",
+      "name": "Fetch Budget Spend Signals",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "budget_positions",
+        "filterType": "string",
+        "filters": "category.in.(hardware,saas_license)&period.eq.={{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}"
+      },
+      "position": [200, 480]
+    },
+    {
+      "id": "check_any_candidates",
+      "name": "Any Reorder Candidates?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $node['Fetch Reorder Candidates'].json.length }}", "operation": "larger", "value2": 0 }]
+        }
+      },
+      "position": [400, 300]
+    },
+    {
+      "id": "loop_contracts",
+      "name": "Loop Each Contract",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": { "batchSize": 1 },
+      "position": [600, 300]
+    },
+    {
+      "id": "fetch_supplier_health",
+      "name": "Fetch Supplier Health",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "suppliers",
+        "filterType": "string",
+        "filters": "id.eq.={{ $json.supplier_id }}"
+      },
+      "position": [800, 200]
+    },
+    {
+      "id": "fetch_contract_budget",
+      "name": "Fetch Contract Budget Position",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "budget_positions",
+        "filterType": "string",
+        "filters": "branch_id.eq.={{ $json.branch_id }}&period.eq.={{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}&category.eq.={{ $json.category }}"
+      },
+      "position": [800, 360]
+    },
+    {
+      "id": "fetch_contract_terms",
+      "name": "Fetch Contract Terms",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "contracts",
+        "filterType": "string",
+        "filters": "id.eq.={{ $json.id }}"
+      },
+      "position": [800, 520]
+    },
+    {
+      "id": "call_claude",
+      "name": "Claude — Reason on Reorder",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",        "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type",      "value": "application/json" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system. You reason across contract terms, consumption signals, supplier health, and budget headroom to determine whether a reorder is needed. You act immediately when all signals are green. You draft supplier emails for purchase orders in professional procurement language. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess whether this contract requires a reorder and produce a complete disposition.\\n\\nCONTRACT:\\n{{ JSON.stringify($node['Loop Each Contract'].json) }}\\n\\nSUPPLIER HEALTH:\\n{{ JSON.stringify($node['Fetch Supplier Health'].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node['Fetch Contract Budget Position'].json) }}\\n\\nSIGNAL: Budget positions indicate potential reorder need where spend > 80% of budget for this category. Evaluate: (1) Is reorder within existing framework contract terms? (2) Is there budget headroom? (3) Is supplier health green? (4) Is the quantity and timing reasonable given consumption patterns?\\n\\nReturn JSON exactly:\\n{\\n  \\\"disposition\\\": \\\"auto_execute\\\" | \\\"one_touch\\\" | \\\"escalate\\\",\\n  \\\"confidence\\\": 0.00-1.00,\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"reorder_recommended\\\": true | false,\\n  \\\"quantity\\\": number,\\n  \\\"unit_type\\\": \\\"string\\\",\\n  \\\"estimated_value\\\": number,\\n  \\\"supplier_email_subject\\\": \\\"string\\\",\\n  \\\"supplier_email_body\\\": \\\"string\\\",\\n  \\\"order_reference\\\": \\\"string\\\"\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [1000, 360]
+    },
+    {
+      "id": "parse_claude_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "disposition",             "value": "={{ JSON.parse($json.content[0].text).disposition }}" },
+            { "name": "confidence",              "value": "={{ JSON.parse($json.content[0].text).confidence }}" },
+            { "name": "reasoning",               "value": "={{ JSON.parse($json.content[0].text).reasoning }}" },
+            { "name": "reorder_recommended",     "value": "={{ JSON.parse($json.content[0].text).reorder_recommended }}" },
+            { "name": "quantity",                "value": "={{ JSON.parse($json.content[0].text).quantity }}" },
+            { "name": "unit_type",               "value": "={{ JSON.parse($json.content[0].text).unit_type }}" },
+            { "name": "estimated_value",         "value": "={{ JSON.parse($json.content[0].text).estimated_value }}" },
+            { "name": "supplier_email_subject",  "value": "={{ JSON.parse($json.content[0].text).supplier_email_subject }}" },
+            { "name": "supplier_email_body",     "value": "={{ JSON.parse($json.content[0].text).supplier_email_body }}" },
+            { "name": "order_reference",         "value": "={{ JSON.parse($json.content[0].text).order_reference }}" }
+          ]
+        }
+      },
+      "position": [1200, 360]
+    },
+    {
+      "id": "check_reorder_needed",
+      "name": "Reorder Recommended?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json.reorder_recommended }}", "operation": "true" }]
+        }
+      },
+      "position": [1400, 360]
+    },
+    {
+      "id": "route_disposition",
+      "name": "Route by Disposition",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.disposition }}",
+        "rules": {
+          "rules": [
+            { "value2": "auto_execute", "outputIndex": 0 },
+            { "value2": "one_touch",    "outputIndex": 1 },
+            { "value2": "escalate",     "outputIndex": 2 }
+          ]
+        }
+      },
+      "position": [1600, 360]
+    },
+
+    {
+      "id": "send_order_email",
+      "name": "Send Order Email to Supplier",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail":   "={{ $node['Fetch Supplier Health'].json[0]?.contact_email }}",
+        "subject":   "={{ $node['Parse Claude Response'].json.supplier_email_subject }}",
+        "text":      "={{ $node['Parse Claude Response'].json.supplier_email_body }}"
+      },
+      "position": [1800, 160]
+    },
+    {
+      "id": "log_order_email",
+      "name": "Log Order Email to supplier_emails",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "supplier_emails",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "supplier_id",   "fieldValue": "={{ $node['Loop Each Contract'].json.supplier_id }}" },
+            { "fieldId": "direction",     "fieldValue": "outbound" },
+            { "fieldId": "subject",       "fieldValue": "={{ $node['Parse Claude Response'].json.supplier_email_subject }}" },
+            { "fieldId": "body_summary",  "fieldValue": "=Reorder placed: {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }} — Ref: {{ $node['Parse Claude Response'].json.order_reference }}" },
+            { "fieldId": "order_reference","fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
+            { "fieldId": "received_at",   "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [2000, 160]
+    },
+    {
+      "id": "create_ticket_auto",
+      "name": "Create Ticket — Auto Closed",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "tickets",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "reference",    "fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
+            { "fieldId": "source",       "fieldValue": "automatic" },
+            { "fieldId": "status",       "fieldValue": "closed" },
+            { "fieldId": "title",        "fieldValue": "=Reorder: {{ $node['Loop Each Contract'].json.name }} — {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}" },
+            { "fieldId": "amount",       "fieldValue": "={{ $node['Parse Claude Response'].json.estimated_value }}" },
+            { "fieldId": "currency",     "fieldValue": "={{ $node['Loop Each Contract'].json.currency || 'EUR' }}" },
+            { "fieldId": "closed_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [2200, 160]
+    },
+    {
+      "id": "write_decision_auto",
+      "name": "Write Decision — Auto Execute",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "ticket_id",      "fieldValue": "={{ $node['Create Ticket — Auto Closed'].json.id }}" },
+            { "fieldId": "contract_id",    "fieldValue": "={{ $node['Loop Each Contract'].json.id }}" },
+            { "fieldId": "disposition",    "fieldValue": "auto_execute" },
+            { "fieldId": "confidence",     "fieldValue": "={{ $node['Parse Claude Response'].json.confidence }}" },
+            { "fieldId": "reasoning",      "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
+            { "fieldId": "recommendation", "fieldValue": "=Auto-reorder placed: {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }} from {{ $node['Loop Each Contract'].json.supplier_name }}. Value: {{ $node['Parse Claude Response'].json.estimated_value }} {{ $node['Loop Each Contract'].json.currency }}. Ref: {{ $node['Parse Claude Response'].json.order_reference }}" },
+            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" },
+            { "fieldId": "actioned_by",    "fieldValue": "agent" },
+            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [2400, 160]
+    },
+
+    {
+      "id": "create_ticket_pending",
+      "name": "Create Ticket — Pending Confirm",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "tickets",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "reference",    "fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
+            { "fieldId": "source",       "fieldValue": "automatic" },
+            { "fieldId": "status",       "fieldValue": "pending_confirm" },
+            { "fieldId": "title",        "fieldValue": "=[ONE-TOUCH] Reorder: {{ $node['Loop Each Contract'].json.name }} — {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}" },
+            { "fieldId": "amount",       "fieldValue": "={{ $node['Parse Claude Response'].json.estimated_value }}" },
+            { "fieldId": "currency",     "fieldValue": "={{ $node['Loop Each Contract'].json.currency || 'EUR' }}" }
+          ]
+        }
+      },
+      "position": [1800, 400]
+    },
+    {
+      "id": "write_decision_one_touch",
+      "name": "Write Decision — One Touch",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "ticket_id",      "fieldValue": "={{ $node['Create Ticket — Pending Confirm'].json.id }}" },
+            { "fieldId": "contract_id",    "fieldValue": "={{ $node['Loop Each Contract'].json.id }}" },
+            { "fieldId": "disposition",    "fieldValue": "one_touch" },
+            { "fieldId": "confidence",     "fieldValue": "={{ $node['Parse Claude Response'].json.confidence }}" },
+            { "fieldId": "reasoning",      "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
+            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" }
+          ]
+        }
+      },
+      "position": [2000, 400]
+    },
+    {
+      "id": "fetch_manager_one_touch",
+      "name": "Fetch Manager for One-Touch",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "managers",
+        "filterType": "string",
+        "filters": "branches.cs.={{ '{\"' + $node['Loop Each Contract'].json.branch_id + '\"}' }}"
+      },
+      "position": [2000, 560]
+    },
+    {
+      "id": "send_one_touch_slack",
+      "name": "Send One-Touch to Manager — Slack",
+      "type": "n8n-nodes-base.slack",
+      "parameters": {
+        "channel": "={{ $node['Fetch Manager for One-Touch'].json[0]?.slack_id || $node['Fetch Manager for One-Touch'].json[0]?.email }}",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "textUi": { "text": "Reorder needs your go-ahead", "type": "plain_text" }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*Contract:* {{ $node['Loop Each Contract'].json.name }}\n*Supplier:* {{ $node['Loop Each Contract'].json.supplier_name }}\n*Quantity:* {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}\n*Est. Value:* {{ $node['Parse Claude Response'].json.estimated_value }} {{ $node['Loop Each Contract'].json.currency || 'EUR' }}\n*Order Ref:* {{ $node['Parse Claude Response'].json.order_reference }}\n*Confidence:* {{ $node['Parse Claude Response'].json.confidence }}"
+              }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*Agent reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}"
+              }
+            },
+            {
+              "type": "actions",
+              "elementsUi": {
+                "elementsValues": [
+                  { "type": "button", "textUi": { "text": "Approve & Place Order" }, "style": "primary", "value": "={{ 'approve:' + $node['Create Ticket — Pending Confirm'].json.id }}" },
+                  { "type": "button", "textUi": { "text": "Reject"                }, "style": "danger",  "value": "={{ 'reject:' + $node['Create Ticket — Pending Confirm'].json.id }}"  },
+                  { "type": "button", "textUi": { "text": "Full Brief"            },                     "value": "={{ 'brief:' + $node['Create Ticket — Pending Confirm'].json.id }}"   }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "position": [2200, 480]
+    },
+
+    {
+      "id": "create_ticket_escalated",
+      "name": "Create Ticket — Escalated",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "tickets",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "reference",    "fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
+            { "fieldId": "source",       "fieldValue": "automatic" },
+            { "fieldId": "status",       "fieldValue": "escalated" },
+            { "fieldId": "title",        "fieldValue": "=[ESCALATE] Reorder: {{ $node['Loop Each Contract'].json.name }} — {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}" },
+            { "fieldId": "amount",       "fieldValue": "={{ $node['Parse Claude Response'].json.estimated_value }}" },
+            { "fieldId": "currency",     "fieldValue": "={{ $node['Loop Each Contract'].json.currency || 'EUR' }}" }
+          ]
+        }
+      },
+      "position": [1800, 620]
+    },
+    {
+      "id": "write_decision_escalate",
+      "name": "Write Decision — Escalate",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "ticket_id",   "fieldValue": "={{ $node['Create Ticket — Escalated'].json.id }}" },
+            { "fieldId": "contract_id", "fieldValue": "={{ $node['Loop Each Contract'].json.id }}" },
+            { "fieldId": "disposition", "fieldValue": "escalate" },
+            { "fieldId": "confidence",  "fieldValue": "={{ $node['Parse Claude Response'].json.confidence }}" },
+            { "fieldId": "reasoning",   "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
+            { "fieldId": "model_used",  "fieldValue": "claude-sonnet-4-6" }
+          ]
+        }
+      },
+      "position": [2000, 620]
+    },
+    {
+      "id": "create_jira_escalation",
+      "name": "Create Jira Escalation Ticket",
+      "type": "n8n-nodes-base.jira",
+      "parameters": {
+        "operation": "create",
+        "project": "PROC",
+        "issueType": "Task",
+        "priority": "High",
+        "summary": "={{ '[REORDER-ESCALATE] ' + $node['Loop Each Contract'].json.name + ' — ' + $node['Loop Each Contract'].json.supplier_name }}",
+        "description": "=*Contract:* {{ $node['Loop Each Contract'].json.name }}\n*Supplier:* {{ $node['Loop Each Contract'].json.supplier_name }}\n*Category:* {{ $node['Loop Each Contract'].json.category }}\n*Recommended Quantity:* {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}\n*Estimated Value:* {{ $node['Parse Claude Response'].json.estimated_value }} {{ $node['Loop Each Contract'].json.currency }}\n*Order Reference:* {{ $node['Parse Claude Response'].json.order_reference }}\n\n*Agent Reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}\n\n*Confidence:* {{ $node['Parse Claude Response'].json.confidence }}\n\n*Suggested email to supplier (pending approval):*\nSubject: {{ $node['Parse Claude Response'].json.supplier_email_subject }}\n\n{{ $node['Parse Claude Response'].json.supplier_email_body }}"
+      },
+      "position": [2200, 620]
+    },
+    {
+      "id": "update_ticket_jira_key",
+      "name": "Update Ticket with Jira Key",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "update",
+        "tableId": "tickets",
+        "filters": "id.eq.={{ $node['Create Ticket — Escalated'].json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "jira_key", "fieldValue": "={{ $json.key }}" },
+            { "fieldId": "jira_url", "fieldValue": "={{ $json.self }}" }
+          ]
+        }
+      },
+      "position": [2400, 620]
+    },
+
+    {
+      "id": "no_candidates",
+      "name": "Log — No Reorders Needed",
+      "type": "n8n-nodes-base.noOp",
+      "position": [600, 500]
+    },
+    {
+      "id": "no_reorder",
+      "name": "Log — Reorder Not Recommended",
+      "type": "n8n-nodes-base.noOp",
+      "position": [1600, 600]
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": { "main": [[{ "node": "Fetch Reorder Candidates", "type": "main", "index": 0 }]] },
+    "Fetch Reorder Candidates": { "main": [[{ "node": "Any Reorder Candidates?", "type": "main", "index": 0 }]] },
+    "Any Reorder Candidates?": { "main": [
+      [{ "node": "Loop Each Contract",       "type": "main", "index": 0 }],
+      [{ "node": "Log — No Reorders Needed", "type": "main", "index": 0 }]
+    ]},
+    "Loop Each Contract": { "main": [[{ "node": "Fetch Supplier Health", "type": "main", "index": 0 }]] },
+    "Fetch Supplier Health": { "main": [[{ "node": "Fetch Contract Budget Position", "type": "main", "index": 0 }]] },
+    "Fetch Contract Budget Position": { "main": [[{ "node": "Fetch Contract Terms", "type": "main", "index": 0 }]] },
+    "Fetch Contract Terms": { "main": [[{ "node": "Claude — Reason on Reorder", "type": "main", "index": 0 }]] },
+    "Claude — Reason on Reorder": { "main": [[{ "node": "Parse Claude Response", "type": "main", "index": 0 }]] },
+    "Parse Claude Response": { "main": [[{ "node": "Reorder Recommended?", "type": "main", "index": 0 }]] },
+    "Reorder Recommended?": { "main": [
+      [{ "node": "Route by Disposition",           "type": "main", "index": 0 }],
+      [{ "node": "Log — Reorder Not Recommended",  "type": "main", "index": 0 }]
+    ]},
+    "Route by Disposition": { "main": [
+      [{ "node": "Send Order Email to Supplier",    "type": "main", "index": 0 }],
+      [{ "node": "Create Ticket — Pending Confirm", "type": "main", "index": 0 }],
+      [{ "node": "Create Ticket — Escalated",       "type": "main", "index": 0 }]
+    ]},
+    "Send Order Email to Supplier": { "main": [[{ "node": "Log Order Email to supplier_emails", "type": "main", "index": 0 }]] },
+    "Log Order Email to supplier_emails": { "main": [[{ "node": "Create Ticket — Auto Closed", "type": "main", "index": 0 }]] },
+    "Create Ticket — Auto Closed": { "main": [[{ "node": "Write Decision — Auto Execute", "type": "main", "index": 0 }]] },
+    "Create Ticket — Pending Confirm": { "main": [[{ "node": "Write Decision — One Touch", "type": "main", "index": 0 }]] },
+    "Write Decision — One Touch": { "main": [[{ "node": "Fetch Manager for One-Touch", "type": "main", "index": 0 }]] },
+    "Fetch Manager for One-Touch": { "main": [[{ "node": "Send One-Touch to Manager — Slack", "type": "main", "index": 0 }]] },
+    "Create Ticket — Escalated": { "main": [[{ "node": "Write Decision — Escalate", "type": "main", "index": 0 }]] },
+    "Write Decision — Escalate": { "main": [[{ "node": "Create Jira Escalation Ticket", "type": "main", "index": 0 }]] },
+    "Create Jira Escalation Ticket": { "main": [[{ "node": "Update Ticket with Jira Key", "type": "main", "index": 0 }]] }
+  }
+}

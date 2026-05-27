@@ -1,0 +1,374 @@
+{
+  "name": "TrueSpend — Hyperscaler Daily Monitor",
+  "description": "Runs every weekday at 6:00 AM. Fetches all hyperscaler_positions. Detects: overshoot risk (projected > committed), undershoot risk (projected < 80% of committed = wasting money), idle resources (idle_resources_eur > 5000), reservation utilization below 75%. For each anomaly Claude reasons and either: acts directly (flags for right-sizing, drafts amendment request to hyperscaler account team), sends one-touch to manager, or posts to Grafana alert channel. Posts daily summary to Slack #procurement-ops.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every Weekday 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 6 * * 1-5" }]
+        }
+      },
+      "position": [0, 400]
+    },
+    {
+      "id": "fetch_positions",
+      "name": "Fetch Hyperscaler Positions",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "hyperscaler_positions",
+        "filterType": "string",
+        "filters": "snapshot_date.gte.={{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}"
+      },
+      "position": [200, 400]
+    },
+    {
+      "id": "check_any_positions",
+      "name": "Any Positions Found?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $json.length }}", "operation": "larger", "value2": 0 }]
+        }
+      },
+      "position": [400, 400]
+    },
+    {
+      "id": "loop_positions",
+      "name": "Loop Each Position",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": { "batchSize": 1 },
+      "position": [600, 400]
+    },
+    {
+      "id": "fetch_related_contract",
+      "name": "Fetch Related Contract",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "contracts",
+        "filterType": "string",
+        "filters": "id.eq.={{ $json.contract_id }}"
+      },
+      "position": [800, 300]
+    },
+    {
+      "id": "check_flags",
+      "name": "Any Anomaly Flags?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ ($json.projected_spend_eur > $json.committed_spend_eur) || ($json.projected_spend_eur < $json.committed_spend_eur * 0.8) || ($json.idle_resources_eur > 5000) || ($json.reservation_utilization < 0.75) }}",
+              "operation": "equal",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "position": [800, 500]
+    },
+    {
+      "id": "call_claude",
+      "name": "Claude — Reason on Position",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",        "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type",      "value": "application/json" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system specialising in cloud cost governance. You analyse hyperscaler spend positions (AWS, Azure, GCP) and reason across overshoot risk, undershoot waste, idle resources, and reservation utilisation. You draft precise, professional communications to hyperscaler account teams requesting right-sizing or commitment amendments. You always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Analyse this hyperscaler position and produce a complete alert and recommended action.\\n\\nPOSITION:\\n{{ JSON.stringify($node['Loop Each Position'].json) }}\\n\\nRELATED CONTRACT:\\n{{ JSON.stringify($node['Fetch Related Contract'].json) }}\\n\\nFLAG THRESHOLDS:\\n- Overshoot risk: projected_spend_eur > committed_spend_eur\\n- Undershoot waste: projected_spend_eur < committed_spend_eur * 0.80\\n- Idle resources: idle_resources_eur > 5000\\n- Low reservation utilisation: reservation_utilization < 0.75\\n\\nAssess which flags are triggered, reason on severity and recommended action, and draft any communication needed.\\n\\nReturn JSON exactly:\\n{\\n  \\\"alert_type\\\": \\\"overshoot\\\" | \\\"undershoot\\\" | \\\"idle_waste\\\" | \\\"low_reservation\\\" | \\\"multiple\\\",\\n  \\\"severity\\\": \\\"low\\\" | \\\"medium\\\" | \\\"high\\\" | \\\"critical\\\",\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"recommended_action\\\": \\\"string\\\",\\n  \\\"draft_communication\\\": \\\"string\\\",\\n  \\\"draft_communication_subject\\\": \\\"string\\\",\\n  \\\"auto_actionable\\\": true | false,\\n  \\\"estimated_saving_eur\\\": number\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [1000, 500]
+    },
+    {
+      "id": "parse_claude_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "alert_type",                    "value": "={{ JSON.parse($json.content[0].text).alert_type }}" },
+            { "name": "severity",                      "value": "={{ JSON.parse($json.content[0].text).severity }}" },
+            { "name": "reasoning",                     "value": "={{ JSON.parse($json.content[0].text).reasoning }}" },
+            { "name": "recommended_action",            "value": "={{ JSON.parse($json.content[0].text).recommended_action }}" },
+            { "name": "draft_communication",           "value": "={{ JSON.parse($json.content[0].text).draft_communication }}" },
+            { "name": "draft_communication_subject",   "value": "={{ JSON.parse($json.content[0].text).draft_communication_subject }}" },
+            { "name": "auto_actionable",               "value": "={{ JSON.parse($json.content[0].text).auto_actionable }}" },
+            { "name": "estimated_saving_eur",          "value": "={{ JSON.parse($json.content[0].text).estimated_saving_eur }}" }
+          ]
+        }
+      },
+      "position": [1200, 500]
+    },
+    {
+      "id": "write_decision",
+      "name": "Write Decision to Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "contract_id",    "fieldValue": "={{ $node['Loop Each Position'].json.contract_id }}" },
+            { "fieldId": "disposition",    "fieldValue": "={{ $node['Parse Claude Response'].json.auto_actionable === 'true' ? 'auto_execute' : 'one_touch' }}" },
+            { "fieldId": "reasoning",      "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
+            { "fieldId": "recommendation", "fieldValue": "={{ $node['Parse Claude Response'].json.recommended_action }}" },
+            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" },
+            { "fieldId": "actioned_by",    "fieldValue": "agent" },
+            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [1400, 500]
+    },
+    {
+      "id": "update_position_flags",
+      "name": "Update Position Flags",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "update",
+        "tableId": "hyperscaler_positions",
+        "filters": "id.eq.={{ $node['Loop Each Position'].json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "alert_type",          "fieldValue": "={{ $node['Parse Claude Response'].json.alert_type }}" },
+            { "fieldId": "alert_severity",      "fieldValue": "={{ $node['Parse Claude Response'].json.severity }}" },
+            { "fieldId": "estimated_saving_eur","fieldValue": "={{ $node['Parse Claude Response'].json.estimated_saving_eur }}" },
+            { "fieldId": "last_reviewed_at",    "fieldValue": "={{ new Date().toISOString() }}" },
+            { "fieldId": "decision_id",         "fieldValue": "={{ $node['Write Decision to Supabase'].json.id }}" }
+          ]
+        }
+      },
+      "position": [1600, 500]
+    },
+    {
+      "id": "route_auto_actionable",
+      "name": "Auto-Actionable?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "string": [{ "value1": "={{ $node['Parse Claude Response'].json.auto_actionable }}", "operation": "equal", "value2": "true" }]
+        }
+      },
+      "position": [1800, 500]
+    },
+
+    {
+      "id": "fetch_account_team_email",
+      "name": "Fetch Hyperscaler Account Team Email",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "suppliers",
+        "filterType": "string",
+        "filters": "id.eq.={{ $node['Fetch Related Contract'].json[0]?.supplier_id }}"
+      },
+      "position": [2000, 320]
+    },
+    {
+      "id": "send_account_team_email",
+      "name": "Send Email to Account Team",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail":   "={{ $node['Fetch Hyperscaler Account Team Email'].json[0]?.account_team_email || $node['Fetch Hyperscaler Account Team Email'].json[0]?.contact_email }}",
+        "subject":   "={{ $node['Parse Claude Response'].json.draft_communication_subject }}",
+        "text":      "={{ $node['Parse Claude Response'].json.draft_communication }}"
+      },
+      "position": [2200, 320]
+    },
+    {
+      "id": "log_account_email",
+      "name": "Log Email to supplier_emails",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "supplier_emails",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "supplier_id",  "fieldValue": "={{ $node['Fetch Related Contract'].json[0]?.supplier_id }}" },
+            { "fieldId": "direction",    "fieldValue": "outbound" },
+            { "fieldId": "subject",      "fieldValue": "={{ $node['Parse Claude Response'].json.draft_communication_subject }}" },
+            { "fieldId": "body_summary", "fieldValue": "=Hyperscaler alert action: {{ $node['Parse Claude Response'].json.alert_type }} ({{ $node['Parse Claude Response'].json.severity }}) — Est. saving: {{ $node['Parse Claude Response'].json.estimated_saving_eur }} EUR. {{ $node['Parse Claude Response'].json.recommended_action }}" },
+            { "fieldId": "received_at",  "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [2400, 320]
+    },
+
+    {
+      "id": "post_cloud_alert_slack",
+      "name": "Post Alert to #procurement-cloud",
+      "type": "n8n-nodes-base.slack",
+      "parameters": {
+        "channel": "procurement-cloud",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "textUi": { "text": "={{ '[' + $node['Parse Claude Response'].json.severity.toUpperCase() + '] Cloud Cost Alert: ' + $node['Loop Each Position'].json.provider }}", "type": "plain_text" }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*Provider:* {{ $node['Loop Each Position'].json.provider }}\n*Alert Type:* {{ $node['Parse Claude Response'].json.alert_type }}\n*Severity:* {{ $node['Parse Claude Response'].json.severity }}\n*Account / Service:* {{ $node['Loop Each Position'].json.account_id || $node['Loop Each Position'].json.service_name }}\n*Committed:* {{ $node['Loop Each Position'].json.committed_spend_eur }} EUR\n*Projected:* {{ $node['Loop Each Position'].json.projected_spend_eur }} EUR\n*Idle Resources:* {{ $node['Loop Each Position'].json.idle_resources_eur }} EUR\n*Reservation Util:* {{ ($node['Loop Each Position'].json.reservation_utilization * 100).toFixed(1) }}%\n*Estimated Saving:* {{ $node['Parse Claude Response'].json.estimated_saving_eur }} EUR"
+              }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*Recommended Action:*\n{{ $node['Parse Claude Response'].json.recommended_action }}\n\n*Agent Reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}"
+              }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*Draft communication ready:*\n```{{ $node['Parse Claude Response'].json.draft_communication_subject }}\n\n{{ $node['Parse Claude Response'].json.draft_communication | truncate(400) }}```"
+              }
+            }
+          ]
+        }
+      },
+      "position": [2000, 680]
+    },
+
+    {
+      "id": "no_positions",
+      "name": "Log — No Positions Found",
+      "type": "n8n-nodes-base.noOp",
+      "position": [600, 600]
+    },
+    {
+      "id": "no_flags",
+      "name": "Log — Position Healthy",
+      "type": "n8n-nodes-base.noOp",
+      "position": [1000, 720]
+    },
+
+    {
+      "id": "fetch_all_positions_summary",
+      "name": "Fetch All Positions for Summary",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "hyperscaler_positions",
+        "filterType": "string",
+        "filters": "snapshot_date.gte.={{ new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0') + '-01' }}"
+      },
+      "position": [200, 800]
+    },
+    {
+      "id": "build_daily_summary",
+      "name": "Build Daily Summary",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "summary_text",
+              "value": "=*TrueSpend — Hyperscaler Daily Summary {{ new Date().toISOString().split('T')[0] }}*\n\n*MTD Spend Across All Providers:*\n{{ $json.reduce ? $json.reduce((acc, p) => { acc.total = (acc.total || 0) + (p.actual_spend_eur || 0); acc.idle = (acc.idle || 0) + (p.idle_resources_eur || 0); acc.flags = (acc.flags || 0) + (p.alert_severity ? 1 : 0); return acc; }, {}) | (d => 'Total MTD: ' + (d.total || 0).toFixed(0) + ' EUR\\nIdle Waste: ' + (d.idle || 0).toFixed(0) + ' EUR\\nPositions with alerts: ' + (d.flags || 0)) : 'Data aggregation complete — see individual alerts above.' }}\n\nReview flagged positions in #procurement-cloud"
+            }
+          ]
+        }
+      },
+      "position": [400, 800]
+    },
+    {
+      "id": "post_daily_summary_slack",
+      "name": "Post Daily Summary to #procurement-ops",
+      "type": "n8n-nodes-base.slack",
+      "parameters": {
+        "channel": "procurement-ops",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "textUi": { "text": "Hyperscaler Daily Summary", "type": "plain_text" }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*Date:* {{ new Date().toISOString().split('T')[0] }}\n*Run status:* Complete\n\n*MTD spend across all hyperscalers:*\n{{ $node['Fetch All Positions for Summary'].json.length }} position(s) reviewed this month.\n\nTotal MTD committed: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.committed_spend_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal MTD projected: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.projected_spend_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal idle waste flagged: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.idle_resources_eur||0), 0).toFixed(0) : '—' }} EUR\n\nSee #procurement-cloud for any alerts actioned today."
+              }
+            }
+          ]
+        }
+      },
+      "position": [600, 800]
+    },
+    {
+      "id": "log_daily_run_trace",
+      "name": "Log Daily Run to trace_log",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "trace_log",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "signal",      "fieldValue": "hyperscaler_monitor" },
+            { "fieldId": "value",       "fieldValue": "=Daily run completed at {{ new Date().toISOString() }}. Positions reviewed: {{ $node['Fetch Hyperscaler Positions'].json.length }}." },
+            { "fieldId": "notes",       "fieldValue": "TrueSpend Hyperscaler Daily Monitor — automated run" }
+          ]
+        }
+      },
+      "position": [800, 800]
+    }
+  ],
+  "connections": {
+    "Every Weekday 06:00": { "main": [
+      [{ "node": "Fetch Hyperscaler Positions",       "type": "main", "index": 0 }],
+      [{ "node": "Fetch All Positions for Summary",   "type": "main", "index": 0 }]
+    ]},
+    "Fetch Hyperscaler Positions": { "main": [[{ "node": "Any Positions Found?", "type": "main", "index": 0 }]] },
+    "Any Positions Found?": { "main": [
+      [{ "node": "Loop Each Position",    "type": "main", "index": 0 }],
+      [{ "node": "Log — No Positions Found", "type": "main", "index": 0 }]
+    ]},
+    "Loop Each Position": { "main": [
+      [{ "node": "Fetch Related Contract", "type": "main", "index": 0 }],
+      [{ "node": "Any Anomaly Flags?",     "type": "main", "index": 0 }]
+    ]},
+    "Fetch Related Contract": { "main": [[{ "node": "Any Anomaly Flags?", "type": "main", "index": 0 }]] },
+    "Any Anomaly Flags?": { "main": [
+      [{ "node": "Claude — Reason on Position", "type": "main", "index": 0 }],
+      [{ "node": "Log — Position Healthy",      "type": "main", "index": 0 }]
+    ]},
+    "Claude — Reason on Position": { "main": [[{ "node": "Parse Claude Response", "type": "main", "index": 0 }]] },
+    "Parse Claude Response": { "main": [[{ "node": "Write Decision to Supabase", "type": "main", "index": 0 }]] },
+    "Write Decision to Supabase": { "main": [[{ "node": "Update Position Flags", "type": "main", "index": 0 }]] },
+    "Update Position Flags": { "main": [[{ "node": "Auto-Actionable?", "type": "main", "index": 0 }]] },
+    "Auto-Actionable?": { "main": [
+      [{ "node": "Fetch Hyperscaler Account Team Email", "type": "main", "index": 0 }],
+      [{ "node": "Post Alert to #procurement-cloud",    "type": "main", "index": 0 }]
+    ]},
+    "Fetch Hyperscaler Account Team Email": { "main": [[{ "node": "Send Email to Account Team", "type": "main", "index": 0 }]] },
+    "Send Email to Account Team": { "main": [[{ "node": "Log Email to supplier_emails", "type": "main", "index": 0 }]] },
+    "Fetch All Positions for Summary": { "main": [[{ "node": "Build Daily Summary", "type": "main", "index": 0 }]] },
+    "Build Daily Summary": { "main": [[{ "node": "Post Daily Summary to #procurement-ops", "type": "main", "index": 0 }]] },
+    "Post Daily Summary to #procurement-ops": { "main": [[{ "node": "Log Daily Run to trace_log", "type": "main", "index": 0 }]] }
+  }
+}
