@@ -697,6 +697,111 @@
                       "retryOnFail":  true,
                       "maxTries":  3,
                       "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "approve_and_commit",
+                      "name":  "RPC — Approve \u0026 Create PO",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://postgrest-production-7960.up.railway.app/rpc/approve_and_commit",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ p_ticket_id: $node[\u0027Create Ticket in PostgREST\u0027].json[0]?.id || $node[\u0027Create Ticket in PostgREST\u0027].json?.id, p_branch_id: $node[\u0027Intake Form Submitted\u0027].json.body.branch_id, p_branch_code: $node[\u0027Intake Form Submitted\u0027].json.body.branch_code || \u0027HQ\u0027, p_cost_center_id: $node[\u0027Intake Form Submitted\u0027].json.body.cost_center_id || null, p_category: $node[\u0027Intake Form Submitted\u0027].json.body.category || \u0027other\u0027, p_period: new Date().getFullYear() + \u0027-Q\u0027 + Math.ceil((new Date().getMonth()+1)/3), p_supplier_id: $node[\u0027Fetch Supplier Context\u0027].json[0]?.id, p_contract_id: $node[\u0027Fetch Contract Context\u0027].json[0]?.id || null, p_description: $node[\u0027Intake Form Submitted\u0027].json.body.title, p_amount: parseFloat($node[\u0027Intake Form Submitted\u0027].json.body.amount), p_currency: $node[\u0027Intake Form Submitted\u0027].json.body.currency || \u0027EUR\u0027, p_amount_eur: parseFloat($node[\u0027Intake Form Submitted\u0027].json.body.amount_eur || $node[\u0027Intake Form Submitted\u0027].json.body.amount), p_raised_by: $node[\u0027Fetch Responsible Manager\u0027].json[0]?.id || null, p_expected_delivery: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split(\u0027T\u0027)[0], p_line_items: $node[\u0027Intake Form Submitted\u0027].json.body.line_items ? JSON.parse(JSON.stringify($node[\u0027Intake Form Submitted\u0027].json.body.line_items)) : null }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       2200,
+                                       150
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "send_po_email",
+                      "name":  "Send PO to Supplier",
+                      "type":  "n8n-nodes-base.emailSend",
+                      "parameters":  {
+                                         "fromEmail":  "procurement@company.com",
+                                         "toEmail":  "={{ $node[\u0027Fetch Supplier Context\u0027].json[0]?.contact_email }}",
+                                         "subject":  "=Purchase Order {{ $node[\u0027RPC — Approve \u0026 Create PO\u0027].json[0]?.po_number || $node[\u0027RPC — Approve \u0026 Create PO\u0027].json?.po_number }} — {{ $node[\u0027Intake Form Submitted\u0027].json.body.title }}",
+                                         "text":  "=Dear {{ $node[\u0027Fetch Supplier Context\u0027].json[0]?.name }},\\n\\nPlease find below our purchase order.\\n\\nPO Number: {{ $node[\u0027RPC — Approve \u0026 Create PO\u0027].json[0]?.po_number || $node[\u0027RPC — Approve \u0026 Create PO\u0027].json?.po_number }}\\nDescription: {{ $node[\u0027Intake Form Submitted\u0027].json.body.title }}\\nAmount: {{ $node[\u0027Intake Form Submitted\u0027].json.body.currency || \u0027EUR\u0027 }} {{ $node[\u0027Intake Form Submitted\u0027].json.body.amount }}\\nExpected delivery: {{ new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split(\u0027T\u0027)[0] }}\\n\\nPlease reference the PO number on your invoice.\\n\\nTrueSpend Procurement\\nprocurement@company.com"
+                                     },
+                      "position":  [
+                                       2400,
+                                       150
+                                   ]
+                  },
+                  {
+                      "id":  "log_po_trace",
+                      "name":  "Log PO Creation to Trace",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027budget\u0027, value: \u0027committed\u0027, notes: \u0027PO \u0027 + ($node[\u0027RPC — Approve \u0026 Create PO\u0027].json[0]?.po_number || $node[\u0027RPC — Approve \u0026 Create PO\u0027].json?.po_number) + \u0027 created. Budget committed: EUR \u0027 + $node[\u0027Intake Form Submitted\u0027].json.body.amount + \u0027. Supplier PO email sent.\u0027 }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       2600,
+                                       150
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
                   }
               ],
     "connections":  {
@@ -835,7 +940,7 @@
                                                      "main":  [
                                                                   [
                                                                       {
-                                                                          "node":  "Send Email to Supplier",
+                                                                          "node":  "RPC — Approve \u0026 Create PO",
                                                                           "type":  "main",
                                                                           "index":  0
                                                                       }
@@ -910,6 +1015,38 @@
                                                                         }
                                                                     ]
                                                                 ]
-                                                   }
+                                                   },
+                        "RPC — Approve \u0026 Create PO":  {
+                                                               "main":  [
+                                                                            {
+                                                                                "node":  "Send PO to Supplier",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            },
+                                                                            {
+                                                                                "node":  "Close Ticket — Auto Executed",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                           },
+                        "Send PO to Supplier":  {
+                                                    "main":  [
+                                                                 {
+                                                                     "node":  "Log PO Creation to Trace",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                },
+                        "Log PO Creation to Trace":  {
+                                                         "main":  [
+                                                                      {
+                                                                          "node":  "Notify Submitter — Done",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                     }
                     }
 }

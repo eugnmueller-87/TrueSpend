@@ -240,9 +240,8 @@ Controlling has historically been reactive — they see what was spent after the
 
 ---
 
-### 🔲 PHASE A — Budget & Controlling Layer
-**Priority: High — blocks P2I**  
-**Effort: 1 week**
+### ✅ PHASE A — Budget & Controlling Layer
+**Status: Built — ready to wire in n8n**
 
 **Schema additions:**
 - `budget_buckets` table — annual budget plan per branch × category × fiscal year, maintained by Controlling. This is the source of truth for budget authority.
@@ -267,9 +266,8 @@ Controlling has historically been reactive — they see what was spent after the
 
 ---
 
-### 🔲 PHASE B — P2I Full Loop
-**Priority: High**  
-**Effort: 1–2 weeks**
+### ✅ PHASE B — P2I Full Loop
+**Status: Built — ready to wire in n8n**
 
 **PO Generation:**
 - On `auto_execute`: agent generates PO (reference format: PO-{year}-{branch_code}-{seq}), creates `purchase_orders` row, sends order email to supplier (extend existing email workflow)

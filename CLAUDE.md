@@ -18,22 +18,23 @@ Pre-production. Full architecture designed and built as config/code.
 | Email | IMAP (inbound) + SMTP (outbound) | — |
 
 ## Key files
-- `db/schema.sql` — single source of truth, all 28 tables, 7 views, indexes, RLS
-- `db/seed/` — 7 SQL files, load in order 01–07
+- `db/schema.sql` — single source of truth, all 28 tables + P2I functions, 8 views, indexes, RLS
+- `db/seed/` — 8 SQL files, load in order 01–08
 - `db/templates/nda_mutual_de.txt` — mutual NDA (German law, TrueSpend GmbH)
 - `db/templates/dpa_de.txt` — Art. 28 GDPR DPA with TOM annex
-- `workflows/` — 6 n8n workflow JSONs
+- `workflows/` — 7 n8n workflow JSONs (incl. invoice_processor)
 - `intake/` — React + Vite Operations Board, deploys as Docker to Railway
 - `infra/docker-compose.yml` — local n8n + Grafana
 - `.env.example` — all required env vars
 
-## Workflows (6 total)
-- `workflows/stakeholder/intake_receiver.json` — webhook → 5-signal Claude → auto/one-touch/escalate
+## Workflows (7 total)
+- `workflows/stakeholder/intake_receiver.json` — webhook → 5-signal Claude → approve_and_commit RPC → PO email → trace
 - `workflows/communication/supplier_reply_handler.json` — IMAP → Claude → reply or route to board
 - `workflows/automatic/contract_watcher.json` — daily 07:00 → expiring contracts → auto-renew or reason
 - `workflows/automatic/reorder_trigger.json` — daily → reorder candidates → place or escalate
 - `workflows/automatic/hyperscaler_monitor.json` — daily 06:00 → cloud spend → anomaly detection
 - `workflows/automatic/supplier_onboarding.json` — webhook → 4 parallel compliance agents → docs + ticket
+- `workflows/automatic/invoice_processor.json` — IMAP invoices → Claude parse → 3-way match → payment instruction → ERP queue
 
 ## Schema overview (v2.0 — 28 tables)
 ```
@@ -137,9 +138,19 @@ TrueSpend is the reasoning layer. ERP is the book of record.
 1. Apply schema: `psql $DATABASE_URL -f db/schema.sql`
 2. Apply seeds: `for f in db/seed/0*.sql; do psql $DATABASE_URL -f $f; done`
 3. Set `VITE_POSTGREST_URL` + `VITE_POSTGREST_JWT` on Railway intake service
-4. Re-import all 6 workflows to n8n (delete old, import updated JSONs)
+4. Re-import all 7 workflows to n8n (delete old, import updated JSONs)
 5. Assign "Authorization-TrueSpend" Header Auth to all PostgREST nodes
 6. Assign Anthropic credential to all Claude nodes
+7. Point invoice_processor IMAP trigger at invoices mailbox (separate from supplier_reply_handler)
+
+## P2I RPCs (PostgREST /rpc/ endpoints — all ready)
+- `approve_and_commit` — atomic: generates PO number + commits budget + creates PO + updates ticket
+- `confirm_delivery`   — marks PO delivered, flags supplier health if late
+- `match_invoice`      — 3-way match logic, sets invoice status, advances PO to invoiced
+- `create_payment_instruction` — creates PI + writes erp_sync_queue + calls record_spend
+- `commit_budget`      — lock + increment committed (used inside approve_and_commit)
+- `release_budget`     — lock + decrement committed (rejection/cancellation path)
+- `record_spend`       — lock + release committed + increment spent (invoice approved)
 
 ## Quality gate
 ```bash

@@ -34,7 +34,7 @@ const STATUS_CONFIG = {
   pending_review:     { label: 'Pending Review',      color: '#f59e0b', bg: '#1a1200' },
   escalated:          { label: 'Escalated',           color: '#a855f7', bg: '#120a1a' },
   pending_confirm:    { label: 'Awaiting Confirm',    color: '#6366f1', bg: '#0d0d1a' },
-  approved:           { label: 'Approved',            color: '#22c55e', bg: '#081a0d' },
+  approved:           { label: 'Approved — Awaiting Delivery', color: '#22c55e', bg: '#081a0d' },
   rejected:           { label: 'Rejected',            color: '#6b7280', bg: '#111111' },
   closed:             { label: 'Closed',              color: '#6b7280', bg: '#111111' },
 }
@@ -240,10 +240,11 @@ function TicketCard({ ticket, onAction, actionLoading }) {
           )}
         </div>
 
-        <div className="flex items-center gap-4 text-xs" style={{ color: '#555' }}>
+        <div className="flex items-center gap-4 text-xs flex-wrap" style={{ color: '#555' }}>
           {ticket.supplier_name && <span>🏢 {ticket.supplier_name}</span>}
           {ticket.branch_name   && <span>📍 {ticket.branch_name}</span>}
           {ticket.reference     && <span className="font-mono">{ticket.reference}</span>}
+          {ticket.po_number     && <span className="font-mono" style={{ color: '#6366f1' }}>📄 {ticket.po_number}</span>}
           <span>{timeAgo(ticket.created_at)}</span>
         </div>
 
@@ -315,6 +316,13 @@ function TicketCard({ ticket, onAction, actionLoading }) {
             variant="secondary"
           >👁 Acknowledge</ActionButton>
         )}
+        {ticket.status === 'approved' && ticket.po_id && (
+          <ActionButton
+            onClick={() => onAction(ticket.id, 'confirm_delivery', { po_id: ticket.po_id })}
+            loading={actionLoading === `${ticket.id}-confirm_delivery`}
+            variant="primary"
+          >📦 Confirm Delivery</ActionButton>
+        )}
         {ticket.pdf_url && (
           <a href={ticket.pdf_url} target="_blank" rel="noopener noreferrer"
             className="text-xs px-3 py-1.5 rounded-md"
@@ -374,24 +382,39 @@ function OperationsBoard() {
     return () => clearInterval(interval)
   }, [fetchTickets])
 
-  async function handleAction(ticketId, action) {
+  async function handleAction(ticketId, action, extra = {}) {
     setActionLoading(`${ticketId}-${action}`)
     try {
-      const statusMap = {
-        approve:     'approved',
-        reject:      'rejected',
-        sign:        'closed',
-        acknowledge: 'approved',
+      if (action === 'confirm_delivery') {
+        // Call confirm_delivery RPC — marks PO delivered, checks SLA, flags late
+        await pgFetch('/rpc/confirm_delivery', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({ p_po_id: extra.po_id, p_confirmed_by: 'ops_board' }),
+        })
+        // Also close the ticket
+        await pgFetch(`/tickets?id=eq.${ticketId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({ status: 'closed', closed_at: new Date().toISOString() }),
+        })
+      } else {
+        const statusMap = {
+          approve:     'approved',
+          reject:      'rejected',
+          sign:        'closed',
+          acknowledge: 'approved',
+        }
+        const newStatus = statusMap[action] || 'closed'
+        await pgFetch(`/tickets?id=eq.${ticketId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({
+            status: newStatus,
+            ...(newStatus === 'closed' || newStatus === 'approved' ? { closed_at: new Date().toISOString() } : {}),
+          }),
+        })
       }
-      const newStatus = statusMap[action] || 'closed'
-      await pgFetch(`/tickets?id=eq.${ticketId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-        body: JSON.stringify({
-          status: newStatus,
-          ...(newStatus === 'closed' || newStatus === 'approved' ? { closed_at: new Date().toISOString() } : {}),
-        }),
-      })
       await fetchTickets()
     } catch (err) {
       alert('Action failed: ' + err.message)
@@ -400,10 +423,11 @@ function OperationsBoard() {
     }
   }
 
-  const signatureTickets = tickets.filter(t => t.status === 'signature_required')
-  const reviewTickets    = tickets.filter(t => t.status === 'pending_review')
-  const escalatedTickets = tickets.filter(t => t.status === 'escalated')
-  const confirmTickets   = tickets.filter(t => t.status === 'pending_confirm')
+  const signatureTickets  = tickets.filter(t => t.status === 'signature_required')
+  const reviewTickets     = tickets.filter(t => t.status === 'pending_review')
+  const escalatedTickets  = tickets.filter(t => t.status === 'escalated')
+  const confirmTickets    = tickets.filter(t => t.status === 'pending_confirm')
+  const deliveryTickets   = tickets.filter(t => t.status === 'approved' && t.po_id)
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0a', padding: '24px 16px' }}>
@@ -484,6 +508,15 @@ function OperationsBoard() {
           <section className="mb-8">
             <SectionHeader icon="⚡" title="Quick Confirm" count={confirmTickets.length} />
             {confirmTickets.map(t => <TicketCard key={t.id} ticket={t} onAction={handleAction} actionLoading={actionLoading} />)}
+          </section>
+        )}
+
+        {/* Awaiting delivery confirmation */}
+        {deliveryTickets.length > 0 && (
+          <section className="mb-8">
+            <SectionHeader icon="📦" title="Awaiting Delivery" count={deliveryTickets.length} />
+            <p className="text-xs mb-3" style={{ color: '#555' }}>PO sent. Confirm once goods or services have been received — this triggers invoice matching.</p>
+            {deliveryTickets.map(t => <TicketCard key={t.id} ticket={t} onAction={handleAction} actionLoading={actionLoading} />)}
           </section>
         )}
 

@@ -1198,6 +1198,10 @@ select
   t.currency,
   t.jira_key,
   t.po_id,
+  po.po_number,
+  po.status          as po_status,
+  po.expected_delivery as po_expected_delivery,
+  po.delivery_overdue  as po_delivery_overdue,
   t.created_at,
   t.target_close,
   -- Supplier
@@ -1237,6 +1241,7 @@ left join branches b   on b.id  = t.branch_id
 left join cost_centers cc on cc.id = t.cost_center_id
 left join users u      on u.id  = t.owner_id
 left join decisions d  on d.ticket_id = t.id
+left join purchase_orders po on po.id = t.po_id
 left join budget_positions bp
   on bp.branch_id = t.branch_id
   and bp.cost_center_id is not distinct from t.cost_center_id
@@ -1247,7 +1252,7 @@ left join budget_positions bp
   )
 where t.status in (
   'open', 'pending_confirm', 'pending_review',
-  'signature_required', 'escalated'
+  'signature_required', 'escalated', 'approved'
 )
 order by sort_priority, t.created_at asc;
 
@@ -1713,6 +1718,267 @@ end $$;
 grant execute on function commit_budget  to truespend;
 grant execute on function release_budget to truespend;
 grant execute on function record_spend   to truespend;
+
+
+-- =============================================================================
+-- PO NUMBER GENERATION
+-- Atomic, readable PO numbers. Format: PO-2026-DACH-0042
+-- Uses po_sequences table to avoid gaps and collisions.
+-- Called via PostgREST RPC: POST /rpc/next_po_number
+-- =============================================================================
+
+create or replace function next_po_number(
+  p_branch_id   uuid,
+  p_branch_code text   -- e.g. 'DACH', 'UKI', 'BNL' — passed in from workflow
+) returns text language plpgsql security definer as $$
+declare
+  v_year  int  := extract(year from current_date);
+  v_seq   int;
+begin
+  insert into po_sequences (branch_id, fiscal_year, last_seq)
+  values (p_branch_id, v_year, 1)
+  on conflict (branch_id, fiscal_year)
+  do update set last_seq = po_sequences.last_seq + 1
+  returning last_seq into v_seq;
+
+  return 'PO-' || v_year || '-' || upper(p_branch_code) || '-' || lpad(v_seq::text, 4, '0');
+end $$;
+
+-- approve_and_commit — single RPC call from the approval path.
+-- Creates a PO, commits budget, updates ticket status.
+-- Called via PostgREST RPC: POST /rpc/approve_and_commit
+-- Returns the created PO row.
+create or replace function approve_and_commit(
+  p_ticket_id       uuid,
+  p_branch_id       uuid,
+  p_branch_code     text,
+  p_cost_center_id  uuid,
+  p_category        spend_category,
+  p_period          text,          -- '2026-Q2'
+  p_supplier_id     uuid,
+  p_contract_id     uuid,
+  p_description     text,
+  p_amount          numeric,
+  p_currency        text,
+  p_amount_eur      numeric,
+  p_raised_by       uuid,
+  p_expected_delivery date,
+  p_line_items      jsonb
+) returns purchase_orders language plpgsql security definer as $$
+declare
+  v_po_number  text;
+  v_po         purchase_orders;
+begin
+  -- Step 1: generate PO number (atomic sequence)
+  v_po_number := next_po_number(p_branch_id, p_branch_code);
+
+  -- Step 2: commit budget (row-level lock, raises if insufficient)
+  perform commit_budget(
+    p_branch_id, p_cost_center_id, p_category, p_period, p_amount_eur
+  );
+
+  -- Step 3: create PO row
+  insert into purchase_orders (
+    po_number, ticket_id, contract_id, supplier_id, branch_id,
+    cost_center_id, raised_by, description, category, line_items,
+    amount, currency, amount_eur, po_date, expected_delivery, status
+  ) values (
+    v_po_number, p_ticket_id, p_contract_id, p_supplier_id, p_branch_id,
+    p_cost_center_id, p_raised_by, p_description, p_category, p_line_items,
+    p_amount, p_currency, p_amount_eur, current_date, p_expected_delivery, 'draft'
+  )
+  returning * into v_po;
+
+  -- Step 4: update ticket with PO reference and set status to approved
+  update tickets
+  set status     = 'approved',
+      po_id      = v_po.id,
+      updated_at = now()
+  where id = p_ticket_id;
+
+  return v_po;
+end $$;
+
+-- confirm_delivery — called when Operations Board "Confirm Delivery" is clicked.
+-- Updates PO to delivered, checks SLA breach, flags supplier health if late.
+create or replace function confirm_delivery(
+  p_po_id       uuid,
+  p_confirmed_by text    -- email of user confirming
+) returns purchase_orders language plpgsql security definer as $$
+declare
+  v_po   purchase_orders;
+  v_late boolean;
+begin
+  select * into v_po from purchase_orders where id = p_po_id for update;
+
+  if not found then
+    raise exception 'PO not found: %', p_po_id;
+  end if;
+
+  v_late := v_po.expected_delivery is not null
+        and current_date > v_po.expected_delivery;
+
+  update purchase_orders
+  set status       = 'delivered',
+      delivered_at = now(),
+      notes        = coalesce(notes, '') ||
+                     case when v_late
+                     then ' [LATE: delivered ' ||
+                          (current_date - v_po.expected_delivery)::text ||
+                          ' days after SLA]'
+                     else '' end,
+      updated_at   = now()
+  where id = p_po_id
+  returning * into v_po;
+
+  -- Flag supplier health if delivery was late
+  if v_late then
+    update suppliers
+    set health = case
+      when health = 'green' then 'watch'::supplier_health
+      else health  -- already watch or red — don't downgrade automatically
+    end,
+    updated_at = now()
+    where id = v_po.supplier_id;
+  end if;
+
+  return v_po;
+end $$;
+
+-- match_invoice — 3-way match logic as a PostgreSQL function.
+-- Called by invoice_processor workflow after Claude extracts invoice data.
+-- Returns match result: 'matched' | 'amount_mismatch' | 'no_po' | 'no_delivery'
+create or replace function match_invoice(
+  p_invoice_id     uuid
+) returns invoices language plpgsql security definer as $$
+declare
+  v_inv  invoices;
+  v_po   purchase_orders;
+  v_tolerance numeric;
+  v_delta     numeric;
+  v_result    text;
+begin
+  select * into v_inv from invoices where id = p_invoice_id for update;
+  if not found then
+    raise exception 'Invoice not found: %', p_invoice_id;
+  end if;
+
+  if v_inv.po_id is null then
+    update invoices set match_result = 'no_po', status = 'disputed',
+      matched_at = now(), updated_at = now()
+    where id = p_invoice_id returning * into v_inv;
+    return v_inv;
+  end if;
+
+  select * into v_po from purchase_orders where id = v_inv.po_id;
+
+  -- Check delivery confirmed
+  if v_po.status not in ('delivered', 'invoiced', 'closed') then
+    update invoices set match_result = 'no_delivery', status = 'disputed',
+      matched_at = now(), updated_at = now()
+    where id = p_invoice_id returning * into v_inv;
+    return v_inv;
+  end if;
+
+  -- Amount match within tolerance
+  v_tolerance := v_po.amount * coalesce(v_inv.match_tolerance_pct, 0.02);
+  v_delta     := abs(v_inv.amount - v_po.amount);
+
+  if v_delta <= v_tolerance then
+    v_result := 'matched';
+    -- Advance PO to invoiced
+    update purchase_orders set status = 'invoiced', updated_at = now()
+    where id = v_po.id;
+  else
+    v_result := 'amount_mismatch';
+  end if;
+
+  update invoices
+  set match_result   = v_result,
+      match_delta_eur = v_delta,
+      status          = case v_result when 'matched' then 'matched' else 'disputed' end,
+      matched_at      = now(),
+      updated_at      = now()
+  where id = p_invoice_id
+  returning * into v_inv;
+
+  return v_inv;
+end $$;
+
+-- create_payment_instruction — called after 3-way match passes.
+-- Creates payment instruction record + writes erp_sync_queue entry.
+create or replace function create_payment_instruction(
+  p_invoice_id   uuid,
+  p_due_date     date
+) returns payment_instructions language plpgsql security definer as $$
+declare
+  v_inv   invoices;
+  v_po    purchase_orders;
+  v_pi    payment_instructions;
+  v_ref   text;
+begin
+  select * into v_inv from invoices where id = p_invoice_id;
+  select * into v_po  from purchase_orders where id = v_inv.po_id;
+
+  v_ref := 'PAY-' || extract(year from current_date)::text ||
+           '-' || to_char(now(), 'MM') ||
+           '-' || substr(p_invoice_id::text, 1, 8);
+
+  insert into payment_instructions (
+    invoice_id, po_id, supplier_id, amount, currency, payment_ref,
+    due_date, status
+  ) values (
+    p_invoice_id, v_inv.po_id, v_inv.supplier_id, v_inv.amount,
+    v_inv.currency, v_ref, p_due_date, 'pending'
+  )
+  returning * into v_pi;
+
+  -- Approve invoice
+  update invoices set status = 'approved', approved_at = now(), updated_at = now()
+  where id = p_invoice_id;
+
+  -- Write ERP sync queue entry
+  insert into erp_sync_queue (
+    event_type, entity_type, entity_id, payload, status
+  ) values (
+    'invoice_approved',
+    'invoice',
+    p_invoice_id,
+    jsonb_build_object(
+      'payment_instruction_id', v_pi.id,
+      'payment_ref',            v_ref,
+      'invoice_id',             p_invoice_id,
+      'po_id',                  v_inv.po_id,
+      'supplier_id',            v_inv.supplier_id,
+      'amount',                 v_inv.amount,
+      'currency',               v_inv.currency,
+      'due_date',               p_due_date,
+      'po_number',              v_po.po_number
+    ),
+    'pending'
+  );
+
+  -- Record spend in budget (release committed, add to spent)
+  if v_po.branch_id is not null and v_po.category is not null then
+    perform record_spend(
+      v_po.branch_id,
+      v_po.cost_center_id,
+      v_po.category,
+      extract(year from current_date)::text || '-Q' ||
+        ceil(extract(month from current_date) / 3.0)::int::text,
+      v_po.amount_eur,   -- release committed (PO amount)
+      v_inv.amount_eur   -- record actual spend (invoice amount)
+    );
+  end if;
+
+  return v_pi;
+end $$;
+
+grant execute on function next_po_number          to truespend;
+grant execute on function approve_and_commit      to truespend;
+grant execute on function confirm_delivery        to truespend;
+grant execute on function match_invoice           to truespend;
+grant execute on function create_payment_instruction to truespend;
 
 
 -- =============================================================================
