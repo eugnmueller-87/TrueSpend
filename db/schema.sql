@@ -271,6 +271,7 @@ create table supplier_emails (
   subject         text,
   body_summary    text,            -- agent summary, not full body
   commitments     text[],          -- informal commitments extracted by agent
+  order_reference text,            -- PO reference when email is an auto-reorder
   flagged         boolean default false,
   flag_reason     text,
   received_at     timestamptz,
@@ -391,6 +392,10 @@ create index idx_budget_branch_period on budget_positions(branch_id, period);
 -- ============================================================
 -- ROW LEVEL SECURITY
 -- ============================================================
+-- On Railway (plain Postgres): RLS is enabled but the truespend role
+-- owns all tables and bypasses RLS automatically (owner bypass).
+-- On Supabase: the auth.role() policies below apply for anon/service_role.
+-- ============================================================
 
 alter table contracts enable row level security;
 alter table tickets enable row level security;
@@ -398,9 +403,23 @@ alter table decisions enable row level security;
 alter table suppliers enable row level security;
 alter table budget_positions enable row level security;
 
--- Service role bypass (n8n uses service role key)
-create policy "service_role_all" on contracts for all using (auth.role() = 'service_role');
-create policy "service_role_all" on tickets for all using (auth.role() = 'service_role');
-create policy "service_role_all" on decisions for all using (auth.role() = 'service_role');
-create policy "service_role_all" on suppliers for all using (auth.role() = 'service_role');
-create policy "service_role_all" on budget_positions for all using (auth.role() = 'service_role');
+-- Allow the table owner (truespend role) full access — works on Railway
+-- where there is no Supabase auth schema.
+do $$
+begin
+  -- Only create Supabase-style policies if the auth schema exists
+  if exists (select 1 from information_schema.schemata where schema_name = 'auth') then
+    execute 'create policy "service_role_all" on contracts for all using (auth.role() = ''service_role'')';
+    execute 'create policy "service_role_all" on tickets for all using (auth.role() = ''service_role'')';
+    execute 'create policy "service_role_all" on decisions for all using (auth.role() = ''service_role'')';
+    execute 'create policy "service_role_all" on suppliers for all using (auth.role() = ''service_role'')';
+    execute 'create policy "service_role_all" on budget_positions for all using (auth.role() = ''service_role'')';
+  else
+    -- Railway: allow all for the application role
+    execute 'create policy "app_role_all" on contracts for all to truespend using (true) with check (true)';
+    execute 'create policy "app_role_all" on tickets for all to truespend using (true) with check (true)';
+    execute 'create policy "app_role_all" on decisions for all to truespend using (true) with check (true)';
+    execute 'create policy "app_role_all" on suppliers for all to truespend using (true) with check (true)';
+    execute 'create policy "app_role_all" on budget_positions for all to truespend using (true) with check (true)';
+  end if;
+end $$;

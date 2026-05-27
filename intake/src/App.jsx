@@ -9,17 +9,18 @@ const TICKET_TYPES = [
   { id: 'other',    label: 'Something else',       icon: '⚡', hint: 'Any other procurement request'              },
 ]
 
+// Branch display names mapped to their Supabase UUIDs (from db/seed/01_branches.sql)
 const BRANCHES = [
-  'Global HQ',
-  'DACH',
-  'UK & Ireland',
-  'Benelux',
-  'France',
-  'Nordics',
-  'Iberia',
-  'Italy',
-  'CEE',
-  'Nordics East',
+  { label: 'Global HQ',    id: 'b1000000-0000-0000-0000-000000000001' },
+  { label: 'DACH',         id: 'b1000000-0000-0000-0000-000000000002' },
+  { label: 'UK & Ireland', id: 'b1000000-0000-0000-0000-000000000003' },
+  { label: 'Benelux',      id: 'b1000000-0000-0000-0000-000000000004' },
+  { label: 'France',       id: 'b1000000-0000-0000-0000-000000000005' },
+  { label: 'Nordics',      id: 'b1000000-0000-0000-0000-000000000006' },
+  { label: 'Iberia',       id: 'b1000000-0000-0000-0000-000000000007' },
+  { label: 'Italy',        id: 'b1000000-0000-0000-0000-000000000008' },
+  { label: 'CEE',          id: 'b1000000-0000-0000-0000-000000000009' },
+  { label: 'Nordics East', id: 'b1000000-0000-0000-0000-000000000010' },
 ]
 
 const SUPPLIER_CATEGORIES = [
@@ -325,13 +326,16 @@ function RequesterFields({ values, errors, onChange }) {
         />
       </Field>
       <Field label="Branch" required error={errors.branch_id}>
-        <SelectInput
+        <select
           value={values.branch_id}
-          onChange={(v) => onChange('branch_id', v)}
-          options={BRANCHES}
-          placeholder="Select your region"
-          error={errors.branch_id}
-        />
+          onChange={(e) => onChange('branch_id', e.target.value)}
+          className={errors.branch_id ? 'error' : ''}
+        >
+          <option value="" disabled>Select your region</option>
+          {BRANCHES.map((b) => (
+            <option key={b.id} value={b.id}>{b.label}</option>
+          ))}
+        </select>
       </Field>
     </>
   )

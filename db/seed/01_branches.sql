@@ -1,4 +1,4 @@
--- TrueSpend Simulation Seed — 10 Branches
+﻿-- TrueSpend Simulation Seed â€” 10 Branches
 -- Represents a mid-large enterprise with European + global footprint
 
 insert into branches (id, name, region, country, currency, annual_budget, budget_owner) values

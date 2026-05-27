@@ -63,7 +63,7 @@
         "conditions": {
           "string": [
             {
-              "value1": "={{ ($json.projected_spend_eur > $json.committed_spend_eur) || ($json.projected_spend_eur < $json.committed_spend_eur * 0.8) || ($json.idle_resources_eur > 5000) || ($json.reservation_utilization < 0.75) }}",
+              "value1": "={{ ($json.projected_eur > $json.committed_eur) || ($json.projected_eur < $json.committed_eur * 0.8) || ($json.idle_resources_eur > 5000) || ($json.reservation_util < 0.75) }}",
               "operation": "equal",
               "value2": "true"
             }
@@ -92,7 +92,7 @@
           "parameters": [
             {
               "name": "body",
-              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system specialising in cloud cost governance. You analyse hyperscaler spend positions (AWS, Azure, GCP) and reason across overshoot risk, undershoot waste, idle resources, and reservation utilisation. You draft precise, professional communications to hyperscaler account teams requesting right-sizing or commitment amendments. You always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Analyse this hyperscaler position and produce a complete alert and recommended action.\\n\\nPOSITION:\\n{{ JSON.stringify($node['Loop Each Position'].json) }}\\n\\nRELATED CONTRACT:\\n{{ JSON.stringify($node['Fetch Related Contract'].json) }}\\n\\nFLAG THRESHOLDS:\\n- Overshoot risk: projected_spend_eur > committed_spend_eur\\n- Undershoot waste: projected_spend_eur < committed_spend_eur * 0.80\\n- Idle resources: idle_resources_eur > 5000\\n- Low reservation utilisation: reservation_utilization < 0.75\\n\\nAssess which flags are triggered, reason on severity and recommended action, and draft any communication needed.\\n\\nReturn JSON exactly:\\n{\\n  \\\"alert_type\\\": \\\"overshoot\\\" | \\\"undershoot\\\" | \\\"idle_waste\\\" | \\\"low_reservation\\\" | \\\"multiple\\\",\\n  \\\"severity\\\": \\\"low\\\" | \\\"medium\\\" | \\\"high\\\" | \\\"critical\\\",\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"recommended_action\\\": \\\"string\\\",\\n  \\\"draft_communication\\\": \\\"string\\\",\\n  \\\"draft_communication_subject\\\": \\\"string\\\",\\n  \\\"auto_actionable\\\": true | false,\\n  \\\"estimated_saving_eur\\\": number\\n}\"\n  }]\n}"
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system specialising in cloud cost governance. You analyse hyperscaler spend positions (AWS, Azure, GCP) and reason across overshoot risk, undershoot waste, idle resources, and reservation utilisation. You draft precise, professional communications to hyperscaler account teams requesting right-sizing or commitment amendments. You always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Analyse this hyperscaler position and produce a complete alert and recommended action.\\n\\nPOSITION:\\n{{ JSON.stringify($node['Loop Each Position'].json) }}\\n\\nRELATED CONTRACT:\\n{{ JSON.stringify($node['Fetch Related Contract'].json) }}\\n\\nFLAG THRESHOLDS:\\n- Overshoot risk: projected_eur > committed_eur\\n- Undershoot waste: projected_eur < committed_eur * 0.80\\n- Idle resources: idle_resources_eur > 5000\\n- Low reservation utilisation: reservation_util < 0.75\\n\\nAssess which flags are triggered, reason on severity and recommended action, and draft any communication needed.\\n\\nReturn JSON exactly:\\n{\\n  \\\"alert_type\\\": \\\"overshoot\\\" | \\\"undershoot\\\" | \\\"idle_waste\\\" | \\\"low_reservation\\\" | \\\"multiple\\\",\\n  \\\"severity\\\": \\\"low\\\" | \\\"medium\\\" | \\\"high\\\" | \\\"critical\\\",\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"recommended_action\\\": \\\"string\\\",\\n  \\\"draft_communication\\\": \\\"string\\\",\\n  \\\"draft_communication_subject\\\": \\\"string\\\",\\n  \\\"auto_actionable\\\": true | false,\\n  \\\"estimated_saving_eur\\\": number\\n}\"\n  }]\n}"
             }
           ]
         }
@@ -232,7 +232,7 @@
               "type": "section",
               "textUi": {
                 "type": "mrkdwn",
-                "text": "=*Provider:* {{ $node['Loop Each Position'].json.provider }}\n*Alert Type:* {{ $node['Parse Claude Response'].json.alert_type }}\n*Severity:* {{ $node['Parse Claude Response'].json.severity }}\n*Account / Service:* {{ $node['Loop Each Position'].json.account_id || $node['Loop Each Position'].json.service_name }}\n*Committed:* {{ $node['Loop Each Position'].json.committed_spend_eur }} EUR\n*Projected:* {{ $node['Loop Each Position'].json.projected_spend_eur }} EUR\n*Idle Resources:* {{ $node['Loop Each Position'].json.idle_resources_eur }} EUR\n*Reservation Util:* {{ ($node['Loop Each Position'].json.reservation_utilization * 100).toFixed(1) }}%\n*Estimated Saving:* {{ $node['Parse Claude Response'].json.estimated_saving_eur }} EUR"
+                "text": "=*Provider:* {{ $node['Loop Each Position'].json.provider }}\n*Alert Type:* {{ $node['Parse Claude Response'].json.alert_type }}\n*Severity:* {{ $node['Parse Claude Response'].json.severity }}\n*Account / Service:* {{ $node['Loop Each Position'].json.account_id || $node['Loop Each Position'].json.service_name }}\n*Committed:* {{ $node['Loop Each Position'].json.committed_eur }} EUR\n*Projected:* {{ $node['Loop Each Position'].json.projected_eur }} EUR\n*Idle Resources:* {{ $node['Loop Each Position'].json.idle_resources_eur }} EUR\n*Reservation Util:* {{ ($node['Loop Each Position'].json.reservation_util * 100).toFixed(1) }}%\n*Estimated Saving:* {{ $node['Parse Claude Response'].json.estimated_saving_eur }} EUR"
               }
             },
             {
@@ -312,7 +312,7 @@
               "type": "section",
               "textUi": {
                 "type": "mrkdwn",
-                "text": "=*Date:* {{ new Date().toISOString().split('T')[0] }}\n*Run status:* Complete\n\n*MTD spend across all hyperscalers:*\n{{ $node['Fetch All Positions for Summary'].json.length }} position(s) reviewed this month.\n\nTotal MTD committed: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.committed_spend_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal MTD projected: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.projected_spend_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal idle waste flagged: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.idle_resources_eur||0), 0).toFixed(0) : '—' }} EUR\n\nSee #procurement-cloud for any alerts actioned today."
+                "text": "=*Date:* {{ new Date().toISOString().split('T')[0] }}\n*Run status:* Complete\n\n*MTD spend across all hyperscalers:*\n{{ $node['Fetch All Positions for Summary'].json.length }} position(s) reviewed this month.\n\nTotal MTD committed: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.committed_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal MTD projected: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.projected_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal idle waste flagged: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.idle_resources_eur||0), 0).toFixed(0) : '—' }} EUR\n\nSee #procurement-cloud for any alerts actioned today."
               }
             }
           ]
@@ -329,7 +329,7 @@
         "tableId": "trace_log",
         "fieldsUi": {
           "fieldValues": [
-            { "fieldId": "signal",      "fieldValue": "hyperscaler_monitor" },
+            { "fieldId": "signal",      "fieldValue": "consumption" },
             { "fieldId": "value",       "fieldValue": "=Daily run completed at {{ new Date().toISOString() }}. Positions reviewed: {{ $node['Fetch Hyperscaler Positions'].json.length }}." },
             { "fieldId": "notes",       "fieldValue": "TrueSpend Hyperscaler Daily Monitor — automated run" }
           ]

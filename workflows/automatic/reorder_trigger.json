@@ -21,7 +21,7 @@
         "operation": "getAll",
         "tableId": "contracts",
         "filterType": "string",
-        "filters": "category.in.(hardware,saas_license)&auto_renew.eq.true&status.eq.active"
+        "filters": "category.in.(hardware,saas_license)&auto_renew.eq.true&renewal_state.neq.manual_required"
       },
       "position": [200, 300]
     },

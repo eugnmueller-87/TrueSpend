@@ -1,5 +1,5 @@
--- TrueSpend Simulation Seed — Budget Positions Q2 2026
--- Per branch, per category — gives the agent consumption context
+﻿-- TrueSpend Simulation Seed â€” Budget Positions Q2 2026
+-- Per branch, per category â€” gives the agent consumption context
 
 insert into budget_positions (branch_id, period, category, budget, committed, spent) values
 

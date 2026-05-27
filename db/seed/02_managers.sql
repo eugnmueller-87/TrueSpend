@@ -1,10 +1,10 @@
--- TrueSpend Simulation Seed — 5 Procurement Managers
+﻿-- TrueSpend Simulation Seed â€” 5 Procurement Managers
 -- 5 people managing the entire procurement load across 10 branches
--- Each has a spend authority threshold — agent auto-executes below this
+-- Each has a spend authority threshold â€” agent auto-executes below this
 
 insert into managers (id, name, email, role, branches, spend_authority) values
   (
-    'm1000000-0000-0000-0000-000000000001',
+    'e1000000-0000-0000-0000-000000000001',
     'Sarah Brennan',
     'sarah.brennan@company.com',
     'head_of_procurement',
@@ -13,10 +13,10 @@ insert into managers (id, name, email, role, branches, spend_authority) values
       'b1000000-0000-0000-0000-000000000002'::uuid,  -- DACH
       'b1000000-0000-0000-0000-000000000003'::uuid   -- UK & Ireland
     ],
-    500000.00  -- can auto-approve up to €500k
+    500000.00  -- can auto-approve up to â‚¬500k
   ),
   (
-    'm1000000-0000-0000-0000-000000000002',
+    'e1000000-0000-0000-0000-000000000002',
     'Marc Dupont',
     'marc.dupont@company.com',
     'category_manager',
@@ -28,7 +28,7 @@ insert into managers (id, name, email, role, branches, spend_authority) values
     250000.00
   ),
   (
-    'm1000000-0000-0000-0000-000000000003',
+    'e1000000-0000-0000-0000-000000000003',
     'Lena Hoffmann',
     'lena.hoffmann@company.com',
     'category_manager',
@@ -40,7 +40,7 @@ insert into managers (id, name, email, role, branches, spend_authority) values
     250000.00
   ),
   (
-    'm1000000-0000-0000-0000-000000000004',
+    'e1000000-0000-0000-0000-000000000004',
     'Erik Lindqvist',
     'erik.lindqvist@company.com',
     'category_manager',
@@ -51,7 +51,7 @@ insert into managers (id, name, email, role, branches, spend_authority) values
     200000.00
   ),
   (
-    'm1000000-0000-0000-0000-000000000005',
+    'e1000000-0000-0000-0000-000000000005',
     'Priya Nair',
     'priya.nair@company.com',
     'ops_manager',
