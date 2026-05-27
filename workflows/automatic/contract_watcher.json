@@ -1,0 +1,354 @@
+{
+  "name": "TrueSpend — Daily Contract Watcher",
+  "description": "Runs every morning. Checks all contracts expiring within 90 days. Routes to auto-renew, agent reasoning, or escalation based on renewal state.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every Morning 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 7 * * 1-5" }]
+        }
+      },
+      "position": [0, 300]
+    },
+    {
+      "id": "fetch_expiring",
+      "name": "Fetch Contracts Expiring ≤90 Days",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "contracts_expiring",
+        "filterType": "string",
+        "filters": "days_remaining.lte.90"
+      },
+      "position": [200, 300]
+    },
+    {
+      "id": "check_any",
+      "name": "Any Contracts Found?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $json.length }}", "operation": "larger", "value2": 0 }]
+        }
+      },
+      "position": [400, 300]
+    },
+    {
+      "id": "loop_contracts",
+      "name": "Loop Each Contract",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": { "batchSize": 1 },
+      "position": [600, 300]
+    },
+    {
+      "id": "route_renewal_state",
+      "name": "Route by Renewal State",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.renewal_state }}",
+        "rules": {
+          "rules": [
+            { "value2": "clean",          "outputIndex": 0 },
+            { "value2": "price_increase", "outputIndex": 1 },
+            { "value2": "volume_change",  "outputIndex": 1 },
+            { "value2": "scope_change",   "outputIndex": 1 },
+            { "value2": "manual_required","outputIndex": 2 }
+          ]
+        },
+        "fallbackOutput": 2
+      },
+      "position": [800, 300]
+    },
+
+    {
+      "id": "auto_renew_check",
+      "name": "Auto-Renew Eligible?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json.auto_renew }}", "operation": "true" }],
+          "number": [{ "value1": "={{ $json.days_remaining }}", "operation": "larger", "value2": 30 }]
+        }
+      },
+      "position": [1000, 100]
+    },
+    {
+      "id": "check_alert_sent",
+      "name": "Which Alert to Send?",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "number",
+        "value1": "={{ $json.days_remaining }}",
+        "rules": {
+          "rules": [
+            { "operation": "smallerEqual", "value2": 30,  "outputIndex": 0 },
+            { "operation": "smallerEqual", "value2": 60,  "outputIndex": 1 },
+            { "operation": "smallerEqual", "value2": 90,  "outputIndex": 2 }
+          ]
+        }
+      },
+      "position": [1000, 200]
+    },
+    {
+      "id": "execute_auto_renew",
+      "name": "Execute Auto-Renewal",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "ticket_id",      "fieldValue": "={{ $json.id }}" },
+            { "fieldId": "contract_id",    "fieldValue": "={{ $json.id }}" },
+            { "fieldId": "disposition",    "fieldValue": "auto_execute" },
+            { "fieldId": "confidence",     "fieldValue": "0.97" },
+            { "fieldId": "reasoning",      "fieldValue": "Contract {{ $json.name }} with {{ $json.supplier_name }} is clean for auto-renewal. State: clean. Supplier health: {{ $json.supplier_health }}. Days remaining: {{ $json.days_remaining }}. Budget position confirmed. No changes detected. Auto-renewing per policy." },
+            { "fieldId": "outcome",        "fieldValue": "auto_renewed" },
+            { "fieldId": "actioned_by",    "fieldValue": "agent" },
+            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [1200, 50]
+    },
+    {
+      "id": "notify_auto_renewed",
+      "name": "Notify Owner — Auto-Renewed",
+      "type": "n8n-nodes-base.slack",
+      "parameters": {
+        "channel": "procurement-ops",
+        "text": "✅ *Auto-renewed:* {{ $json.name }}\n*Supplier:* {{ $json.supplier_name }}\n*Value:* {{ $json.value }} {{ $json.currency }}\n*Branch:* {{ $json.branch_name }}\n*Owner:* {{ $json.owner_name }}\n_No action required._"
+      },
+      "position": [1400, 50]
+    },
+
+    {
+      "id": "fetch_changes",
+      "name": "Fetch Contract Changes",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "contract_changes",
+        "filterType": "string",
+        "filters": "contract_id.eq.={{ $json.id }}"
+      },
+      "position": [1000, 400]
+    },
+    {
+      "id": "fetch_budget",
+      "name": "Fetch Budget Position",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "budget_positions",
+        "filterType": "string",
+        "filters": "branch_id.eq.={{ $json.branch_id }}&period.eq.2026-Q2&category.eq.={{ $json.category }}"
+      },
+      "position": [1000, 500]
+    },
+    {
+      "id": "call_claude",
+      "name": "Claude — Reason on Contract Change",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",  "value": "2023-06-01" },
+            { "name": "content-type",       "value": "application/json" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend, an agentic procurement reasoning system. You reason across contracts, consumption, supplier health, request patterns, and policy to reach a confident disposition on every procurement transaction. You are direct, precise, and always produce structured JSON output.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this contract renewal and produce a disposition.\\n\\nCONTRACT:\\n{{ JSON.stringify($node['loop_contracts'].json) }}\\n\\nCHANGES DETECTED:\\n{{ JSON.stringify($node['fetch_changes'].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node['fetch_budget'].json) }}\\n\\nReturn JSON with: { disposition: 'auto_execute'|'one_touch'|'escalate', confidence: 0.00-1.00, reasoning: string, recommendation: string, brief: string }\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [1200, 450]
+    },
+    {
+      "id": "parse_claude_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "disposition",    "value": "={{ JSON.parse($json.content[0].text).disposition }}" },
+            { "name": "confidence",     "value": "={{ JSON.parse($json.content[0].text).confidence }}" },
+            { "name": "reasoning",      "value": "={{ JSON.parse($json.content[0].text).reasoning }}" },
+            { "name": "recommendation", "value": "={{ JSON.parse($json.content[0].text).recommendation }}" },
+            { "name": "brief",          "value": "={{ JSON.parse($json.content[0].text).brief }}" }
+          ]
+        }
+      },
+      "position": [1400, 450]
+    },
+    {
+      "id": "route_disposition",
+      "name": "Route by Disposition",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.disposition }}",
+        "rules": {
+          "rules": [
+            { "value2": "auto_execute", "outputIndex": 0 },
+            { "value2": "one_touch",    "outputIndex": 1 },
+            { "value2": "escalate",     "outputIndex": 2 }
+          ]
+        }
+      },
+      "position": [1600, 450]
+    },
+    {
+      "id": "write_decision_auto",
+      "name": "Write Decision — Auto Execute",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "contract_id",    "fieldValue": "={{ $node['loop_contracts'].json.id }}" },
+            { "fieldId": "disposition",    "fieldValue": "auto_execute" },
+            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
+            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
+            { "fieldId": "recommendation", "fieldValue": "={{ $json.recommendation }}" },
+            { "fieldId": "actioned_by",    "fieldValue": "agent" },
+            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [1800, 300]
+    },
+    {
+      "id": "write_decision_one_touch",
+      "name": "Write Decision — One Touch",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "contract_id",    "fieldValue": "={{ $node['loop_contracts'].json.id }}" },
+            { "fieldId": "disposition",    "fieldValue": "one_touch" },
+            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
+            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
+            { "fieldId": "recommendation", "fieldValue": "={{ $json.recommendation }}" },
+            { "fieldId": "brief",          "fieldValue": "={{ $json.brief }}" }
+          ]
+        }
+      },
+      "position": [1800, 450]
+    },
+    {
+      "id": "send_one_touch",
+      "name": "Send One-Touch Confirm to Owner",
+      "type": "n8n-nodes-base.slack",
+      "parameters": {
+        "channel": "={{ $node['loop_contracts'].json.owner_email }}",
+        "text": "⚡ *One-touch needed:* {{ $node['loop_contracts'].json.name }}\n*Supplier:* {{ $node['loop_contracts'].json.supplier_name }}\n*Value:* {{ $node['loop_contracts'].json.value }} {{ $node['loop_contracts'].json.currency }}\n*Days remaining:* {{ $node['loop_contracts'].json.days_remaining }}\n\n*Agent recommendation:*\n{{ $json.recommendation }}\n\n*Approve:* [Approve] [Reject] [See full brief]",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "section",
+              "textUi": { "text": "={{ '*One-touch needed:* ' + $node['loop_contracts'].json.name }}", "type": "mrkdwn" }
+            },
+            {
+              "type": "actions",
+              "elementsUi": {
+                "elementsValues": [
+                  { "type": "button", "textUi": { "text": "✅ Approve" }, "style": "primary",  "value": "approve" },
+                  { "type": "button", "textUi": { "text": "❌ Reject"  }, "style": "danger",   "value": "reject"  },
+                  { "type": "button", "textUi": { "text": "📄 Full Brief" },                   "value": "brief"   }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "position": [2000, 450]
+    },
+    {
+      "id": "write_decision_escalate",
+      "name": "Write Decision — Escalate",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "contract_id",    "fieldValue": "={{ $node['loop_contracts'].json.id }}" },
+            { "fieldId": "disposition",    "fieldValue": "escalate" },
+            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
+            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
+            { "fieldId": "brief",          "fieldValue": "={{ $json.brief }}" }
+          ]
+        }
+      },
+      "position": [1800, 600]
+    },
+    {
+      "id": "create_jira_escalation",
+      "name": "Create Jira Escalation Ticket",
+      "type": "n8n-nodes-base.jira",
+      "parameters": {
+        "operation": "create",
+        "project": "PROC",
+        "issueType": "Task",
+        "summary": "={{ '[ESCALATE] ' + $node['loop_contracts'].json.name + ' — ' + $node['loop_contracts'].json.days_remaining + ' days remaining' }}",
+        "description": "={{ '*Contract:* ' + $node['loop_contracts'].json.name + '\\n*Supplier:* ' + $node['loop_contracts'].json.supplier_name + '\\n*Value:* ' + $node['loop_contracts'].json.value + ' ' + $node['loop_contracts'].json.currency + '\\n\\n*Agent Brief:*\\n' + $json.brief }}",
+        "priority": "High",
+        "assignee": "={{ $node['loop_contracts'].json.owner_email }}"
+      },
+      "position": [2000, 600]
+    },
+    {
+      "id": "no_contracts",
+      "name": "Log — Nothing to Process",
+      "type": "n8n-nodes-base.noOp",
+      "position": [600, 500]
+    }
+  ],
+  "connections": {
+    "Every Morning 07:00":              { "main": [[{ "node": "Fetch Contracts Expiring ≤90 Days", "type": "main", "index": 0 }]] },
+    "Fetch Contracts Expiring ≤90 Days":{ "main": [[{ "node": "Any Contracts Found?",              "type": "main", "index": 0 }]] },
+    "Any Contracts Found?":             { "main": [
+      [{ "node": "Loop Each Contract",   "type": "main", "index": 0 }],
+      [{ "node": "Log — Nothing to Process", "type": "main", "index": 0 }]
+    ]},
+    "Loop Each Contract":               { "main": [[{ "node": "Route by Renewal State",            "type": "main", "index": 0 }]] },
+    "Route by Renewal State":           { "main": [
+      [{ "node": "Auto-Renew Eligible?",          "type": "main", "index": 0 }],
+      [{ "node": "Fetch Contract Changes",        "type": "main", "index": 0 }],
+      [{ "node": "Create Jira Escalation Ticket", "type": "main", "index": 0 }]
+    ]},
+    "Auto-Renew Eligible?":             { "main": [
+      [{ "node": "Execute Auto-Renewal",           "type": "main", "index": 0 }],
+      [{ "node": "Fetch Contract Changes",         "type": "main", "index": 0 }]
+    ]},
+    "Execute Auto-Renewal":             { "main": [[{ "node": "Notify Owner — Auto-Renewed",      "type": "main", "index": 0 }]] },
+    "Fetch Contract Changes":           { "main": [[{ "node": "Fetch Budget Position",            "type": "main", "index": 0 }]] },
+    "Fetch Budget Position":            { "main": [[{ "node": "Claude — Reason on Contract Change","type": "main", "index": 0 }]] },
+    "Claude — Reason on Contract Change":{ "main": [[{ "node": "Parse Claude Response",           "type": "main", "index": 0 }]] },
+    "Parse Claude Response":            { "main": [[{ "node": "Route by Disposition",             "type": "main", "index": 0 }]] },
+    "Route by Disposition":             { "main": [
+      [{ "node": "Write Decision — Auto Execute",  "type": "main", "index": 0 }],
+      [{ "node": "Write Decision — One Touch",     "type": "main", "index": 0 }],
+      [{ "node": "Write Decision — Escalate",      "type": "main", "index": 0 }]
+    ]},
+    "Write Decision — One Touch":       { "main": [[{ "node": "Send One-Touch Confirm to Owner", "type": "main", "index": 0 }]] },
+    "Write Decision — Escalate":        { "main": [[{ "node": "Create Jira Escalation Ticket",  "type": "main", "index": 0 }]] }
+  }
+}
