@@ -65,11 +65,25 @@
     },
     {
       "id": "flag_unknown_supplier",
-      "name": "Flag Unknown Sender",
-      "type": "n8n-nodes-base.slack",
+      "name": "Log Unknown Sender to Trace",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "channel": "procurement-ops",
-        "text": "=⚠️ *Unknown supplier email received*\nFrom: {{ $node['Extract Email Data'].json.from_email }}\nSubject: {{ $node['Extract Email Data'].json.subject }}\n\nNot matched to any supplier in TrueSpend. Manual review needed."
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ signal: 'intake', value: 'unknown_sender', notes: 'Email from unmatched sender ' + $node['Extract Email Data'].json.from_email + ' — subject: ' + $node['Extract Email Data'].json.subject + '. No supplier found in TrueSpend.' }) }}" }
+          ]
+        }
       },
       "position": [800, 500]
     },
@@ -347,53 +361,33 @@
     },
     {
       "id": "slack_critical",
-      "name": "Slack — Critical: Needs Immediate Attention",
-      "type": "n8n-nodes-base.slack",
+      "name": "Log Escalation to Trace",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "channel": "procurement-urgent",
-        "text": "=🚨 *CRITICAL — Supplier reply needs immediate attention*\n\n*From:* {{ $node['Extract Email Data'].json.from_name }} ({{ $node['Match Supplier in PostgREST'].json[0].name }})\n*Subject:* {{ $node['Extract Email Data'].json.subject }}\n\n*Why agent cannot resolve:*\n{{ $node['Parse Claude Response'].json.route_reason }}\n\n*Agent reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}\n\n*Draft reply ready:*\n```{{ $node['Parse Claude Response'].json.reply_body }}```\n\n@{{ $node['Fetch Manager to Route To'].json[0]?.name }} — action needed now."
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ signal: 'intake', value: 'supplier_reply_escalated', notes: 'Reply from ' + $node['Match Supplier in PostgREST'].json[0].name + ' — urgency: ' + $node['Parse Claude Response'].json.urgency + '. Reason: ' + $node['Parse Claude Response'].json.route_reason + '. Jira ticket created. Ticket visible on Operations Board.' }) }}" }
+          ]
+        }
       },
       "position": [2400, 380]
     },
     {
       "id": "slack_high",
-      "name": "Slack — High: Route to Manager",
-      "type": "n8n-nodes-base.slack",
-      "parameters": {
-        "channel": "procurement-ops",
-        "blocksUi": {
-          "blocksValues": [
-            {
-              "type": "header",
-              "textUi": { "text": "📨 Supplier reply needs your input", "type": "plain_text" }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*From:* {{ $node['Extract Email Data'].json.from_name }} ({{ $node['Match Supplier in PostgREST'].json[0].name }})\n*Subject:* {{ $node['Extract Email Data'].json.subject }}\n*Why routed:* {{ $node['Parse Claude Response'].json.route_reason }}"
-              }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Draft reply prepared:*\n```{{ $node['Parse Claude Response'].json.reply_body.substring(0, 400) }}...```"
-              }
-            },
-            {
-              "type": "actions",
-              "elementsUi": {
-                "elementsValues": [
-                  { "type": "button", "textUi": { "text": "✅ Send Draft" }, "style": "primary", "value": "={{ 'send_draft:' + ($node['Log Inbound Email'].json[0]?.id || $node['Log Inbound Email'].json?.id) }}" },
-                  { "type": "button", "textUi": { "text": "✏️ Edit First" },                     "value": "={{ 'edit:' + ($node['Log Inbound Email'].json[0]?.id || $node['Log Inbound Email'].json?.id) }}"       },
-                  { "type": "button", "textUi": { "text": "📋 Full Thread" },                    "value": "={{ 'thread:' + $node['Match Supplier in PostgREST'].json[0].id }}"       }
-                ]
-              }
-            }
-          ]
-        }
-      },
+      "name": "Log High-Urgency Reply to Trace",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
       "position": [2400, 520]
     },
     {

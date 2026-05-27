@@ -367,40 +367,23 @@
     },
     {
       "id": "send_one_touch_slack",
-      "name": "Send One-Touch to Manager — Slack",
-      "type": "n8n-nodes-base.slack",
+      "name": "Log Reorder One-Touch to Trace",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "channel": "={{ $node['Fetch Manager for One-Touch'].json[0]?.slack_id || $node['Fetch Manager for One-Touch'].json[0]?.email }}",
-        "blocksUi": {
-          "blocksValues": [
-            {
-              "type": "header",
-              "textUi": { "text": "Reorder needs your go-ahead", "type": "plain_text" }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Contract:* {{ $node['Loop Each Contract'].json.name }}\n*Supplier:* {{ $node['Loop Each Contract'].json.supplier_name }}\n*Quantity:* {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}\n*Est. Value:* {{ $node['Parse Claude Response'].json.estimated_value }} {{ $node['Loop Each Contract'].json.currency || 'EUR' }}\n*Order Ref:* {{ $node['Parse Claude Response'].json.order_reference }}\n*Confidence:* {{ $node['Parse Claude Response'].json.confidence }}"
-              }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Agent reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}"
-              }
-            },
-            {
-              "type": "actions",
-              "elementsUi": {
-                "elementsValues": [
-                  { "type": "button", "textUi": { "text": "Approve & Place Order" }, "style": "primary", "value": "={{ 'approve:' + ($node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id) }}" },
-                  { "type": "button", "textUi": { "text": "Reject"                }, "style": "danger",  "value": "={{ 'reject:' + ($node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id) }}"  },
-                  { "type": "button", "textUi": { "text": "Full Brief"            },                     "value": "={{ 'brief:' + ($node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id) }}"   }
-                ]
-              }
-            }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ signal: 'reorder', value: 'one_touch_pending', notes: 'Ticket ' + ($node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id) + ' — ' + $node['Loop Each Contract'].json.name + ' reorder awaiting approval on Operations Board. Est. value: ' + $node['Parse Claude Response'].json.estimated_value + ' EUR.' }) }}" }
           ]
         }
       },

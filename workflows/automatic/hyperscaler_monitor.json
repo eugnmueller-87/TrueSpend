@@ -257,37 +257,23 @@
 
     {
       "id": "post_cloud_alert_slack",
-      "name": "Post Alert to #procurement-cloud",
-      "type": "n8n-nodes-base.slack",
+      "name": "Log Cloud Alert to Trace",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "channel": "procurement-cloud",
-        "blocksUi": {
-          "blocksValues": [
-            {
-              "type": "header",
-              "textUi": { "text": "={{ '[' + $node['Parse Claude Response'].json.severity.toUpperCase() + '] Cloud Cost Alert: ' + $node['Loop Each Position'].json.provider }}", "type": "plain_text" }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Provider:* {{ $node['Loop Each Position'].json.provider }}\n*Alert Type:* {{ $node['Parse Claude Response'].json.alert_type }}\n*Severity:* {{ $node['Parse Claude Response'].json.severity }}\n*Account / Service:* {{ $node['Loop Each Position'].json.account_id || $node['Loop Each Position'].json.service_name }}\n*Committed:* {{ $node['Loop Each Position'].json.committed_eur }} EUR\n*Projected:* {{ $node['Loop Each Position'].json.projected_eur }} EUR\n*Idle Resources:* {{ $node['Loop Each Position'].json.idle_resources_eur }} EUR\n*Reservation Util:* {{ ($node['Loop Each Position'].json.reservation_util * 100).toFixed(1) }}%\n*Estimated Saving:* {{ $node['Parse Claude Response'].json.estimated_saving_eur }} EUR"
-              }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Recommended Action:*\n{{ $node['Parse Claude Response'].json.recommended_action }}\n\n*Agent Reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}"
-              }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Draft communication ready:*\n```{{ $node['Parse Claude Response'].json.draft_communication_subject }}\n\n{{ $node['Parse Claude Response'].json.draft_communication.substring(0, 400) }}```"
-              }
-            }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ signal: 'consumption', value: $node['Parse Claude Response'].json.alert_type + ':' + $node['Parse Claude Response'].json.severity, notes: 'Cloud alert one-touch pending — provider: ' + $node['Loop Each Position'].json.provider + ', est. saving: ' + $node['Parse Claude Response'].json.estimated_saving_eur + ' EUR. Recommendation: ' + $node['Parse Claude Response'].json.recommended_action }) }}" }
           ]
         }
       },
@@ -343,23 +329,23 @@
     },
     {
       "id": "post_daily_summary_slack",
-      "name": "Post Daily Summary to #procurement-ops",
-      "type": "n8n-nodes-base.slack",
+      "name": "Log Daily Summary to Trace",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "channel": "procurement-ops",
-        "blocksUi": {
-          "blocksValues": [
-            {
-              "type": "header",
-              "textUi": { "text": "Hyperscaler Daily Summary", "type": "plain_text" }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Date:* {{ new Date().toISOString().split('T')[0] }}\n*Run status:* Complete\n\n*MTD spend across all hyperscalers:*\n{{ $node['Fetch All Positions for Summary'].json.length }} position(s) reviewed this month.\n\nTotal MTD committed: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.committed_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal MTD projected: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.projected_eur||0), 0).toFixed(0) : '—' }} EUR\nTotal idle waste flagged: {{ $node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.idle_resources_eur||0), 0).toFixed(0) : '—' }} EUR\n\nSee #procurement-cloud for any alerts actioned today."
-              }
-            }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ signal: 'consumption', value: 'daily_summary', notes: 'MTD positions reviewed: ' + $node['Fetch All Positions for Summary'].json.length + '. Total committed: ' + ($node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.committed_eur||0), 0).toFixed(0) : 0) + ' EUR. Total projected: ' + ($node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.projected_eur||0), 0).toFixed(0) : 0) + ' EUR.' }) }}" }
           ]
         }
       },

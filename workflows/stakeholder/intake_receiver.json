@@ -345,40 +345,23 @@
 
     {
       "id": "one_touch_slack",
-      "name": "Send One-Touch to Manager",
-      "type": "n8n-nodes-base.slack",
+      "name": "Log One-Touch to Trace",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "channel": "={{ $node['Fetch Responsible Manager'].json[0]?.email }}",
-        "blocksUi": {
-          "blocksValues": [
-            {
-              "type": "header",
-              "textUi": { "text": "⚡ One-touch needed", "type": "plain_text" }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*{{ $node['Intake Form Submitted'].json.body.title }}*\n*Submitted by:* {{ $node['Intake Form Submitted'].json.body.submitted_by }}\n*Amount:* {{ $node['Intake Form Submitted'].json.body.amount }} {{ $node['Intake Form Submitted'].json.body.currency || 'EUR' }}\n*Supplier:* {{ $node['Intake Form Submitted'].json.body.supplier_name }}\n*Reference:* {{ $node['Generate Ticket Reference'].json.reference }}"
-              }
-            },
-            {
-              "type": "section",
-              "textUi": {
-                "type": "mrkdwn",
-                "text": "=*Agent recommendation:*\n{{ $node['Parse Claude Response'].json.recommendation }}"
-              }
-            },
-            {
-              "type": "actions",
-              "elementsUi": {
-                "elementsValues": [
-                  { "type": "button", "textUi": { "text": "✅ Approve & Send" }, "style": "primary", "value": "={{ 'approve:' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) }}" },
-                  { "type": "button", "textUi": { "text": "❌ Reject"          }, "style": "danger",  "value": "={{ 'reject:' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) }}"  },
-                  { "type": "button", "textUi": { "text": "📄 Full Brief"      },                     "value": "={{ 'brief:' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) }}"   }
-                ]
-              }
-            }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ signal: 'intake', value: 'one_touch_pending', notes: 'Ticket ' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) + ' — ' + $node['Intake Form Submitted'].json.body.title + ' awaiting manager approval on Operations Board.' }) }}" }
           ]
         }
       },

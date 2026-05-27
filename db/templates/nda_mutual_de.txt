@@ -1,0 +1,114 @@
+MUTUAL NON-DISCLOSURE AGREEMENT
+Gegenseitige Geheimhaltungsvereinbarung
+
+This Mutual Non-Disclosure Agreement ("Agreement") is entered into as of {{EFFECTIVE_DATE}}
+between:
+
+TrueSpend GmbH, a company incorporated under German law, with its registered office at
+{{TRUESPEND_ADDRESS}} ("TrueSpend")
+
+and
+
+{{SUPPLIER_LEGAL_NAME}}, a company incorporated under the laws of {{SUPPLIER_COUNTRY}},
+with its registered office at {{SUPPLIER_ADDRESS}} ("Supplier")
+
+TrueSpend and Supplier are each referred to herein individually as a "Party" and collectively
+as the "Parties."
+
+─────────────────────────────────────────────────────────────────────────────
+
+1. PURPOSE
+
+The Parties wish to explore a potential business relationship concerning {{PURPOSE}} and
+may disclose to each other certain confidential and proprietary information for the purpose
+of evaluating and implementing this business relationship ("Purpose").
+
+2. DEFINITION OF CONFIDENTIAL INFORMATION
+
+"Confidential Information" means any information disclosed by one Party ("Disclosing Party")
+to the other Party ("Receiving Party"), either directly or indirectly, in writing, orally or
+by inspection of tangible objects, that is designated as confidential or that reasonably
+should be understood to be confidential given the nature of the information and circumstances
+of disclosure. Confidential Information includes, without limitation:
+
+(a) business plans, strategies, forecasts, and financial information;
+(b) technical data, trade secrets, know-how, research, product plans, and products;
+(c) customer lists, vendor lists, and supplier information;
+(d) software, developments, inventions, processes, designs, and drawings;
+(e) personal data within the meaning of Art. 4 No. 1 GDPR.
+
+Confidential Information does not include information that:
+(i)   is or becomes publicly available without breach of this Agreement;
+(ii)  was rightfully known to the Receiving Party before disclosure;
+(iii) is rightfully obtained from a third party without restriction;
+(iv)  is independently developed by the Receiving Party without use of Confidential Information;
+(v)   is required to be disclosed by applicable law or court order, provided the Receiving Party
+      gives the Disclosing Party prompt written notice.
+
+3. OBLIGATIONS OF RECEIVING PARTY
+
+Each Receiving Party agrees to:
+(a) hold Confidential Information in strict confidence using at least the same degree of care
+    it uses to protect its own confidential information, but in no event less than reasonable care;
+(b) not disclose Confidential Information to any third party without prior written consent;
+(c) use Confidential Information solely for the Purpose;
+(d) limit disclosure to employees, contractors, and advisors on a strict need-to-know basis,
+    provided they are bound by confidentiality obligations no less restrictive than this Agreement;
+(e) promptly notify the Disclosing Party upon becoming aware of any actual or suspected
+    unauthorised disclosure.
+
+4. TERM
+
+This Agreement shall remain in effect for a period of {{TERM_YEARS}} years from the
+Effective Date. The confidentiality obligations with respect to Confidential Information
+disclosed during the term shall survive termination for a further period of {{SURVIVAL_YEARS}}
+years.
+
+5. RETURN OR DESTRUCTION OF INFORMATION
+
+Upon request or termination of this Agreement, each Receiving Party shall promptly return
+or destroy all Confidential Information and any copies thereof, and certify such destruction
+in writing upon request.
+
+6. NO LICENCE
+
+Nothing in this Agreement grants either Party any rights in or to the other Party's
+Confidential Information except as expressly set forth herein.
+
+7. INJUNCTIVE RELIEF
+
+Each Party acknowledges that breach of this Agreement may cause irreparable harm for which
+monetary damages would be inadequate, and that the Disclosing Party shall be entitled to
+seek injunctive relief in addition to any other remedies.
+
+8. GOVERNING LAW AND JURISDICTION
+
+This Agreement shall be governed by and construed in accordance with the laws of the Federal
+Republic of Germany, excluding conflict-of-law provisions. The Parties submit to the
+exclusive jurisdiction of the courts of {{JURISDICTION_CITY}}, Germany.
+
+9. ENTIRE AGREEMENT
+
+This Agreement constitutes the entire agreement between the Parties with respect to its
+subject matter and supersedes all prior negotiations, representations, or agreements.
+Any amendment must be made in writing and signed by both Parties.
+
+─────────────────────────────────────────────────────────────────────────────
+
+IN WITNESS WHEREOF, the Parties have executed this Agreement as of the date first written above.
+
+TrueSpend GmbH                          {{SUPPLIER_LEGAL_NAME}}
+
+_________________________________       _________________________________
+Signature                               Signature
+
+_________________________________       _________________________________
+Name                                    Name
+
+_________________________________       _________________________________
+Title                                   Title
+
+_________________________________       _________________________________
+Date                                    Date
+
+[SIMULATION — Document generated by TrueSpend Legal Agent. Requires human review before binding execution.]

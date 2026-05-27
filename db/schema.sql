@@ -423,3 +423,194 @@ begin
     execute 'create policy "app_role_all" on budget_positions for all to truespend using (true) with check (true)';
   end if;
 end $$;
+
+-- ============================================================
+-- COMPLIANCE & LEGAL EXTENSIONS
+-- Added: supplier onboarding compliance agents
+-- ============================================================
+
+-- New enums
+create type doc_type as enum (
+  'nda',          -- Non-Disclosure Agreement
+  'dpa',          -- Data Processing Agreement
+  'tom',          -- Technical & Organisational Measures annex
+  'scc',          -- Standard Contractual Clauses (non-EU suppliers)
+  'coc',          -- Code of Conduct
+  'lksg'          -- Supply Chain Act declaration
+);
+
+create type doc_status as enum (
+  'not_required', -- this doc type not needed for this supplier
+  'generating',   -- agent is generating the document
+  'generated',    -- document generated, not yet sent
+  'sent',         -- sent to supplier awaiting signature
+  'signed',       -- supplier has signed
+  'filed',        -- signed copy filed in system
+  'rejected',     -- supplier refused to sign
+  'expired'       -- signed but now expired
+);
+
+create type compliance_status as enum (
+  'pending',      -- not yet assessed
+  'running',      -- agent currently assessing
+  'green',        -- fully compliant
+  'amber',        -- minor gaps, remediation underway
+  'red',          -- blocking issues, cannot proceed
+  'waived'        -- risk accepted and documented
+);
+
+create type ticket_status_v2 as enum (
+  'open',
+  'reasoning',
+  'pending_confirm',
+  'pending_review',       -- needs human eyes (≥€100k or compliance flag)
+  'signature_required',   -- contract PDF needs signing
+  'approved',
+  'rejected',
+  'escalated',
+  'closed'
+);
+
+-- Legal documents — NDA, DPA, TOM, SCC per supplier
+create table legal_documents (
+  id              uuid primary key default uuid_generate_v4(),
+  supplier_id     uuid references suppliers(id) not null,
+  doc_type        doc_type not null,
+  status          doc_status not null default 'generating',
+  -- Document content
+  content         text,             -- full generated document text
+  content_summary text,             -- agent summary of key terms
+  -- Parties
+  company_name    text default 'TrueSpend GmbH',
+  supplier_name   text,
+  governing_law   text default 'German law',
+  -- Dates
+  generated_at    timestamptz,
+  sent_at         timestamptz,
+  signed_at       timestamptz,
+  expires_at      date,             -- when doc needs renewal
+  -- Tracking
+  sent_to_email   text,
+  notes           text,
+  created_at      timestamptz default now(),
+  updated_at      timestamptz default now(),
+  unique(supplier_id, doc_type)     -- one active doc per type per supplier
+);
+
+-- Compliance checks — per supplier, per agent
+create table compliance_checks (
+  id              uuid primary key default uuid_generate_v4(),
+  supplier_id     uuid references suppliers(id) not null,
+  -- Which agent ran this check
+  check_type      text not null,    -- 'lawyer' | 'gdpr' | 'infosec' | 'lksg' | 'ethics'
+  status          compliance_status not null default 'pending',
+  -- Results
+  score           numeric(5,2),     -- 0-100
+  passed          boolean,
+  findings        text[],           -- list of findings
+  blockers        text[],           -- must-fix before proceeding
+  recommendations text[],           -- nice-to-have improvements
+  full_report     text,             -- full agent reasoning
+  -- Required documents flagged by this check
+  docs_required   doc_type[],       -- which docs this check requires
+  -- Metadata
+  model_used      text default 'claude-sonnet-4-6',
+  checked_at      timestamptz default now(),
+  created_at      timestamptz default now()
+);
+
+-- Extend suppliers table with compliance fields
+alter table suppliers
+  add column if not exists nda_status       doc_status default 'not_required',
+  add column if not exists dpa_status       doc_status default 'not_required',
+  add column if not exists lksg_compliant   boolean,
+  add column if not exists infosec_score    numeric(5,2),
+  add column if not exists compliance_status compliance_status default 'pending',
+  add column if not exists onboarding_complete boolean default false,
+  add column if not exists processes_personal_data boolean default false,
+  add column if not exists data_residency   text,       -- 'EU' | 'non-EU' | 'mixed'
+  add column if not exists iso27001         boolean default false,
+  add column if not exists soc2             boolean default false;
+
+-- Extend tickets table with new statuses and review fields
+alter table tickets
+  add column if not exists review_type      text,       -- 'major_contract' | 'compliance_flag' | 'signature'
+  add column if not exists review_notes     text,       -- agent summary for reviewer
+  add column if not exists pdf_url          text,       -- link to contract PDF
+  add column if not exists value_eur        numeric(15,2), -- normalised EUR value for threshold check
+  add column if not exists compliance_check_id uuid references compliance_checks(id),
+  add column if not exists legal_doc_id     uuid references legal_documents(id);
+
+-- Indexes
+create index if not exists idx_legal_docs_supplier on legal_documents(supplier_id);
+create index if not exists idx_legal_docs_status on legal_documents(status);
+create index if not exists idx_compliance_supplier on compliance_checks(supplier_id);
+create index if not exists idx_compliance_type on compliance_checks(check_type);
+create index if not exists idx_tickets_review on tickets(review_type) where review_type is not null;
+
+-- View: open tickets needing human action (the Operations Board feed)
+create or replace view open_tickets_board as
+select
+  t.id,
+  t.reference,
+  t.title,
+  t.status,
+  t.source,
+  t.review_type,
+  t.review_notes,
+  t.amount,
+  t.value_eur,
+  t.currency,
+  t.pdf_url,
+  t.created_at,
+  t.target_close,
+  s.name  as supplier_name,
+  s.health as supplier_health,
+  s.compliance_status as supplier_compliance,
+  b.name  as branch_name,
+  m.name  as owner_name,
+  m.email as owner_email,
+  d.disposition,
+  d.confidence,
+  d.recommendation,
+  d.brief
+from tickets t
+left join suppliers  s on s.id = t.supplier_id
+left join branches   b on b.id = t.branch_id
+left join managers   m on m.id = t.owner_id
+left join decisions  d on d.ticket_id = t.id
+where t.status in ('pending_review', 'signature_required', 'pending_confirm', 'escalated')
+order by
+  case t.status
+    when 'signature_required' then 1
+    when 'pending_review'     then 2
+    when 'escalated'          then 3
+    when 'pending_confirm'    then 4
+  end,
+  t.created_at asc;
+
+-- View: supplier compliance summary
+create or replace view supplier_compliance_summary as
+select
+  s.id,
+  s.name,
+  s.country,
+  s.compliance_status,
+  s.nda_status,
+  s.dpa_status,
+  s.lksg_compliant,
+  s.infosec_score,
+  s.onboarding_complete,
+  s.processes_personal_data,
+  count(cc.id) as total_checks,
+  count(cc.id) filter (where cc.passed = true)  as checks_passed,
+  count(cc.id) filter (where cc.passed = false) as checks_failed,
+  count(ld.id) filter (where ld.status = 'signed') as docs_signed,
+  count(ld.id) filter (where ld.status in ('sent','generated')) as docs_pending
+from suppliers s
+left join compliance_checks cc on cc.supplier_id = s.id
+left join legal_documents   ld on ld.supplier_id = s.id
+group by s.id, s.name, s.country, s.compliance_status,
+         s.nda_status, s.dpa_status, s.lksg_compliant,
+         s.infosec_score, s.onboarding_complete, s.processes_personal_data
+order by s.name;
