@@ -16,12 +16,18 @@
     {
       "id": "fetch_expiring",
       "name": "Fetch Contracts Expiring ≤90 Days",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "contracts_expiring",
-        "filterType": "string",
-        "filters": "days_remaining.lte.90"
+        "method": "GET",
+        "url": "https://postgrest-production-7960.up.railway.app/contracts_expiring?days_remaining=lte.90",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        }
       },
       "position": [200, 300]
     },
@@ -63,7 +69,6 @@
       },
       "position": [800, 300]
     },
-
     {
       "id": "auto_renew_check",
       "name": "Auto-Renew Eligible?",
@@ -85,9 +90,9 @@
         "value1": "={{ $json.days_remaining }}",
         "rules": {
           "rules": [
-            { "operation": "smallerEqual", "value2": 30,  "outputIndex": 0 },
-            { "operation": "smallerEqual", "value2": 60,  "outputIndex": 1 },
-            { "operation": "smallerEqual", "value2": 90,  "outputIndex": 2 }
+            { "operation": "smallerEqual", "value2": 30, "outputIndex": 0 },
+            { "operation": "smallerEqual", "value2": 60, "outputIndex": 1 },
+            { "operation": "smallerEqual", "value2": 90, "outputIndex": 2 }
           ]
         }
       },
@@ -96,20 +101,22 @@
     {
       "id": "execute_auto_renew",
       "name": "Execute Auto-Renewal",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "ticket_id",      "fieldValue": "={{ $json.id }}" },
-            { "fieldId": "contract_id",    "fieldValue": "={{ $json.id }}" },
-            { "fieldId": "disposition",    "fieldValue": "auto_execute" },
-            { "fieldId": "confidence",     "fieldValue": "0.97" },
-            { "fieldId": "reasoning",      "fieldValue": "Contract {{ $json.name }} with {{ $json.supplier_name }} is clean for auto-renewal. State: clean. Supplier health: {{ $json.supplier_health }}. Days remaining: {{ $json.days_remaining }}. Budget position confirmed. No changes detected. Auto-renewing per policy." },
-            { "fieldId": "outcome",        "fieldValue": "auto_renewed" },
-            { "fieldId": "actioned_by",    "fieldValue": "agent" },
-            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ contract_id: $json.id, disposition: 'auto_execute', confidence: 0.97, reasoning: 'Contract ' + $json.name + ' with ' + $json.supplier_name + ' is clean for auto-renewal. State: clean. Supplier health: ' + $json.supplier_health + '. Days remaining: ' + $json.days_remaining + '. No changes detected.', outcome: 'auto_renewed', actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}" }
           ]
         }
       },
@@ -121,32 +128,43 @@
       "type": "n8n-nodes-base.slack",
       "parameters": {
         "channel": "procurement-ops",
-        "text": "✅ *Auto-renewed:* {{ $json.name }}\n*Supplier:* {{ $json.supplier_name }}\n*Value:* {{ $json.value }} {{ $json.currency }}\n*Branch:* {{ $json.branch_name }}\n*Owner:* {{ $json.owner_name }}\n_No action required._"
+        "text": "=✅ *Auto-renewed:* {{ $json.name }}\n*Supplier:* {{ $json.supplier_name }}\n*Value:* {{ $json.value }} {{ $json.currency }}\n*Branch:* {{ $json.branch_name }}\n*Owner:* {{ $json.owner_name }}\n_No action required._"
       },
       "position": [1400, 50]
     },
-
     {
       "id": "fetch_changes",
       "name": "Fetch Contract Changes",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "contract_changes",
-        "filterType": "string",
-        "filters": "contract_id.eq.={{ $json.id }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contract_changes?contract_id=eq.{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [1000, 400]
     },
     {
       "id": "fetch_budget",
       "name": "Fetch Budget Position",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "budget_positions",
-        "filterType": "string",
-        "filters": "branch_id.eq.={{ $json.branch_id }}&period.eq.2026-Q2&category.eq.={{ $json.category }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node['loop_contracts'].json.branch_id }}&period=eq.2026-Q2&category=eq.{{ $node['loop_contracts'].json.category }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [1000, 500]
     },
@@ -161,16 +179,16 @@
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
           "parameters": [
-            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
-            { "name": "anthropic-version",  "value": "2023-06-01" },
-            { "name": "content-type",       "value": "application/json" }
+            { "name": "x-api-key",        "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type",      "value": "application/json" }
           ]
         },
         "bodyParameters": {
           "parameters": [
             {
               "name": "body",
-              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend, an agentic procurement reasoning system. You reason across contracts, consumption, supplier health, request patterns, and policy to reach a confident disposition on every procurement transaction. You are direct, precise, and always produce structured JSON output.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this contract renewal and produce a disposition.\\n\\nCONTRACT:\\n{{ JSON.stringify($node['loop_contracts'].json) }}\\n\\nCHANGES DETECTED:\\n{{ JSON.stringify($node['fetch_changes'].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node['fetch_budget'].json) }}\\n\\nReturn JSON with: { disposition: 'auto_execute'|'one_touch'|'escalate', confidence: 0.00-1.00, reasoning: string, recommendation: string, brief: string }\"\n  }]\n}"
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend, an agentic procurement reasoning system. You reason across contracts, consumption, supplier health, request patterns, and policy to reach a confident disposition on every procurement transaction. You are direct, precise, and always produce structured JSON output.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this contract renewal and produce a disposition.\\n\\nCONTRACT:\\n{{ JSON.stringify($node['loop_contracts'].json) }}\\n\\nCHANGES DETECTED:\\n{{ JSON.stringify($node['Fetch Contract Changes'].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node['Fetch Budget Position'].json) }}\\n\\nReturn JSON with: { disposition: 'auto_execute'|'one_touch'|'escalate', confidence: 0.00-1.00, reasoning: string, recommendation: string, brief: string }\"\n  }]\n}"
             }
           ]
         }
@@ -214,19 +232,22 @@
     {
       "id": "write_decision_auto",
       "name": "Write Decision — Auto Execute",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "contract_id",    "fieldValue": "={{ $node['loop_contracts'].json.id }}" },
-            { "fieldId": "disposition",    "fieldValue": "auto_execute" },
-            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
-            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
-            { "fieldId": "recommendation", "fieldValue": "={{ $json.recommendation }}" },
-            { "fieldId": "actioned_by",    "fieldValue": "agent" },
-            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ contract_id: $node['loop_contracts'].json.id, disposition: 'auto_execute', confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}" }
           ]
         }
       },
@@ -235,18 +256,22 @@
     {
       "id": "write_decision_one_touch",
       "name": "Write Decision — One Touch",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "contract_id",    "fieldValue": "={{ $node['loop_contracts'].json.id }}" },
-            { "fieldId": "disposition",    "fieldValue": "one_touch" },
-            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
-            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
-            { "fieldId": "recommendation", "fieldValue": "={{ $json.recommendation }}" },
-            { "fieldId": "brief",          "fieldValue": "={{ $json.brief }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ contract_id: $node['loop_contracts'].json.id, disposition: 'one_touch', confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, brief: $json.brief }) }}" }
           ]
         }
       },
@@ -258,7 +283,6 @@
       "type": "n8n-nodes-base.slack",
       "parameters": {
         "channel": "={{ $node['loop_contracts'].json.owner_email }}",
-        "text": "⚡ *One-touch needed:* {{ $node['loop_contracts'].json.name }}\n*Supplier:* {{ $node['loop_contracts'].json.supplier_name }}\n*Value:* {{ $node['loop_contracts'].json.value }} {{ $node['loop_contracts'].json.currency }}\n*Days remaining:* {{ $node['loop_contracts'].json.days_remaining }}\n\n*Agent recommendation:*\n{{ $json.recommendation }}\n\n*Approve:* [Approve] [Reject] [See full brief]",
         "blocksUi": {
           "blocksValues": [
             {
@@ -269,9 +293,9 @@
               "type": "actions",
               "elementsUi": {
                 "elementsValues": [
-                  { "type": "button", "textUi": { "text": "✅ Approve" }, "style": "primary",  "value": "approve" },
-                  { "type": "button", "textUi": { "text": "❌ Reject"  }, "style": "danger",   "value": "reject"  },
-                  { "type": "button", "textUi": { "text": "📄 Full Brief" },                   "value": "brief"   }
+                  { "type": "button", "textUi": { "text": "✅ Approve" }, "style": "primary", "value": "approve" },
+                  { "type": "button", "textUi": { "text": "❌ Reject"  }, "style": "danger",  "value": "reject"  },
+                  { "type": "button", "textUi": { "text": "📄 Full Brief" },                  "value": "brief"   }
                 ]
               }
             }
@@ -283,17 +307,22 @@
     {
       "id": "write_decision_escalate",
       "name": "Write Decision — Escalate",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "contract_id",    "fieldValue": "={{ $node['loop_contracts'].json.id }}" },
-            { "fieldId": "disposition",    "fieldValue": "escalate" },
-            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
-            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
-            { "fieldId": "brief",          "fieldValue": "={{ $json.brief }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            { "name": "body", "value": "={{ JSON.stringify({ contract_id: $node['loop_contracts'].json.id, disposition: 'escalate', confidence: $json.confidence, reasoning: $json.reasoning, brief: $json.brief }) }}" }
           ]
         }
       },
@@ -325,8 +354,8 @@
     "Every Morning 07:00":              { "main": [[{ "node": "Fetch Contracts Expiring ≤90 Days", "type": "main", "index": 0 }]] },
     "Fetch Contracts Expiring ≤90 Days":{ "main": [[{ "node": "Any Contracts Found?",              "type": "main", "index": 0 }]] },
     "Any Contracts Found?":             { "main": [
-      [{ "node": "Loop Each Contract",   "type": "main", "index": 0 }],
-      [{ "node": "Log — Nothing to Process", "type": "main", "index": 0 }]
+      [{ "node": "Loop Each Contract",          "type": "main", "index": 0 }],
+      [{ "node": "Log — Nothing to Process",    "type": "main", "index": 0 }]
     ]},
     "Loop Each Contract":               { "main": [[{ "node": "Route by Renewal State",            "type": "main", "index": 0 }]] },
     "Route by Renewal State":           { "main": [
@@ -335,20 +364,20 @@
       [{ "node": "Create Jira Escalation Ticket", "type": "main", "index": 0 }]
     ]},
     "Auto-Renew Eligible?":             { "main": [
-      [{ "node": "Execute Auto-Renewal",           "type": "main", "index": 0 }],
-      [{ "node": "Fetch Contract Changes",         "type": "main", "index": 0 }]
+      [{ "node": "Execute Auto-Renewal",          "type": "main", "index": 0 }],
+      [{ "node": "Fetch Contract Changes",        "type": "main", "index": 0 }]
     ]},
-    "Execute Auto-Renewal":             { "main": [[{ "node": "Notify Owner — Auto-Renewed",      "type": "main", "index": 0 }]] },
-    "Fetch Contract Changes":           { "main": [[{ "node": "Fetch Budget Position",            "type": "main", "index": 0 }]] },
+    "Execute Auto-Renewal":             { "main": [[{ "node": "Notify Owner — Auto-Renewed",       "type": "main", "index": 0 }]] },
+    "Fetch Contract Changes":           { "main": [[{ "node": "Fetch Budget Position",             "type": "main", "index": 0 }]] },
     "Fetch Budget Position":            { "main": [[{ "node": "Claude — Reason on Contract Change","type": "main", "index": 0 }]] },
-    "Claude — Reason on Contract Change":{ "main": [[{ "node": "Parse Claude Response",           "type": "main", "index": 0 }]] },
-    "Parse Claude Response":            { "main": [[{ "node": "Route by Disposition",             "type": "main", "index": 0 }]] },
+    "Claude — Reason on Contract Change":{ "main": [[{ "node": "Parse Claude Response",            "type": "main", "index": 0 }]] },
+    "Parse Claude Response":            { "main": [[{ "node": "Route by Disposition",              "type": "main", "index": 0 }]] },
     "Route by Disposition":             { "main": [
-      [{ "node": "Write Decision — Auto Execute",  "type": "main", "index": 0 }],
-      [{ "node": "Write Decision — One Touch",     "type": "main", "index": 0 }],
-      [{ "node": "Write Decision — Escalate",      "type": "main", "index": 0 }]
+      [{ "node": "Write Decision — Auto Execute", "type": "main", "index": 0 }],
+      [{ "node": "Write Decision — One Touch",    "type": "main", "index": 0 }],
+      [{ "node": "Write Decision — Escalate",     "type": "main", "index": 0 }]
     ]},
-    "Write Decision — One Touch":       { "main": [[{ "node": "Send One-Touch Confirm to Owner", "type": "main", "index": 0 }]] },
-    "Write Decision — Escalate":        { "main": [[{ "node": "Create Jira Escalation Ticket",  "type": "main", "index": 0 }]] }
+    "Write Decision — One Touch":       { "main": [[{ "node": "Send One-Touch Confirm to Owner",  "type": "main", "index": 0 }]] },
+    "Write Decision — Escalate":        { "main": [[{ "node": "Create Jira Escalation Ticket",   "type": "main", "index": 0 }]] }
   }
 }

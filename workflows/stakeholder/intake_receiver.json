@@ -36,22 +36,26 @@
     },
     {
       "id": "create_ticket",
-      "name": "Create Ticket in Supabase",
-      "type": "n8n-nodes-base.supabase",
+      "name": "Create Ticket in PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "tickets",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "reference",      "fieldValue": "={{ $json.reference }}" },
-            { "fieldId": "source",         "fieldValue": "intake" },
-            { "fieldId": "status",         "fieldValue": "reasoning" },
-            { "fieldId": "title",          "fieldValue": "={{ $node['Intake Form Submitted'].json.body.title }}" },
-            { "fieldId": "description",    "fieldValue": "={{ $node['Intake Form Submitted'].json.body.description }}" },
-            { "fieldId": "requested_by",   "fieldValue": "={{ $node['Intake Form Submitted'].json.body.submitted_by }}" },
-            { "fieldId": "amount",         "fieldValue": "={{ $node['Intake Form Submitted'].json.body.amount }}" },
-            { "fieldId": "currency",       "fieldValue": "={{ $node['Intake Form Submitted'].json.body.currency || 'EUR' }}" },
-            { "fieldId": "target_close",   "fieldValue": "={{ new Date(Date.now() + 15 * 60 * 1000).toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Generate Ticket Reference'].json.reference, source: 'intake', status: 'reasoning', title: $node['Intake Form Submitted'].json.body.title, description: $node['Intake Form Submitted'].json.body.description, requested_by: $node['Intake Form Submitted'].json.body.submitted_by, amount: $node['Intake Form Submitted'].json.body.amount, currency: $node['Intake Form Submitted'].json.body.currency || 'EUR', target_close: new Date(Date.now() + 15 * 60 * 1000).toISOString() }) }}"
+            }
           ]
         }
       },
@@ -70,48 +74,72 @@
     {
       "id": "fetch_supplier",
       "name": "Fetch Supplier Context",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "suppliers",
-        "filterType": "string",
-        "filters": "name.ilike.=%{{ $node['Intake Form Submitted'].json.body.supplier_name }}%"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?name=ilike.*{{ encodeURIComponent($node['Intake Form Submitted'].json.body.supplier_name) }}*",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [600, 300]
     },
     {
       "id": "fetch_contract",
       "name": "Fetch Contract Context",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "contracts",
-        "filterType": "string",
-        "filters": "supplier_id.eq.={{ $json[0]?.id }}&branch_id.eq.={{ $node['Intake Form Submitted'].json.body.branch_id }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contracts?supplier_id=eq.{{ $json[0]?.id }}&branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [800, 300]
     },
     {
       "id": "fetch_budget",
       "name": "Fetch Budget Context",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "budget_positions",
-        "filterType": "string",
-        "filters": "branch_id.eq.={{ $node['Intake Form Submitted'].json.body.branch_id }}&period.eq.={{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [1000, 300]
     },
     {
       "id": "fetch_manager",
       "name": "Fetch Responsible Manager",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "managers",
-        "filterType": "string",
-        "filters": "branches.cs.={{ '{\"' + $node['Intake Form Submitted'].json.body.branch_id + '\"}' }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/managers?branches=cs.{{ encodeURIComponent('{\"' + $node['Intake Form Submitted'].json.body.branch_id + '\"}') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [1000, 450]
     },
@@ -166,20 +194,26 @@
     },
     {
       "id": "write_decision",
-      "name": "Write Decision to Supabase",
-      "type": "n8n-nodes-base.supabase",
+      "name": "Write Decision to PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "ticket_id",      "fieldValue": "={{ $node['Create Ticket in Supabase'].json.id }}" },
-            { "fieldId": "disposition",    "fieldValue": "={{ $json.disposition }}" },
-            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
-            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
-            { "fieldId": "recommendation", "fieldValue": "={{ $json.recommendation }}" },
-            { "fieldId": "brief",          "fieldValue": "={{ $json.brief }}" },
-            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id, disposition: $json.disposition, confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, brief: $json.brief, model_used: 'claude-sonnet-4-6' }) }}"
+            }
           ]
         }
       },
@@ -188,16 +222,25 @@
     {
       "id": "write_trace",
       "name": "Write Signal Trace",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "trace_log",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "decision_id", "fieldValue": "={{ $node['Write Decision to Supabase'].json.id }}" },
-            { "fieldId": "signal",      "fieldValue": "contract" },
-            { "fieldId": "value",       "fieldValue": "={{ JSON.stringify($node['Fetch Contract Context'].json) }}" },
-            { "fieldId": "notes",       "fieldValue": "All five signals logged — contract, budget, supplier, request, policy" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ decision_id: $node['Write Decision to PostgREST'].json[0]?.id || $node['Write Decision to PostgREST'].json?.id, signal: 'contract', value: JSON.stringify($node['Fetch Contract Context'].json), notes: 'All five signals logged — contract, budget, supplier, request, policy' }) }}"
+            }
           ]
         }
       },
@@ -235,18 +278,26 @@
     },
     {
       "id": "log_supplier_email",
-      "name": "Log Email to Supabase",
-      "type": "n8n-nodes-base.supabase",
+      "name": "Log Email to PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "supplier_emails",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "supplier_id",   "fieldValue": "={{ $node['Fetch Supplier Context'].json[0]?.id }}" },
-            { "fieldId": "direction",     "fieldValue": "outbound" },
-            { "fieldId": "subject",       "fieldValue": "={{ $node['Parse Claude Response'].json.supplier_email_subject }}" },
-            { "fieldId": "body_summary",  "fieldValue": "={{ $node['Parse Claude Response'].json.action_taken }}" },
-            { "fieldId": "received_at",   "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Fetch Supplier Context'].json[0]?.id, direction: 'outbound', subject: $node['Parse Claude Response'].json.supplier_email_subject, body_summary: $node['Parse Claude Response'].json.action_taken, received_at: new Date().toISOString() }) }}"
+            }
           ]
         }
       },
@@ -255,15 +306,25 @@
     {
       "id": "close_ticket_auto",
       "name": "Close Ticket — Auto Executed",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "update",
-        "tableId": "tickets",
-        "filters": "id.eq.={{ $node['Create Ticket in Supabase'].json.id }}",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "status",     "fieldValue": "closed" },
-            { "fieldId": "closed_at",  "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ status: 'closed', closed_at: new Date().toISOString() }) }}"
+            }
           ]
         }
       },
@@ -312,9 +373,9 @@
               "type": "actions",
               "elementsUi": {
                 "elementsValues": [
-                  { "type": "button", "textUi": { "text": "✅ Approve & Send" }, "style": "primary", "value": "={{ 'approve:' + $node['Create Ticket in Supabase'].json.id }}" },
-                  { "type": "button", "textUi": { "text": "❌ Reject"          }, "style": "danger",  "value": "={{ 'reject:' + $node['Create Ticket in Supabase'].json.id }}"  },
-                  { "type": "button", "textUi": { "text": "📄 Full Brief"      },                     "value": "={{ 'brief:' + $node['Create Ticket in Supabase'].json.id }}"   }
+                  { "type": "button", "textUi": { "text": "✅ Approve & Send" }, "style": "primary", "value": "={{ 'approve:' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) }}" },
+                  { "type": "button", "textUi": { "text": "❌ Reject"          }, "style": "danger",  "value": "={{ 'reject:' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) }}"  },
+                  { "type": "button", "textUi": { "text": "📄 Full Brief"      },                     "value": "={{ 'brief:' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) }}"   }
                 ]
               }
             }
@@ -326,15 +387,25 @@
     {
       "id": "update_ticket_pending",
       "name": "Update Ticket — Pending Confirm",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "update",
-        "tableId": "tickets",
-        "filters": "id.eq.={{ $node['Create Ticket in Supabase'].json.id }}",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "status",    "fieldValue": "pending_confirm" },
-            { "fieldId": "owner_id",  "fieldValue": "={{ $node['Fetch Responsible Manager'].json[0]?.id }}" }
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ status: 'pending_confirm', owner_id: $node['Fetch Responsible Manager'].json[0]?.id }) }}"
+            }
           ]
         }
       },
@@ -359,17 +430,25 @@
     {
       "id": "update_ticket_escalated",
       "name": "Update Ticket — Escalated",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "update",
-        "tableId": "tickets",
-        "filters": "id.eq.={{ $node['Create Ticket in Supabase'].json.id }}",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "status",    "fieldValue": "escalated" },
-            { "fieldId": "jira_key",  "fieldValue": "={{ $json.key }}" },
-            { "fieldId": "jira_url",  "fieldValue": "={{ $json.self }}" },
-            { "fieldId": "owner_id",  "fieldValue": "={{ $node['Fetch Responsible Manager'].json[0]?.id }}" }
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ status: 'escalated', jira_key: $json.key, jira_url: $json.self, owner_id: $node['Fetch Responsible Manager'].json[0]?.id }) }}"
+            }
           ]
         }
       },
@@ -377,34 +456,34 @@
     }
   ],
   "connections": {
-    "Intake Form Submitted":          { "main": [[{ "node": "Generate Ticket Reference",       "type": "main", "index": 0 }]] },
-    "Generate Ticket Reference":      { "main": [[{ "node": "Create Ticket in Supabase",       "type": "main", "index": 0 }]] },
-    "Create Ticket in Supabase":      { "main": [
-      [{ "node": "Respond to UI — Received",   "type": "main", "index": 0 }],
-      [{ "node": "Fetch Supplier Context",     "type": "main", "index": 0 }]
+    "Intake Form Submitted":              { "main": [[{ "node": "Generate Ticket Reference",         "type": "main", "index": 0 }]] },
+    "Generate Ticket Reference":          { "main": [[{ "node": "Create Ticket in PostgREST",        "type": "main", "index": 0 }]] },
+    "Create Ticket in PostgREST":         { "main": [
+      [{ "node": "Respond to UI — Received",     "type": "main", "index": 0 }],
+      [{ "node": "Fetch Supplier Context",       "type": "main", "index": 0 }]
     ]},
-    "Fetch Supplier Context":         { "main": [[{ "node": "Fetch Contract Context",          "type": "main", "index": 0 }]] },
-    "Fetch Contract Context":         { "main": [[{ "node": "Fetch Budget Context",            "type": "main", "index": 0 }]] },
-    "Fetch Budget Context":           { "main": [
-      [{ "node": "Fetch Responsible Manager",  "type": "main", "index": 0 }],
-      [{ "node": "Claude — Reason on Intake",  "type": "main", "index": 0 }]
+    "Fetch Supplier Context":             { "main": [[{ "node": "Fetch Contract Context",            "type": "main", "index": 0 }]] },
+    "Fetch Contract Context":             { "main": [[{ "node": "Fetch Budget Context",              "type": "main", "index": 0 }]] },
+    "Fetch Budget Context":               { "main": [
+      [{ "node": "Fetch Responsible Manager",    "type": "main", "index": 0 }],
+      [{ "node": "Claude — Reason on Intake",    "type": "main", "index": 0 }]
     ]},
-    "Fetch Responsible Manager":      { "main": [[{ "node": "Claude — Reason on Intake",      "type": "main", "index": 0 }]] },
-    "Claude — Reason on Intake":      { "main": [[{ "node": "Parse Claude Response",          "type": "main", "index": 0 }]] },
-    "Parse Claude Response":          { "main": [[{ "node": "Write Decision to Supabase",     "type": "main", "index": 0 }]] },
-    "Write Decision to Supabase":     { "main": [
-      [{ "node": "Write Signal Trace",         "type": "main", "index": 0 }],
-      [{ "node": "Route by Disposition",       "type": "main", "index": 0 }]
+    "Fetch Responsible Manager":          { "main": [[{ "node": "Claude — Reason on Intake",        "type": "main", "index": 0 }]] },
+    "Claude — Reason on Intake":          { "main": [[{ "node": "Parse Claude Response",            "type": "main", "index": 0 }]] },
+    "Parse Claude Response":              { "main": [[{ "node": "Write Decision to PostgREST",      "type": "main", "index": 0 }]] },
+    "Write Decision to PostgREST":        { "main": [
+      [{ "node": "Write Signal Trace",           "type": "main", "index": 0 }],
+      [{ "node": "Route by Disposition",         "type": "main", "index": 0 }]
     ]},
-    "Route by Disposition":           { "main": [
-      [{ "node": "Send Email to Supplier",     "type": "main", "index": 0 }],
-      [{ "node": "Send One-Touch to Manager",  "type": "main", "index": 0 }],
-      [{ "node": "Create Jira Escalation",     "type": "main", "index": 0 }]
+    "Route by Disposition":               { "main": [
+      [{ "node": "Send Email to Supplier",       "type": "main", "index": 0 }],
+      [{ "node": "Send One-Touch to Manager",    "type": "main", "index": 0 }],
+      [{ "node": "Create Jira Escalation",       "type": "main", "index": 0 }]
     ]},
-    "Send Email to Supplier":         { "main": [[{ "node": "Log Email to Supabase",          "type": "main", "index": 0 }]] },
-    "Log Email to Supabase":          { "main": [[{ "node": "Close Ticket — Auto Executed",   "type": "main", "index": 0 }]] },
-    "Close Ticket — Auto Executed":   { "main": [[{ "node": "Notify Submitter — Done",        "type": "main", "index": 0 }]] },
-    "Send One-Touch to Manager":      { "main": [[{ "node": "Update Ticket — Pending Confirm","type": "main", "index": 0 }]] },
-    "Create Jira Escalation":         { "main": [[{ "node": "Update Ticket — Escalated",      "type": "main", "index": 0 }]] }
+    "Send Email to Supplier":             { "main": [[{ "node": "Log Email to PostgREST",            "type": "main", "index": 0 }]] },
+    "Log Email to PostgREST":             { "main": [[{ "node": "Close Ticket — Auto Executed",     "type": "main", "index": 0 }]] },
+    "Close Ticket — Auto Executed":       { "main": [[{ "node": "Notify Submitter — Done",          "type": "main", "index": 0 }]] },
+    "Send One-Touch to Manager":          { "main": [[{ "node": "Update Ticket — Pending Confirm",  "type": "main", "index": 0 }]] },
+    "Create Jira Escalation":             { "main": [[{ "node": "Update Ticket — Escalated",        "type": "main", "index": 0 }]] }
   }
 }

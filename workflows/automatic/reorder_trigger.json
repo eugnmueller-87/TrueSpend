@@ -1,6 +1,6 @@
 {
   "name": "TrueSpend — Automatic Reorder Trigger",
-  "description": "Runs every 6 hours. Detects when consumable items or recurring purchases need reordering based on consumption patterns, contract terms, and stock signals. For hardware bulk reorders within existing framework contracts (Dell, Lenovo, Apple) — checks: is this within existing contract terms? budget headroom? supplier health green? If all yes → places order automatically via supplier email + logs PO to Supabase. If one signal uncertain → one-touch Slack confirm to manager. Novel or above threshold → escalate Jira.",
+  "description": "Runs every 6 hours. Detects when consumable items or recurring purchases need reordering based on consumption patterns, contract terms, and stock signals. For hardware bulk reorders within existing framework contracts (Dell, Lenovo, Apple) — checks: is this within existing contract terms? budget headroom? supplier health green? If all yes → places order automatically via supplier email + logs PO to PostgREST. If one signal uncertain → one-touch Slack confirm to manager. Novel or above threshold → escalate Jira.",
   "nodes": [
     {
       "id": "trigger",
@@ -16,24 +16,36 @@
     {
       "id": "fetch_reorder_candidates",
       "name": "Fetch Reorder Candidates",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "contracts",
-        "filterType": "string",
-        "filters": "category.in.(hardware,saas_license)&auto_renew.eq.true&renewal_state.neq.manual_required"
+        "method": "GET",
+        "url": "https://postgrest-production-7960.up.railway.app/contracts?category=in.(hardware,saas_license)&auto_renew=eq.true&renewal_state=neq.manual_required",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [200, 300]
     },
     {
       "id": "fetch_budget_signals",
       "name": "Fetch Budget Spend Signals",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "budget_positions",
-        "filterType": "string",
-        "filters": "category.in.(hardware,saas_license)&period.eq.={{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?category=in.(hardware,saas_license)&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [200, 480]
     },
@@ -58,36 +70,54 @@
     {
       "id": "fetch_supplier_health",
       "name": "Fetch Supplier Health",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "suppliers",
-        "filterType": "string",
-        "filters": "id.eq.={{ $json.supplier_id }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $json.supplier_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [800, 200]
     },
     {
       "id": "fetch_contract_budget",
       "name": "Fetch Contract Budget Position",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "budget_positions",
-        "filterType": "string",
-        "filters": "branch_id.eq.={{ $json.branch_id }}&period.eq.={{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}&category.eq.={{ $json.category }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node['Loop Each Contract'].json.branch_id }}&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}&category=eq.{{ $node['Loop Each Contract'].json.category }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [800, 360]
     },
     {
       "id": "fetch_contract_terms",
       "name": "Fetch Contract Terms",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "contracts",
-        "filterType": "string",
-        "filters": "id.eq.={{ $json.id }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contracts?id=eq.{{ $node['Loop Each Contract'].json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [800, 520]
     },
@@ -184,18 +214,25 @@
     {
       "id": "log_order_email",
       "name": "Log Order Email to supplier_emails",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "supplier_emails",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "supplier_id",   "fieldValue": "={{ $node['Loop Each Contract'].json.supplier_id }}" },
-            { "fieldId": "direction",     "fieldValue": "outbound" },
-            { "fieldId": "subject",       "fieldValue": "={{ $node['Parse Claude Response'].json.supplier_email_subject }}" },
-            { "fieldId": "body_summary",  "fieldValue": "=Reorder placed: {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }} — Ref: {{ $node['Parse Claude Response'].json.order_reference }}" },
-            { "fieldId": "order_reference","fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
-            { "fieldId": "received_at",   "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Loop Each Contract'].json.supplier_id, direction: 'outbound', subject: $node['Parse Claude Response'].json.supplier_email_subject, body_summary: 'Reorder placed: ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type + ' — Ref: ' + $node['Parse Claude Response'].json.order_reference, order_reference: $node['Parse Claude Response'].json.order_reference, received_at: new Date().toISOString() }) }}"
+            }
           ]
         }
       },
@@ -204,19 +241,25 @@
     {
       "id": "create_ticket_auto",
       "name": "Create Ticket — Auto Closed",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "tickets",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "reference",    "fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
-            { "fieldId": "source",       "fieldValue": "automatic" },
-            { "fieldId": "status",       "fieldValue": "closed" },
-            { "fieldId": "title",        "fieldValue": "=Reorder: {{ $node['Loop Each Contract'].json.name }} — {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}" },
-            { "fieldId": "amount",       "fieldValue": "={{ $node['Parse Claude Response'].json.estimated_value }}" },
-            { "fieldId": "currency",     "fieldValue": "={{ $node['Loop Each Contract'].json.currency || 'EUR' }}" },
-            { "fieldId": "closed_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Parse Claude Response'].json.order_reference, source: 'automatic', status: 'closed', title: 'Reorder: ' + $node['Loop Each Contract'].json.name + ' — ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type, amount: $node['Parse Claude Response'].json.estimated_value, currency: $node['Loop Each Contract'].json.currency || 'EUR', closed_at: new Date().toISOString() }) }}"
+            }
           ]
         }
       },
@@ -225,21 +268,25 @@
     {
       "id": "write_decision_auto",
       "name": "Write Decision — Auto Execute",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "ticket_id",      "fieldValue": "={{ $node['Create Ticket — Auto Closed'].json.id }}" },
-            { "fieldId": "contract_id",    "fieldValue": "={{ $node['Loop Each Contract'].json.id }}" },
-            { "fieldId": "disposition",    "fieldValue": "auto_execute" },
-            { "fieldId": "confidence",     "fieldValue": "={{ $node['Parse Claude Response'].json.confidence }}" },
-            { "fieldId": "reasoning",      "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
-            { "fieldId": "recommendation", "fieldValue": "=Auto-reorder placed: {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }} from {{ $node['Loop Each Contract'].json.supplier_name }}. Value: {{ $node['Parse Claude Response'].json.estimated_value }} {{ $node['Loop Each Contract'].json.currency }}. Ref: {{ $node['Parse Claude Response'].json.order_reference }}" },
-            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" },
-            { "fieldId": "actioned_by",    "fieldValue": "agent" },
-            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket — Auto Closed'].json[0]?.id || $node['Create Ticket — Auto Closed'].json?.id, contract_id: $node['Loop Each Contract'].json.id, disposition: 'auto_execute', confidence: $node['Parse Claude Response'].json.confidence, reasoning: $node['Parse Claude Response'].json.reasoning, recommendation: 'Auto-reorder placed: ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type + ' from ' + $node['Loop Each Contract'].json.supplier_name + '. Value: ' + $node['Parse Claude Response'].json.estimated_value + ' ' + $node['Loop Each Contract'].json.currency + '. Ref: ' + $node['Parse Claude Response'].json.order_reference, model_used: 'claude-sonnet-4-6', actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}"
+            }
           ]
         }
       },
@@ -249,18 +296,25 @@
     {
       "id": "create_ticket_pending",
       "name": "Create Ticket — Pending Confirm",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "tickets",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "reference",    "fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
-            { "fieldId": "source",       "fieldValue": "automatic" },
-            { "fieldId": "status",       "fieldValue": "pending_confirm" },
-            { "fieldId": "title",        "fieldValue": "=[ONE-TOUCH] Reorder: {{ $node['Loop Each Contract'].json.name }} — {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}" },
-            { "fieldId": "amount",       "fieldValue": "={{ $node['Parse Claude Response'].json.estimated_value }}" },
-            { "fieldId": "currency",     "fieldValue": "={{ $node['Loop Each Contract'].json.currency || 'EUR' }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Parse Claude Response'].json.order_reference, source: 'automatic', status: 'pending_confirm', title: '[ONE-TOUCH] Reorder: ' + $node['Loop Each Contract'].json.name + ' — ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type, amount: $node['Parse Claude Response'].json.estimated_value, currency: $node['Loop Each Contract'].json.currency || 'EUR' }) }}"
+            }
           ]
         }
       },
@@ -269,18 +323,25 @@
     {
       "id": "write_decision_one_touch",
       "name": "Write Decision — One Touch",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "ticket_id",      "fieldValue": "={{ $node['Create Ticket — Pending Confirm'].json.id }}" },
-            { "fieldId": "contract_id",    "fieldValue": "={{ $node['Loop Each Contract'].json.id }}" },
-            { "fieldId": "disposition",    "fieldValue": "one_touch" },
-            { "fieldId": "confidence",     "fieldValue": "={{ $node['Parse Claude Response'].json.confidence }}" },
-            { "fieldId": "reasoning",      "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
-            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id, contract_id: $node['Loop Each Contract'].json.id, disposition: 'one_touch', confidence: $node['Parse Claude Response'].json.confidence, reasoning: $node['Parse Claude Response'].json.reasoning, model_used: 'claude-sonnet-4-6' }) }}"
+            }
           ]
         }
       },
@@ -289,12 +350,18 @@
     {
       "id": "fetch_manager_one_touch",
       "name": "Fetch Manager for One-Touch",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "managers",
-        "filterType": "string",
-        "filters": "branches.cs.={{ '{\"' + $node['Loop Each Contract'].json.branch_id + '\"}' }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/managers?branches=cs.{{ encodeURIComponent('{\"' + $node['Loop Each Contract'].json.branch_id + '\"}') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [2000, 560]
     },
@@ -328,9 +395,9 @@
               "type": "actions",
               "elementsUi": {
                 "elementsValues": [
-                  { "type": "button", "textUi": { "text": "Approve & Place Order" }, "style": "primary", "value": "={{ 'approve:' + $node['Create Ticket — Pending Confirm'].json.id }}" },
-                  { "type": "button", "textUi": { "text": "Reject"                }, "style": "danger",  "value": "={{ 'reject:' + $node['Create Ticket — Pending Confirm'].json.id }}"  },
-                  { "type": "button", "textUi": { "text": "Full Brief"            },                     "value": "={{ 'brief:' + $node['Create Ticket — Pending Confirm'].json.id }}"   }
+                  { "type": "button", "textUi": { "text": "Approve & Place Order" }, "style": "primary", "value": "={{ 'approve:' + ($node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id) }}" },
+                  { "type": "button", "textUi": { "text": "Reject"                }, "style": "danger",  "value": "={{ 'reject:' + ($node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id) }}"  },
+                  { "type": "button", "textUi": { "text": "Full Brief"            },                     "value": "={{ 'brief:' + ($node['Create Ticket — Pending Confirm'].json[0]?.id || $node['Create Ticket — Pending Confirm'].json?.id) }}"   }
                 ]
               }
             }
@@ -343,18 +410,25 @@
     {
       "id": "create_ticket_escalated",
       "name": "Create Ticket — Escalated",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "tickets",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "reference",    "fieldValue": "={{ $node['Parse Claude Response'].json.order_reference }}" },
-            { "fieldId": "source",       "fieldValue": "automatic" },
-            { "fieldId": "status",       "fieldValue": "escalated" },
-            { "fieldId": "title",        "fieldValue": "=[ESCALATE] Reorder: {{ $node['Loop Each Contract'].json.name }} — {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}" },
-            { "fieldId": "amount",       "fieldValue": "={{ $node['Parse Claude Response'].json.estimated_value }}" },
-            { "fieldId": "currency",     "fieldValue": "={{ $node['Loop Each Contract'].json.currency || 'EUR' }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Parse Claude Response'].json.order_reference, source: 'automatic', status: 'escalated', title: '[ESCALATE] Reorder: ' + $node['Loop Each Contract'].json.name + ' — ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type, amount: $node['Parse Claude Response'].json.estimated_value, currency: $node['Loop Each Contract'].json.currency || 'EUR' }) }}"
+            }
           ]
         }
       },
@@ -363,18 +437,25 @@
     {
       "id": "write_decision_escalate",
       "name": "Write Decision — Escalate",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "ticket_id",   "fieldValue": "={{ $node['Create Ticket — Escalated'].json.id }}" },
-            { "fieldId": "contract_id", "fieldValue": "={{ $node['Loop Each Contract'].json.id }}" },
-            { "fieldId": "disposition", "fieldValue": "escalate" },
-            { "fieldId": "confidence",  "fieldValue": "={{ $node['Parse Claude Response'].json.confidence }}" },
-            { "fieldId": "reasoning",   "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
-            { "fieldId": "model_used",  "fieldValue": "claude-sonnet-4-6" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket — Escalated'].json[0]?.id || $node['Create Ticket — Escalated'].json?.id, contract_id: $node['Loop Each Contract'].json.id, disposition: 'escalate', confidence: $node['Parse Claude Response'].json.confidence, reasoning: $node['Parse Claude Response'].json.reasoning, model_used: 'claude-sonnet-4-6' }) }}"
+            }
           ]
         }
       },
@@ -397,15 +478,25 @@
     {
       "id": "update_ticket_jira_key",
       "name": "Update Ticket with Jira Key",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "update",
-        "tableId": "tickets",
-        "filters": "id.eq.={{ $node['Create Ticket — Escalated'].json.id }}",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "jira_key", "fieldValue": "={{ $json.key }}" },
-            { "fieldId": "jira_url", "fieldValue": "={{ $json.self }}" }
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket — Escalated'].json[0]?.id || $node['Create Ticket — Escalated'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ jira_key: $json.key, jira_url: $json.self }) }}"
+            }
           ]
         }
       },

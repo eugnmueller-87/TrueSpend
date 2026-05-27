@@ -16,12 +16,18 @@
     {
       "id": "fetch_positions",
       "name": "Fetch Hyperscaler Positions",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "hyperscaler_positions",
-        "filterType": "string",
-        "filters": "snapshot_date.gte.={{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?snapshot_date=gte.{{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [200, 400]
     },
@@ -46,12 +52,18 @@
     {
       "id": "fetch_related_contract",
       "name": "Fetch Related Contract",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "contracts",
-        "filterType": "string",
-        "filters": "id.eq.={{ $json.contract_id }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contracts?id=eq.{{ $json.contract_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [800, 300]
     },
@@ -121,20 +133,26 @@
     },
     {
       "id": "write_decision",
-      "name": "Write Decision to Supabase",
-      "type": "n8n-nodes-base.supabase",
+      "name": "Write Decision to PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "decisions",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "contract_id",    "fieldValue": "={{ $node['Loop Each Position'].json.contract_id }}" },
-            { "fieldId": "disposition",    "fieldValue": "={{ $node['Parse Claude Response'].json.auto_actionable === 'true' ? 'auto_execute' : 'one_touch' }}" },
-            { "fieldId": "reasoning",      "fieldValue": "={{ $node['Parse Claude Response'].json.reasoning }}" },
-            { "fieldId": "recommendation", "fieldValue": "={{ $node['Parse Claude Response'].json.recommended_action }}" },
-            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" },
-            { "fieldId": "actioned_by",    "fieldValue": "agent" },
-            { "fieldId": "actioned_at",    "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ contract_id: $node['Loop Each Position'].json.contract_id, disposition: $node['Parse Claude Response'].json.auto_actionable === 'true' ? 'auto_execute' : 'one_touch', reasoning: $node['Parse Claude Response'].json.reasoning, recommendation: $node['Parse Claude Response'].json.recommended_action, model_used: 'claude-sonnet-4-6', actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}"
+            }
           ]
         }
       },
@@ -143,18 +161,25 @@
     {
       "id": "update_position_flags",
       "name": "Update Position Flags",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "update",
-        "tableId": "hyperscaler_positions",
-        "filters": "id.eq.={{ $node['Loop Each Position'].json.id }}",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "alert_type",          "fieldValue": "={{ $node['Parse Claude Response'].json.alert_type }}" },
-            { "fieldId": "alert_severity",      "fieldValue": "={{ $node['Parse Claude Response'].json.severity }}" },
-            { "fieldId": "estimated_saving_eur","fieldValue": "={{ $node['Parse Claude Response'].json.estimated_saving_eur }}" },
-            { "fieldId": "last_reviewed_at",    "fieldValue": "={{ new Date().toISOString() }}" },
-            { "fieldId": "decision_id",         "fieldValue": "={{ $node['Write Decision to Supabase'].json.id }}" }
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?id=eq.{{ $node['Loop Each Position'].json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ alert_type: $node['Parse Claude Response'].json.alert_type, alert_severity: $node['Parse Claude Response'].json.severity, estimated_saving_eur: $node['Parse Claude Response'].json.estimated_saving_eur, last_reviewed_at: new Date().toISOString(), decision_id: $node['Write Decision to PostgREST'].json[0]?.id || $node['Write Decision to PostgREST'].json?.id }) }}"
+            }
           ]
         }
       },
@@ -175,12 +200,18 @@
     {
       "id": "fetch_account_team_email",
       "name": "Fetch Hyperscaler Account Team Email",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "suppliers",
-        "filterType": "string",
-        "filters": "id.eq.={{ $node['Fetch Related Contract'].json[0]?.supplier_id }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $node['Fetch Related Contract'].json[0]?.supplier_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [2000, 320]
     },
@@ -199,17 +230,25 @@
     {
       "id": "log_account_email",
       "name": "Log Email to supplier_emails",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "supplier_emails",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "supplier_id",  "fieldValue": "={{ $node['Fetch Related Contract'].json[0]?.supplier_id }}" },
-            { "fieldId": "direction",    "fieldValue": "outbound" },
-            { "fieldId": "subject",      "fieldValue": "={{ $node['Parse Claude Response'].json.draft_communication_subject }}" },
-            { "fieldId": "body_summary", "fieldValue": "=Hyperscaler alert action: {{ $node['Parse Claude Response'].json.alert_type }} ({{ $node['Parse Claude Response'].json.severity }}) — Est. saving: {{ $node['Parse Claude Response'].json.estimated_saving_eur }} EUR. {{ $node['Parse Claude Response'].json.recommended_action }}" },
-            { "fieldId": "received_at",  "fieldValue": "={{ new Date().toISOString() }}" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Fetch Related Contract'].json[0]?.supplier_id, direction: 'outbound', subject: $node['Parse Claude Response'].json.draft_communication_subject, body_summary: 'Hyperscaler alert action: ' + $node['Parse Claude Response'].json.alert_type + ' (' + $node['Parse Claude Response'].json.severity + ') — Est. saving: ' + $node['Parse Claude Response'].json.estimated_saving_eur + ' EUR. ' + $node['Parse Claude Response'].json.recommended_action, received_at: new Date().toISOString() }) }}"
+            }
           ]
         }
       },
@@ -246,7 +285,7 @@
               "type": "section",
               "textUi": {
                 "type": "mrkdwn",
-                "text": "=*Draft communication ready:*\n```{{ $node['Parse Claude Response'].json.draft_communication_subject }}\n\n{{ $node['Parse Claude Response'].json.draft_communication | truncate(400) }}```"
+                "text": "=*Draft communication ready:*\n```{{ $node['Parse Claude Response'].json.draft_communication_subject }}\n\n{{ $node['Parse Claude Response'].json.draft_communication.substring(0, 400) }}```"
               }
             }
           ]
@@ -271,12 +310,18 @@
     {
       "id": "fetch_all_positions_summary",
       "name": "Fetch All Positions for Summary",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "getAll",
-        "tableId": "hyperscaler_positions",
-        "filterType": "string",
-        "filters": "snapshot_date.gte.={{ new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0') + '-01' }}"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?snapshot_date=gte.{{ new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0') + '-01' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
       },
       "position": [200, 800]
     },
@@ -323,15 +368,25 @@
     {
       "id": "log_daily_run_trace",
       "name": "Log Daily Run to trace_log",
-      "type": "n8n-nodes-base.supabase",
+      "type": "n8n-nodes-base.httpRequest",
       "parameters": {
-        "operation": "insert",
-        "tableId": "trace_log",
-        "fieldsUi": {
-          "fieldValues": [
-            { "fieldId": "signal",      "fieldValue": "consumption" },
-            { "fieldId": "value",       "fieldValue": "=Daily run completed at {{ new Date().toISOString() }}. Positions reviewed: {{ $node['Fetch Hyperscaler Positions'].json.length }}." },
-            { "fieldId": "notes",       "fieldValue": "TrueSpend Hyperscaler Daily Monitor — automated run" }
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'consumption', value: 'Daily run completed at ' + new Date().toISOString() + '. Positions reviewed: ' + $node['Fetch Hyperscaler Positions'].json.length + '.', notes: 'TrueSpend Hyperscaler Daily Monitor — automated run' }) }}"
+            }
           ]
         }
       },
@@ -345,7 +400,7 @@
     ]},
     "Fetch Hyperscaler Positions": { "main": [[{ "node": "Any Positions Found?", "type": "main", "index": 0 }]] },
     "Any Positions Found?": { "main": [
-      [{ "node": "Loop Each Position",    "type": "main", "index": 0 }],
+      [{ "node": "Loop Each Position",       "type": "main", "index": 0 }],
       [{ "node": "Log — No Positions Found", "type": "main", "index": 0 }]
     ]},
     "Loop Each Position": { "main": [
@@ -358,8 +413,8 @@
       [{ "node": "Log — Position Healthy",      "type": "main", "index": 0 }]
     ]},
     "Claude — Reason on Position": { "main": [[{ "node": "Parse Claude Response", "type": "main", "index": 0 }]] },
-    "Parse Claude Response": { "main": [[{ "node": "Write Decision to Supabase", "type": "main", "index": 0 }]] },
-    "Write Decision to Supabase": { "main": [[{ "node": "Update Position Flags", "type": "main", "index": 0 }]] },
+    "Parse Claude Response": { "main": [[{ "node": "Write Decision to PostgREST", "type": "main", "index": 0 }]] },
+    "Write Decision to PostgREST": { "main": [[{ "node": "Update Position Flags", "type": "main", "index": 0 }]] },
     "Update Position Flags": { "main": [[{ "node": "Auto-Actionable?", "type": "main", "index": 0 }]] },
     "Auto-Actionable?": { "main": [
       [{ "node": "Fetch Hyperscaler Account Team Email", "type": "main", "index": 0 }],
