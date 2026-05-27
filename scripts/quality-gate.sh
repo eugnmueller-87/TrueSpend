@@ -181,8 +181,12 @@ info "Building intake UI..."
 cd intake
 
 if [ ! -d node_modules ]; then
-  info "Installing dependencies (first run)..."
-  npm ci --silent 2>&1 | tail -3
+  info "Installing dependencies..."
+  if [ -f package-lock.json ]; then
+    npm ci --silent 2>&1 | tail -3
+  else
+    npm install --silent 2>&1 | tail -3
+  fi
 fi
 
 if npm run build 2>&1 | tail -6; then
