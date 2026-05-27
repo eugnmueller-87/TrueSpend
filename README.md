@@ -24,17 +24,6 @@ TrueSpend is an agentic procurement operating system. It reasons across contract
 
 ---
 
-## What's Running
-
-| Service | URL | Purpose |
-|---|---|---|
-| n8n | [n8n-n3xl.eugenmueller.tech](https://n8n-n3xl.eugenmueller.tech) | Workflow orchestration |
-| Grafana | [grafana-production-49fc.up.railway.app](https://grafana-production-49fc.up.railway.app) | Live dashboard |
-| PostgREST | [postgrest-production-7960.up.railway.app](https://postgrest-production-7960.up.railway.app) | REST API over PostgreSQL |
-| PostgreSQL | `zephyr.proxy.rlwy.net:24934` | Primary database (Railway) |
-
----
-
 ## What It Does
 
 ### Contract Renewal Engine
