@@ -7,7 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api/intake': {
-        target: 'http://localhost:5678',
+        target: 'https://n8n-n3xl.eugenmueller.tech',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/intake/, '/webhook/truespend-intake'),
       },

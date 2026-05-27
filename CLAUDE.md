@@ -5,14 +5,15 @@ Agentic procurement operating system. n8n orchestrates Claude (Sonnet) + Supabas
 Pre-build. Architecture defined and built as config/code — no Python runtime yet.
 
 ## Stack
-| Layer | Tech |
-|---|---|
-| Orchestration | n8n (self-hosted, Railway or Docker) |
-| Database | Supabase (PostgreSQL + RLS) |
-| AI reasoning | Claude claude-sonnet-4-6 via Anthropic API |
-| Intake UI | React + Vite + Tailwind → nginx Docker → Railway |
-| Observability | Grafana connected to Supabase PG |
-| Notifications | Slack (blocks), Jira (PROC project), Email (IMAP/SMTP) |
+| Layer | Tech | URL |
+|---|---|---|
+| Orchestration | n8n self-hosted | https://n8n-n3xl.eugenmueller.tech |
+| Database | PostgreSQL on Railway | zephyr.proxy.rlwy.net:24934 |
+| REST API | PostgREST on Railway | https://postgrest-production-7960.up.railway.app |
+| AI reasoning | Claude claude-sonnet-4-6 via Anthropic API | — |
+| Intake UI | React + Vite + Tailwind → nginx Docker → Railway | — |
+| Observability | Grafana on Railway | https://grafana-production-49fc.up.railway.app |
+| Notifications | Slack (blocks), Jira (PROC project), Email (IMAP/SMTP) | — |
 
 ## Key files
 - `db/schema.sql` — single source of truth for all tables, enums, views, indexes, RLS
