@@ -1,15 +1,12 @@
-# TRUESPEND — The Fall of Procurement
-
-![TrueSpend](screenshots/hero.png)
+# TrueSpend
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-live%20on%20Railway-brightgreen?style=flat-square" alt="Status" />
+  <img src="https://img.shields.io/badge/status-pre--production-orange?style=flat-square" alt="Status" />
   <img src="https://img.shields.io/badge/AI-Claude%20Sonnet%204.6-5A67D8?style=flat-square&logo=anthropic&logoColor=white" alt="Claude" />
   <img src="https://img.shields.io/badge/orchestration-n8n-EA4B71?style=flat-square&logo=n8n&logoColor=white" alt="n8n" />
   <img src="https://img.shields.io/badge/database-PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL" />
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
-  <img src="https://img.shields.io/badge/quality%20gate-20%2F20-success?style=flat-square" alt="Quality Gate" />
 </p>
 
 <p align="center">
@@ -18,174 +15,323 @@
 
 ---
 
-TrueSpend is an agentic procurement operating system. It reasons across contracts, consumption, supplier health, request patterns, and policy — and closes transactions without human touch. The humans in the loop focus on the strategic supplier relationships where judgment actually matters.
-
 > *"Three things need you this week. Everything else, the agent closed."*
 
 ---
 
-## What It Does
+## What this is
 
-### Contract Renewal Engine
-Watches every contract expiry across all branches. Runs every weekday at 07:00. Routes each contract by its renewal state:
+TrueSpend is an AI-native procurement operating system built for mid-size companies that spend €5M–€200M/year on software, hardware, cloud, and services — and can't afford a 15-person procurement team, a €300k consulting retainer, or a seven-figure ERP implementation to manage it.
 
-- **Clean + auto-renew** → executes automatically, logs decision, notifies owner
-- **Price increase / volume change / scope change** → Claude reasons across contract terms, budget position, and market rate. Produces a disposition: auto-execute, one-touch Slack confirm, or Jira escalation with full brief
-- **Manual required** → escalates immediately with agent brief
+It replaces manual approval chains, spreadsheet budget tracking, license chaos, and vendor negotiation theatre with a reasoning agent that acts on everything it's confident about and surfaces only the decisions that genuinely need a human.
 
-Renewal timeline the agent tracks silently:
-```
-18 months  →  consumption tracking begins
-12 months  →  owner notified
- 6 months  →  full renewal brief produced
- 3 months  →  human-led negotiation, agent provides live data
-```
-
-### Stakeholder Intake
-React + Vite form deployed on Railway. Every procurement request — renew, purchase, onboard, other — hits a webhook and goes through the five-signal reasoning loop:
-
-| Signal | What the agent reads |
-|---|---|
-| Contract | Existing terms, volume tiers, pricing, notice clauses |
-| Consumption | MTD spend vs budget, spend pattern, anomalies |
-| Supplier | Health status, SLA performance, open disputes |
-| Request | Requester history, quantity, known project match |
-| Policy | Delegated authority, category holds, approval rules |
-
-Output: `auto_execute` → closed silently · `one_touch` → Slack block to manager · `escalate` → Jira ticket with full brief
-
-### Hyperscaler Monitoring
-Runs every weekday at 06:00. Reads daily positions for AWS, GCP, and Azure. Flags:
-- Overshoot risk (projected > committed)
-- Undershoot waste (projected < 80% of committed)
-- Idle resources (> €5k)
-- Low reservation utilisation (< 75%)
-
-For each anomaly: Claude reasons, drafts a communication to the account team, posts to `#procurement-cloud`. Daily summary to `#procurement-ops`.
-
-### Automatic Reorder
-Runs every 6 hours. Detects when hardware or SaaS volume needs replenishing against existing framework contracts. If all signals green → places order via supplier email automatically. One signal uncertain → Slack confirm. Above threshold → Jira.
-
-### Supplier Reply Handler
-Catches all inbound supplier emails. Agent reads, reasons against open tickets + email history + active contracts, and either replies directly or routes to a human with a complete draft. The human never starts from scratch.
+The interface is one board. It shows what needs you. The agent is silent on everything else.
 
 ---
 
-## Architecture
+## The problems it destroys
 
-```
-TrueSpend (Railway)
-│
-├── PostgreSQL                    ← contracts, tickets, decisions, trace_log
-├── PostgREST                     ← REST API over the database
-├── n8n                           ← all workflow orchestration
-│   ├── workflows/automatic/      ← contract_watcher, reorder_trigger, hyperscaler_monitor
-│   ├── workflows/stakeholder/    ← intake_receiver
-│   └── workflows/communication/  ← supplier_reply_handler
-├── intake/ (React + Vite)        ← stakeholder submission UI → nginx → Railway
-└── grafana/                      ← live dashboards connected to PostgreSQL
-```
+**The contract expiry spreadsheet**
+A €3M renewal gets noticed 28 days out. No brief exists. The vendor account team has been preparing for six months. You walk into the negotiation blind. TrueSpend watches every contract from 18 months out, extracts every clause, calculates the real TCO, builds the negotiating position, and has the brief ready before you need it.
 
-**Every agent call returns:**
-```json
-{
-  "disposition": "auto_execute | one_touch | escalate",
-  "confidence": 0.00–1.00,
-  "reasoning": "full chain of thought",
-  "recommendation": "what to do",
-  "brief": "pre-written for humans"
-}
-```
+**The license black box**
+You pay for 500 Salesforce seats. 140 are assigned to users who haven't logged in for 90 days. The vendor knows this. It's in the true-up calculation they'll present at renewal. You don't. TrueSpend tracks every seat, every assignment, every login — and tells you the exact negotiating position before the vendor does.
 
-Every decision is stored in `decisions` + `trace_log` — the audit trail is the agent's thought process.
+**The bundle trap**
+Microsoft sells you E5 at €54/user/month. You use Teams, Exchange, and Defender. That's E3 + Defender add-on = €38. At 3,000 seats that's €576k/year for features nobody opens. TrueSpend decomposes every bundle into components, measures actual usage depth, and builds the counter-offer automatically.
+
+**The cost center pocket game**
+DACH IT has €180k left in Q4. They know if they don't spend it, next year's baseline gets cut. So they buy software nobody needs. Meanwhile France is in overrun on SaaS. Nobody has the full picture. TrueSpend centralizes budget visibility, detects out-of-cycle spend patterns, flags cross-branch duplicate tools, and kills the game before it's played.
+
+**The LLM shadow spend problem**
+Six teams. Four OpenAI keys. Azure OpenAI buried in the EA. GitHub Copilot approved. Cursor expensed. AWS Bedrock in the cloud bill. The combined bill arrives. Nobody owns it. TrueSpend registers every API key, tracks daily token consumption per team, allocates it to the right budget, and recommends consolidation before the spend happens.
+
+**The hardware depreciation black hole**
+Machines are replaced on calendar (3 years) regardless of condition or warranty. The laptop that's been in a drawer for 8 months still has a Microsoft 365 seat assigned. The server warranty expired 6 months ago and there's no coverage on the failure last week. TrueSpend runs full depreciation, tracks warranty status, detects zombie licenses on decommissioned hardware, and triggers replacement via the P2I workflow when the economics say to — not the calendar.
+
+**The approval that takes two weeks for a €400 tool**
+Developer needs Figma. Submits to IT. IT emails procurement. Procurement asks for justification. Finance checks budget. Manager approves. Two weeks later: approved. Developer has been on the card since day two. TrueSpend receives the Jira ticket, checks the license entitlement register (is Figma already available?), checks the budget bucket, checks manager authority, and either provisions the seat or routes a one-touch decision to the board. Same day.
 
 ---
 
-## Database
+## How the reasoning works
 
-30 contracts · 10 branches · 17 suppliers · 5 managers — full simulation seed loaded.
+Every transaction runs five signals simultaneously:
 
-Key tables: `contracts` · `suppliers` · `branches` · `managers` · `tickets` · `decisions` · `trace_log` · `budget_positions` · `hyperscaler_positions` · `supplier_emails` · `contract_changes`
+```
+Signal 1 — Contract context
+  Not just "does a contract exist" but: pricing at this volume tier,
+  notice clauses being triggered, auto-escalation terms, true-up exposure.
 
-Key views: `contracts_expiring` · `weekly_digest` · `agent_performance`
+Signal 2 — Budget context
+  Three-tier check: category bucket available? Branch annual headroom > 80%?
+  Within manager's delegated authority?
+
+Signal 3 — Supplier context
+  Performing within SLA. Open disputes. Compliance status. Strategic tier.
+
+Signal 4 — Request context
+  Normal for this requester and role. Quantity makes sense. Known project.
+  Duplicate capability already exists elsewhere in the org?
+
+Signal 5 — Policy context
+  Delegated authority at this spend level. Category holds or freezes.
+  Special rules for this vendor or contract type.
+```
+
+Output:
+
+```
+All signals green, high confidence  →  Agent acts. Logs reasoning. Done.
+One signal uncertain                →  One-touch ticket on Operations Board.
+≥€100k or compliance blocker        →  Jira escalation with full brief.
+```
+
+Every decision is stored with full reasoning. Not just the output — why.
 
 ---
 
-## Trust-Building Mechanism
+## What it covers
 
-The agent earns its own authority expansion through demonstrated accuracy — not promises.
-
-```
-Week 1–4    transactions under €10k · 95%+ confidence threshold · every decision logged
-Month 2     show the numbers: X closed, Y escalated, Z errors
-Month 3     threshold moves to €50k — based on evidence
-Month 6     €250k
-Month 12    80%+ of volume handled autonomously
-```
+| Domain | Capability |
+|--------|-----------|
+| **Contract management** | Expiry tracking (90/60/30 day), clause extraction, TCO calculation, escalation clause detection, lock-in scoring, auto-renew or reason, walk-away position generation |
+| **P2I — Purchase to Invoice** | Intake → 3-tier budget check → PO generation → delivery confirmation → 3-way invoice match → payment instruction → ERP sync queue |
+| **Budget centralization** | Budget buckets (plan), running positions (committed/spent), pool reserves, reallocation audit trail, Q4 flush detection, cross-branch duplicate surfacing |
+| **License intelligence** | Entitlement register, seat assignment, shelfware detection, true-up risk, bundle decomposition, Jira self-service with same-day provisioning |
+| **Asset lifecycle** | Hardware register, depreciation engine (straight-line, declining balance), warranty tracking, end-of-life assessment, replacement via P2I, disposal audit trail |
+| **Hyperscaler FinOps** | AWS/GCP/Azure daily burn vs commitment, overshoot/undershoot alerts, idle resource detection, reservation optimization |
+| **LLM consumption** | API key register, daily token tracking per team/model, consolidation intelligence, model routing recommendations, budget allocation to cost centers |
+| **Supplier compliance** | 4-agent onboarding (Lawyer/NDA, GDPR/DPA, InfoSec/TOMs, LkSG/Ethics), Art. 28 GDPR DPA generation, German Supply Chain Act, e-signature workflow |
+| **Vendor pricing intelligence** | Market benchmark database, walk-away calculator, competitor pricing, bundle decomposition, negotiation brief generation |
 
 ---
 
-## Quality Gate
+## Technology stack
 
-Run before every push:
+| Layer | Technology |
+|-------|-----------|
+| Orchestration | n8n (self-hosted) |
+| AI reasoning | Claude Sonnet 4.6 via Anthropic API |
+| Database | PostgreSQL (Railway) |
+| REST API | PostgREST (Railway) |
+| Operations Board | React + Vite + Tailwind → nginx → Railway |
+| Observability | Grafana (Railway) |
+| Escalations | Jira (PROC project, ≥€100k only) |
+| Email | IMAP (inbound) + SMTP (outbound) |
+
+No Slack. One clean Operations Board. The agent is silent on everything it handles.
+
+---
+
+## Workflows
+
+| File | Trigger | Function |
+|------|---------|----------|
+| `intake_receiver.json` | Webhook (UI or Jira) | 5-signal reasoning → auto/one-touch/escalate |
+| `supplier_reply_handler.json` | IMAP | Reads supplier email, replies or routes to board |
+| `contract_watcher.json` | Daily 07:00 | Expiring contracts → auto-renew or agent brief |
+| `reorder_trigger.json` | Daily | Reorder candidates → place order or escalate |
+| `hyperscaler_monitor.json` | Daily 06:00 | Cloud positions → anomaly detection |
+| `supplier_onboarding.json` | Webhook | 4 parallel compliance agents → docs + ticket |
+
+---
+
+## Database schema (v2.0)
+
+Single source of truth: [`db/schema.sql`](db/schema.sql)
+
+**28 tables across 10 domains:**
+
+```
+Organization    branches · cost_centers · users
+Suppliers       suppliers · legal_documents · compliance_checks
+Contracts       contracts · contract_changes · contract_clauses
+Budget          budget_buckets · budget_positions · budget_pools · budget_reallocations
+P2I             purchase_orders · po_sequences · invoices · payment_instructions · erp_sync_queue
+Assets          assets · asset_depreciation_log
+Licenses        license_entitlements · license_assignments
+Consumption     hyperscaler_positions · llm_api_keys · llm_consumption
+Operations      tickets · decisions · trace_log · supplier_emails
+Intelligence    vendor_pricing_benchmarks · trust_settings
+```
+
+**7 views:**
+`contracts_expiring` · `open_tickets_board` · `budget_command_center` · `commitment_register` · `license_waste_report` · `llm_spend_summary` · `agent_performance` · `supplier_compliance_summary`
+
+---
+
+## Operations Board
+
+The single human interface. No Slack. No email notifications. No dashboards to check.
+
+**Tab 1 — Submit Request**
+Form → POST to n8n webhook → agent reasons → closes or surfaces on the board.
+
+**Tab 2 — Operations Board**
+Fetches `open_tickets_board` view directly from PostgREST. Auto-refreshes every 30 seconds. Tickets grouped by priority: `signature_required` first, then `pending_confirm`, then `pending_review`, then `escalated`.
+
+Each ticket shows:
+- Agent reasoning and recommendation
+- Budget position at time of decision (available, % consumed)
+- Supplier health and compliance status
+- Action buttons: Approve / Reject / Sign / Acknowledge
+
+Buttons PATCH PostgREST directly. No backend API needed.
+
+---
+
+## Budget model
+
+```
+CFO sets annual plan (budget_buckets)
+         ↓
+Controlling approves — distributed to cost centers
+         ↓
+Every PO approved → budget_positions.committed += amount (immediate)
+Every invoice paid → committed released, spent incremented
+         ↓
+Pool reserve (budget_pools) — CFO lever, drawn by exception only
+         ↓
+Every budget move → budget_reallocations (full audit trail, immutable)
+```
+
+Three-tier approval check on every request:
+1. **Category bucket** — `branch × category × quarter` headroom?
+2. **Branch annual** — running above 80% YTD?
+3. **Manager authority** — within `users.spend_authority` for this category?
+
+---
+
+## Deployment
+
+### Prerequisites
+- Railway (PostgreSQL, PostgREST, intake service, Grafana)
+- n8n (self-hosted or cloud)
+- Anthropic API key
+- Jira project PROC with webhook
+
+### 1. Schema and seed
+
+```bash
+psql $DATABASE_URL -f db/schema.sql
+for f in db/seed/0*.sql; do psql $DATABASE_URL -f $f; done
+```
+
+### 2. Environment
+
+```bash
+cp .env.example .env
+# Fill: DATABASE_URL, POSTGREST_JWT, ANTHROPIC_API_KEY,
+#       N8N_WEBHOOK_URL, JIRA_*, IMAP_*, SMTP_*
+```
+
+Generate JWT:
+```bash
+node scripts/generate_jwt.js
+```
+
+### 3. n8n
+
+Import all 6 JSONs from `workflows/`. After import:
+- PostgREST nodes → Header Auth "Authorization-TrueSpend"
+- Claude nodes → Header Auth with `x-api-key: $ANTHROPIC_API_KEY`
+- Email nodes → IMAP/SMTP credentials
+
+### 4. Operations Board (Railway)
+
+Set on the Railway intake service:
+```
+VITE_POSTGREST_URL=https://postgrest-xxx.up.railway.app
+VITE_POSTGREST_JWT=<token>
+N8N_WEBHOOK_URL=https://your-n8n.domain.com
+```
+
+### 5. Quality gate
 
 ```bash
 bash scripts/quality-gate.sh
 ```
 
-20 checks: JSON validity · schema field audit · workflow filter correctness · signal enum values · branch UUID integrity · `.env.example` coverage · Vite build.
-
 ---
 
-## Local Setup
+## Trust model
 
-```bash
-# 1. Clone and configure
-cp .env.example .env
-# fill in ANTHROPIC_API_KEY, SUPABASE_*, SLACK_*, JIRA_*, IMAP/SMTP
+The agent earns autonomy through demonstrated accuracy. The threshold is a dial the organization controls.
 
-# 2. Start n8n + Grafana
-cd infra && docker compose up -d
+```
+Week 1–4    Sub-€10k transactions. 95%+ confidence floor.
+            Every decision logged and reviewable.
 
-# 3. Apply schema + seed data (run in Supabase SQL editor or psql)
-psql $DATABASE_URL < db/schema.sql
-psql $DATABASE_URL < db/seed/01_branches.sql
-# ... 02 through 07
+Month 2     Review the log. X closed, Y escalated, Z errors.
+            Organization ratifies what's already working.
 
-# 4. Import workflows into n8n
-# n8n UI → Workflows → Import from file → select each JSON under workflows/
-
-# 5. Run the intake UI locally
-cd intake && npm install && npm run dev
-# Proxies /api/intake → localhost:5678/webhook/truespend-intake
+Month 3     Threshold moves to €50k. Evidence-based, not promised.
+Month 6     €250k.
+Month 12    80%+ of volume handled without human touch.
 ```
 
+Stored in `trust_settings`. Moving the threshold requires a board approval. The agent never expands its own authority.
+
 ---
 
-## What We Are Not Building
+## What remains human
 
-| Area | Decision |
-|---|---|
-| Commodity taxonomy | Agent categorizes from text. Taxonomy is optional enrichment, not infrastructure. |
+- Strategic supplier relationships (the Dell negotiation, the AWS QBR)
+- Exception adjudication (the agent surfaces it with a complete brief)
+- Policy ownership (threshold levels, category rules, compliance standards)
+- System governance (reviewing reasoning traces, accuracy metrics)
+
+Everything else is the agent's job.
+
+---
+
+## What we are not building
+
+| Area | Why |
+|------|-----|
+| Commodity taxonomy maintenance | Agent categorizes from text. Taxonomy is optional enrichment. |
 | SRM workflows | Replaced by AI-derived health signal. You don't schedule attention. |
 | Complex supplier scorecards | Three signals: green / watch / red. |
 | 47-field onboarding forms | Five legal fields + agent due diligence. |
 | CC approval chains | One owner per decision. Full stop. |
 | QBR templates | Agent surfaces exceptions. You don't meet about what isn't broken. |
+| Line-item budget matching | Wrong granularity. Creates more overhead than it prevents. |
 
 ---
 
-## Principles
+## Repository
 
-- Every feature answers one of three questions: *Should we buy this? Are suppliers delivering? What leverage do we have?*
-- Nothing gets built that doesn't change a human action
-- One owner per decision — no CC chains, no committees
-- The audit trail is the agent's thought process
-- The agent earns its own authority expansion through demonstrated accuracy
+```
+TrueSpend/
+├── db/
+│   ├── schema.sql                  ← Complete schema, single source of truth
+│   ├── seed/                       ← 7 seed files (01–07, load in order)
+│   └── templates/
+│       ├── nda_mutual_de.txt       ← Mutual NDA, German law, TrueSpend GmbH
+│       └── dpa_de.txt              ← Art. 28 GDPR DPA with TOM annex
+├── workflows/
+│   ├── stakeholder/intake_receiver.json
+│   ├── communication/supplier_reply_handler.json
+│   └── automatic/
+│       ├── contract_watcher.json
+│       ├── reorder_trigger.json
+│       ├── hyperscaler_monitor.json
+│       └── supplier_onboarding.json
+├── intake/                         ← React + Vite + Tailwind Operations Board
+├── infra/docker-compose.yml        ← Local n8n + Grafana
+├── scripts/
+│   ├── quality-gate.sh
+│   └── generate_jwt.js
+├── CLAUDE.md                       ← Agent instructions (project context)
+├── ROADMAP.md                      ← Full phase map
+└── STORY.md                        ← Philosophy and origin
+```
 
 ---
 
-## Further Reading
+## Further reading
 
-- [ROADMAP.md](ROADMAP.md) — full build plan, phase by phase
-- [STORY.md](STORY.md) — the thinking behind the product, the IONOS conversation, what we killed and why
+- [ROADMAP.md](ROADMAP.md) — full build plan, all phases
+- [STORY.md](STORY.md) — the thinking, the IONOS conversation, what we killed and why
+- [SETUP.md](SETUP.md) — detailed deployment guide
