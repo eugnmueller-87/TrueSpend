@@ -148,23 +148,32 @@ bash scripts/quality-gate.sh
 
 ## Known issues (from audit 2026-05-27)
 ### Open
-- **H1** — `hyperscaler_monitor.json` check_flags node references wrong field names
-  Schema: `projected_eur`, `committed_eur`, `reservation_util`
-  Workflow references: `projected_spend_eur`, `committed_spend_eur`, `reservation_utilization`
-  Fix: update the check_flags IF node expressions in hyperscaler_monitor.json
-- **H3** — RLS policies incomplete (only 5 tables covered in v1; v2 schema covers 15)
-- **M1** — `manual_required` contracts skip Claude reasoning, go straight to Jira
-- **M2** — `supplier_reply_handler.json` urgency routing fans all outputs simultaneously
-- **M3** — `intake_receiver.json` writes 1 trace_log row for all 5 signals (should be 5)
-- **L1** — auto-renew decision in `contract_watcher.json` has no ticket FK (orphaned decision)
+- **H3** — RLS policies: 15 tables covered in v2 schema. `trace_log`, `supplier_emails`,
+  `branches`, `hyperscaler_positions`, `contract_changes` don't have explicit policies
+  (covered by app_role_all pattern but not enumerated individually)
 
 ### Fixed
+- **H1** ✓ — `hyperscaler_monitor.json` check_flags already used correct field names (`projected_eur`, `committed_eur`, `reservation_util`)
+- **M1** ✓ — `manual_required` contracts now route through Claude reasoning before Jira
+- **M2** ✓ — `supplier_reply_handler.json` urgency routing: critical→Jira+trace, high/medium/low→trace only
+- **M3** ✓ — `intake_receiver.json` now writes 5 separate trace_log rows (bulk POST array) — one per signal
+- **L1** ✓ — `contract_watcher.json` auto-renew creates a ticket row first, decision has ticket_id FK
+- **managers→users** ✓ — all 3 workflow references to `/managers` endpoint updated to `/users`
 - **M4** ✓ — branch_id sends UUIDs not display names
 - **M5** ✓ — `reorder_trigger.json` uses `renewal_state` not `status`
 - **H2** ✓ — `order_reference` column on `supplier_emails`
 - **L2** ✓ — `hyperscaler_monitor.json` trace signal is `consumption`
 - **H4** ✓ — `contracts_expiring` view uses `>=` (catches same-day expiries)
 - **Slack** ✓ — zero Slack nodes in all 6 workflows
+
+## Stability improvements (2026-05-27)
+- All 9 Claude httpRequest nodes: 120,000ms timeout, retry 3× with 2s backoff
+- All 45 PostgREST write nodes: 30,000ms timeout, retry 3× with 1s backoff
+- `tickets.category` column added — eliminates correlated subquery in `open_tickets_board`
+- Covering index on `budget_positions(branch_id, category, period)` — budget check answered from index
+- Partial index on `tickets(status, created_at)` — Operations Board query uses index-only scan
+- `commit_budget()`, `release_budget()`, `record_spend()` PostgreSQL functions — atomic budget ops, no race conditions
+- `workflow_runs` table — every workflow writes start/end/status for Grafana health dashboards
 
 ## Never build
 Commodity taxonomy, SRM workflows, complex scorecards, 47-field onboarding,

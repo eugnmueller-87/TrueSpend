@@ -1,439 +1,893 @@
-{
-  "name": "TrueSpend — Supplier Reply Handler",
-  "description": "Catches ALL inbound supplier emails regardless of how the original action was triggered. Agent reads, reasons, replies directly. Routes to a human only if it genuinely cannot resolve. The human gets a full thread + draft reply — never starts from scratch.",
-  "nodes": [
-    {
-      "id": "email_trigger",
-      "name": "Inbound Supplier Email",
-      "type": "n8n-nodes-base.emailReadImap",
-      "parameters": {
-        "mailbox": "INBOX",
-        "action": "read",
-        "download": false,
-        "options": {
-          "customEmailConfig": "[\"UNSEEN\"]"
-        }
-      },
-      "position": [0, 300]
-    },
-    {
-      "id": "extract_email_data",
-      "name": "Extract Email Data",
-      "type": "n8n-nodes-base.set",
-      "parameters": {
-        "values": {
-          "string": [
-            { "name": "from_email",  "value": "={{ $json.from.value[0].address }}" },
-            { "name": "from_name",   "value": "={{ $json.from.value[0].name }}" },
-            { "name": "subject",     "value": "={{ $json.subject }}" },
-            { "name": "body",        "value": "={{ $json.text || $json.html }}" },
-            { "name": "received_at", "value": "={{ $json.date }}" },
-            { "name": "message_id",  "value": "={{ $json.messageId }}" }
-          ]
-        }
-      },
-      "position": [200, 300]
-    },
-    {
-      "id": "match_supplier",
-      "name": "Match Supplier in PostgREST",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?contact_email=ilike.{{ encodeURIComponent($json.from_email) }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Accept",        "value": "application/json" }
-          ]
-        }
-      },
-      "position": [400, 300]
-    },
-    {
-      "id": "supplier_known",
-      "name": "Supplier Known?",
-      "type": "n8n-nodes-base.if",
-      "parameters": {
-        "conditions": {
-          "number": [{ "value1": "={{ $json.length }}", "operation": "larger", "value2": 0 }]
-        }
-      },
-      "position": [600, 300]
-    },
-    {
-      "id": "flag_unknown_supplier",
-      "name": "Log Unknown Sender to Trace",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Content-Type",  "value": "application/json" },
-            { "name": "Prefer",        "value": "return=representation" }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            { "name": "body", "value": "={{ JSON.stringify({ signal: 'intake', value: 'unknown_sender', notes: 'Email from unmatched sender ' + $node['Extract Email Data'].json.from_email + ' — subject: ' + $node['Extract Email Data'].json.subject + '. No supplier found in TrueSpend.' }) }}" }
-          ]
-        }
-      },
-      "position": [800, 500]
-    },
-    {
-      "id": "fetch_open_tickets",
-      "name": "Fetch Open Tickets for Supplier",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/tickets?supplier_id=eq.{{ $json[0].id }}&status=in.(open,reasoning,pending_confirm,approved,escalated)",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Accept",        "value": "application/json" }
-          ]
-        }
-      },
-      "position": [800, 300]
-    },
-    {
-      "id": "fetch_email_history",
-      "name": "Fetch Email Thread History",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/supplier_emails?supplier_id=eq.{{ $node['Match Supplier in PostgREST'].json[0].id }}&order=received_at.desc&limit=10",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Accept",        "value": "application/json" }
-          ]
-        }
-      },
-      "position": [800, 450]
-    },
-    {
-      "id": "fetch_contracts",
-      "name": "Fetch Supplier Contracts",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/contracts?supplier_id=eq.{{ $node['Match Supplier in PostgREST'].json[0].id }}&expiry_date=gte.{{ new Date().toISOString().split('T')[0] }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Accept",        "value": "application/json" }
-          ]
-        }
-      },
-      "position": [1000, 300]
-    },
-    {
-      "id": "log_inbound_email",
-      "name": "Log Inbound Email",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Content-Type",  "value": "application/json" },
-            { "name": "Prefer",        "value": "return=representation" }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "body",
-              "value": "={{ JSON.stringify({ supplier_id: $node['Match Supplier in PostgREST'].json[0].id, direction: 'inbound', subject: $node['Extract Email Data'].json.subject, body_summary: $node['Extract Email Data'].json.body.substring(0, 500), received_at: $node['Extract Email Data'].json.received_at }) }}"
-            }
-          ]
-        }
-      },
-      "position": [1000, 450]
-    },
-    {
-      "id": "call_claude_reply",
-      "name": "Claude — Read & Reason on Reply",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "x-api-key",        "value": "={{ $env.ANTHROPIC_API_KEY }}" },
-            { "name": "anthropic-version", "value": "2023-06-01" },
-            { "name": "content-type",      "value": "application/json" }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "body",
-              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system managing supplier relationships. You read inbound supplier emails, reason about them in the context of open tickets, contracts, and email history, and either reply directly or route to a human. You write supplier emails in a professional, direct tone — concise, clear, commercially precise. You never waffle. When you can resolve, you resolve. When you cannot, you say exactly why and provide a complete draft for the human to send. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"An inbound email has arrived from a supplier. Read it, reason about it, and decide how to handle it.\\n\\nINBOUND EMAIL:\\nFrom: {{ $node['Extract Email Data'].json.from_name }} <{{ $node['Extract Email Data'].json.from_email }}>\\nSubject: {{ $node['Extract Email Data'].json.subject }}\\nBody:\\n{{ $node['Extract Email Data'].json.body }}\\n\\nSUPPLIER PROFILE:\\n{{ JSON.stringify($node['Match Supplier in PostgREST'].json[0]) }}\\n\\nOPEN TICKETS FOR THIS SUPPLIER:\\n{{ JSON.stringify($node['Fetch Open Tickets for Supplier'].json) }}\\n\\nACTIVE CONTRACTS:\\n{{ JSON.stringify($node['Fetch Supplier Contracts'].json) }}\\n\\nRECENT EMAIL HISTORY (last 10):\\n{{ JSON.stringify($node['Fetch Email Thread History'].json) }}\\n\\nDecide:\\n1. Can you resolve this without human involvement?\\n   - Standard confirmations, queries against known contract terms, delivery acknowledgements, invoice clarifications within tolerance, status updates → resolve directly\\n   - Price negotiations, contractual disputes, requests for senior contact, novel legal questions, SLA breach discussions → route to human\\n\\n2. If you can resolve: write the reply. Send it. Log it. Close the loop.\\n3. If you cannot: explain why, write a complete draft reply for the human, identify the right person to handle it.\\n\\nReturn JSON:\\n{\\n  can_resolve: boolean,\\n  resolution_type: 'confirmation' | 'query_answer' | 'invoice_clarification' | 'delivery_update' | 'negotiation' | 'dispute' | 'escalation_request' | 'other',\\n  reasoning: string,\\n  reply_subject: string,\\n  reply_body: string,\\n  commitments_extracted: string[],\\n  route_to_human: boolean,\\n  route_reason: string | null,\\n  urgency: 'low' | 'medium' | 'high' | 'critical',\\n  related_ticket_id: string | null\\n}\"\n  }]\n}"
-            }
-          ]
-        }
-      },
-      "position": [1200, 350]
-    },
-    {
-      "id": "parse_reply_response",
-      "name": "Parse Claude Response",
-      "type": "n8n-nodes-base.set",
-      "parameters": {
-        "values": {
-          "string": [
-            { "name": "can_resolve",            "value": "={{ JSON.parse($json.content[0].text).can_resolve }}" },
-            { "name": "resolution_type",        "value": "={{ JSON.parse($json.content[0].text).resolution_type }}" },
-            { "name": "reasoning",              "value": "={{ JSON.parse($json.content[0].text).reasoning }}" },
-            { "name": "reply_subject",          "value": "={{ JSON.parse($json.content[0].text).reply_subject }}" },
-            { "name": "reply_body",             "value": "={{ JSON.parse($json.content[0].text).reply_body }}" },
-            { "name": "commitments_extracted",  "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).commitments_extracted) }}" },
-            { "name": "route_to_human",         "value": "={{ JSON.parse($json.content[0].text).route_to_human }}" },
-            { "name": "route_reason",           "value": "={{ JSON.parse($json.content[0].text).route_reason }}" },
-            { "name": "urgency",                "value": "={{ JSON.parse($json.content[0].text).urgency }}" },
-            { "name": "related_ticket_id",      "value": "={{ JSON.parse($json.content[0].text).related_ticket_id }}" }
-          ]
-        }
-      },
-      "position": [1400, 350]
-    },
-    {
-      "id": "update_commitments",
-      "name": "Update Email Record — Commitments",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "PATCH",
-        "url": "=https://postgrest-production-7960.up.railway.app/supplier_emails?id=eq.{{ $node['Log Inbound Email'].json[0]?.id || $node['Log Inbound Email'].json?.id }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Content-Type",  "value": "application/json" },
-            { "name": "Prefer",        "value": "return=representation" }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "body",
-              "value": "={{ JSON.stringify({ body_summary: $json.reasoning, commitments: $json.commitments_extracted, flagged: $json.route_to_human, flag_reason: $json.route_reason }) }}"
-            }
-          ]
-        }
-      },
-      "position": [1600, 350]
-    },
-    {
-      "id": "can_agent_resolve",
-      "name": "Can Agent Resolve?",
-      "type": "n8n-nodes-base.if",
-      "parameters": {
-        "conditions": {
-          "boolean": [{ "value1": "={{ $json.can_resolve }}", "operation": "true" }]
-        }
-      },
-      "position": [1800, 350]
-    },
+﻿{
+    "name":  "TrueSpend â€” Supplier Reply Handler",
+    "description":  "Catches ALL inbound supplier emails regardless of how the original action was triggered. Agent reads, reasons, replies directly. Routes to a human only if it genuinely cannot resolve. The human gets a full thread + draft reply â€” never starts from scratch.",
+    "nodes":  [
+                  {
+                      "id":  "email_trigger",
+                      "name":  "Inbound Supplier Email",
+                      "type":  "n8n-nodes-base.emailReadImap",
+                      "parameters":  {
+                                         "mailbox":  "INBOX",
+                                         "action":  "read",
+                                         "download":  false,
+                                         "options":  {
+                                                         "customEmailConfig":  "[\"UNSEEN\"]"
+                                                     }
+                                     },
+                      "position":  [
+                                       0,
+                                       300
+                                   ]
+                  },
+                  {
+                      "id":  "extract_email_data",
+                      "name":  "Extract Email Data",
+                      "type":  "n8n-nodes-base.set",
+                      "parameters":  {
+                                         "values":  {
+                                                        "string":  [
+                                                                       {
+                                                                           "name":  "from_email",
+                                                                           "value":  "={{ $json.from.value[0].address }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "from_name",
+                                                                           "value":  "={{ $json.from.value[0].name }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "subject",
+                                                                           "value":  "={{ $json.subject }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "body",
+                                                                           "value":  "={{ $json.text || $json.html }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "received_at",
+                                                                           "value":  "={{ $json.date }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "message_id",
+                                                                           "value":  "={{ $json.messageId }}"
+                                                                       }
+                                                                   ]
+                                                    }
+                                     },
+                      "position":  [
+                                       200,
+                                       300
+                                   ]
+                  },
+                  {
+                      "id":  "match_supplier",
+                      "name":  "Match Supplier in PostgREST",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://postgrest-production-7960.up.railway.app/suppliers?contact_email=ilike.{{ encodeURIComponent($json.from_email) }}",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Accept",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              }
+                                     },
+                      "position":  [
+                                       400,
+                                       300
+                                   ]
+                  },
+                  {
+                      "id":  "supplier_known",
+                      "name":  "Supplier Known?",
+                      "type":  "n8n-nodes-base.if",
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "number":  [
+                                                                           {
+                                                                               "value1":  "={{ $json.length }}",
+                                                                               "operation":  "larger",
+                                                                               "value2":  0
+                                                                           }
+                                                                       ]
+                                                        }
+                                     },
+                      "position":  [
+                                       600,
+                                       300
+                                   ]
+                  },
+                  {
+                      "id":  "flag_unknown_supplier",
+                      "name":  "Log Unknown Sender to Trace",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027intake\u0027, value: \u0027unknown_sender\u0027, notes: \u0027Email from unmatched sender \u0027 + $node[\u0027Extract Email Data\u0027].json.from_email + \u0027 â€” subject: \u0027 + $node[\u0027Extract Email Data\u0027].json.subject + \u0027. No supplier found in TrueSpend.\u0027 }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       800,
+                                       500
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "fetch_open_tickets",
+                      "name":  "Fetch Open Tickets for Supplier",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://postgrest-production-7960.up.railway.app/tickets?supplier_id=eq.{{ $json[0].id }}\u0026status=in.(open,reasoning,pending_confirm,approved,escalated)",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Accept",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              }
+                                     },
+                      "position":  [
+                                       800,
+                                       300
+                                   ]
+                  },
+                  {
+                      "id":  "fetch_email_history",
+                      "name":  "Fetch Email Thread History",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://postgrest-production-7960.up.railway.app/supplier_emails?supplier_id=eq.{{ $node[\u0027Match Supplier in PostgREST\u0027].json[0].id }}\u0026order=received_at.desc\u0026limit=10",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Accept",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              }
+                                     },
+                      "position":  [
+                                       800,
+                                       450
+                                   ]
+                  },
+                  {
+                      "id":  "fetch_contracts",
+                      "name":  "Fetch Supplier Contracts",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://postgrest-production-7960.up.railway.app/contracts?supplier_id=eq.{{ $node[\u0027Match Supplier in PostgREST\u0027].json[0].id }}\u0026expiry_date=gte.{{ new Date().toISOString().split(\u0027T\u0027)[0] }}",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Accept",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              }
+                                     },
+                      "position":  [
+                                       1000,
+                                       300
+                                   ]
+                  },
+                  {
+                      "id":  "log_inbound_email",
+                      "name":  "Log Inbound Email",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://postgrest-production-7960.up.railway.app/supplier_emails",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Match Supplier in PostgREST\u0027].json[0].id, direction: \u0027inbound\u0027, subject: $node[\u0027Extract Email Data\u0027].json.subject, body_summary: $node[\u0027Extract Email Data\u0027].json.body.substring(0, 500), received_at: $node[\u0027Extract Email Data\u0027].json.received_at }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       1000,
+                                       450
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "call_claude_reply",
+                      "name":  "Claude â€” Read \u0026 Reason on Reply",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://api.anthropic.com/v1/messages",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-api-key",
+                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "anthropic-version",
+                                                                                         "value":  "2023-06-01"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "content-type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system managing supplier relationships. You read inbound supplier emails, reason about them in the context of open tickets, contracts, and email history, and either reply directly or route to a human. You write supplier emails in a professional, direct tone â€” concise, clear, commercially precise. You never waffle. When you can resolve, you resolve. When you cannot, you say exactly why and provide a complete draft for the human to send. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"An inbound email has arrived from a supplier. Read it, reason about it, and decide how to handle it.\\n\\nINBOUND EMAIL:\\nFrom: {{ $node[\u0027Extract Email Data\u0027].json.from_name }} \u003c{{ $node[\u0027Extract Email Data\u0027].json.from_email }}\u003e\\nSubject: {{ $node[\u0027Extract Email Data\u0027].json.subject }}\\nBody:\\n{{ $node[\u0027Extract Email Data\u0027].json.body }}\\n\\nSUPPLIER PROFILE:\\n{{ JSON.stringify($node[\u0027Match Supplier in PostgREST\u0027].json[0]) }}\\n\\nOPEN TICKETS FOR THIS SUPPLIER:\\n{{ JSON.stringify($node[\u0027Fetch Open Tickets for Supplier\u0027].json) }}\\n\\nACTIVE CONTRACTS:\\n{{ JSON.stringify($node[\u0027Fetch Supplier Contracts\u0027].json) }}\\n\\nRECENT EMAIL HISTORY (last 10):\\n{{ JSON.stringify($node[\u0027Fetch Email Thread History\u0027].json) }}\\n\\nDecide:\\n1. Can you resolve this without human involvement?\\n   - Standard confirmations, queries against known contract terms, delivery acknowledgements, invoice clarifications within tolerance, status updates â†’ resolve directly\\n   - Price negotiations, contractual disputes, requests for senior contact, novel legal questions, SLA breach discussions â†’ route to human\\n\\n2. If you can resolve: write the reply. Send it. Log it. Close the loop.\\n3. If you cannot: explain why, write a complete draft reply for the human, identify the right person to handle it.\\n\\nReturn JSON:\\n{\\n  can_resolve: boolean,\\n  resolution_type: \u0027confirmation\u0027 | \u0027query_answer\u0027 | \u0027invoice_clarification\u0027 | \u0027delivery_update\u0027 | \u0027negotiation\u0027 | \u0027dispute\u0027 | \u0027escalation_request\u0027 | \u0027other\u0027,\\n  reasoning: string,\\n  reply_subject: string,\\n  reply_body: string,\\n  commitments_extracted: string[],\\n  route_to_human: boolean,\\n  route_reason: string | null,\\n  urgency: \u0027low\u0027 | \u0027medium\u0027 | \u0027high\u0027 | \u0027critical\u0027,\\n  related_ticket_id: string | null\\n}\"\n  }]\n}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       1200,
+                                       350
+                                   ],
+                      "options":  {
+                                      "timeout":  120000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  2000
+                  },
+                  {
+                      "id":  "parse_reply_response",
+                      "name":  "Parse Claude Response",
+                      "type":  "n8n-nodes-base.set",
+                      "parameters":  {
+                                         "values":  {
+                                                        "string":  [
+                                                                       {
+                                                                           "name":  "can_resolve",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).can_resolve }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "resolution_type",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).resolution_type }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "reasoning",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).reasoning }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "reply_subject",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).reply_subject }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "reply_body",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).reply_body }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "commitments_extracted",
+                                                                           "value":  "={{ JSON.stringify(JSON.parse($json.content[0].text).commitments_extracted) }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "route_to_human",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).route_to_human }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "route_reason",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).route_reason }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "urgency",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).urgency }}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "related_ticket_id",
+                                                                           "value":  "={{ JSON.parse($json.content[0].text).related_ticket_id }}"
+                                                                       }
+                                                                   ]
+                                                    }
+                                     },
+                      "position":  [
+                                       1400,
+                                       350
+                                   ]
+                  },
+                  {
+                      "id":  "update_commitments",
+                      "name":  "Update Email Record â€” Commitments",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "PATCH",
+                                         "url":  "=https://postgrest-production-7960.up.railway.app/supplier_emails?id=eq.{{ $node[\u0027Log Inbound Email\u0027].json[0]?.id || $node[\u0027Log Inbound Email\u0027].json?.id }}",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ body_summary: $json.reasoning, commitments: $json.commitments_extracted, flagged: $json.route_to_human, flag_reason: $json.route_reason }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       1600,
+                                       350
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "can_agent_resolve",
+                      "name":  "Can Agent Resolve?",
+                      "type":  "n8n-nodes-base.if",
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "boolean":  [
+                                                                            {
+                                                                                "value1":  "={{ $json.can_resolve }}",
+                                                                                "operation":  "true"
+                                                                            }
+                                                                        ]
+                                                        }
+                                     },
+                      "position":  [
+                                       1800,
+                                       350
+                                   ]
+                  },
+                  {
+                      "id":  "send_reply_direct",
+                      "name":  "Send Reply Directly to Supplier",
+                      "type":  "n8n-nodes-base.emailSend",
+                      "parameters":  {
+                                         "fromEmail":  "procurement@company.com",
+                                         "toEmail":  "={{ $node[\u0027Extract Email Data\u0027].json.from_email }}",
+                                         "subject":  "={{ $node[\u0027Parse Claude Response\u0027].json.reply_subject }}",
+                                         "text":  "={{ $node[\u0027Parse Claude Response\u0027].json.reply_body }}"
+                                     },
+                      "position":  [
+                                       2000,
+                                       200
+                                   ]
+                  },
+                  {
+                      "id":  "log_outbound_reply",
+                      "name":  "Log Outbound Reply",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://postgrest-production-7960.up.railway.app/supplier_emails",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Match Supplier in PostgREST\u0027].json[0].id, direction: \u0027outbound\u0027, subject: $node[\u0027Parse Claude Response\u0027].json.reply_subject, body_summary: $node[\u0027Parse Claude Response\u0027].json.reasoning, received_at: new Date().toISOString() }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       2200,
+                                       200
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "close_related_ticket",
+                      "name":  "Close Related Ticket (if any)",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "PATCH",
+                                         "url":  "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node[\u0027Parse Claude Response\u0027].json.related_ticket_id }}",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ status: \u0027closed\u0027, closed_at: new Date().toISOString() }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       2400,
+                                       200
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "route_urgency",
+                      "name":  "Route by Urgency",
+                      "type":  "n8n-nodes-base.switch",
+                      "parameters":  {
+                                         "dataType":  "string",
+                                         "value1":  "={{ $node[\u0027Parse Claude Response\u0027].json.urgency }}",
+                                         "rules":  {
+                                                       "rules":  [
+                                                                     {
+                                                                         "value2":  "critical",
+                                                                         "outputIndex":  0
+                                                                     },
+                                                                     {
+                                                                         "value2":  "high",
+                                                                         "outputIndex":  1
+                                                                     },
+                                                                     {
+                                                                         "value2":  "medium",
+                                                                         "outputIndex":  2
+                                                                     },
+                                                                     {
+                                                                         "value2":  "low",
+                                                                         "outputIndex":  2
+                                                                     }
+                                                                 ]
+                                                   }
+                                     },
+                      "position":  [
+                                       2000,
+                                       500
+                                   ]
+                  },
+                  {
+                      "id":  "fetch_manager_for_routing",
+                      "name":  "Fetch Manager to Route To",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://postgrest-production-7960.up.railway.app/users?role=eq.head_of_procurement\u0026active=eq.true",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Accept",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              }
+                                     },
+                      "position":  [
+                                       2200,
+                                       380
+                                   ]
+                  },
+                  {
+                      "id":  "slack_critical",
+                      "name":  "Log Escalation to Trace",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=representation"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "body",
+                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027intake\u0027, value: \u0027supplier_reply_escalated\u0027, notes: \u0027Reply from \u0027 + $node[\u0027Match Supplier in PostgREST\u0027].json[0].name + \u0027 â€” urgency: \u0027 + $node[\u0027Parse Claude Response\u0027].json.urgency + \u0027. Reason: \u0027 + $node[\u0027Parse Claude Response\u0027].json.route_reason + \u0027. Jira ticket created. Ticket visible on Operations Board.\u0027 }) }}"
+                                                                                   }
+                                                                               ]
+                                                            }
+                                     },
+                      "position":  [
+                                       2400,
+                                       380
+                                   ],
+                      "options":  {
+                                      "timeout":  30000
+                                  },
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  1000
+                  },
+                  {
+                      "id":  "slack_high",
+                      "name":  "Log High-Urgency Reply to Trace",
+                      "type":  "n8n-nodes-base.noOp",
+                      "parameters":  {
 
-    {
-      "id": "send_reply_direct",
-      "name": "Send Reply Directly to Supplier",
-      "type": "n8n-nodes-base.emailSend",
-      "parameters": {
-        "fromEmail": "procurement@company.com",
-        "toEmail":   "={{ $node['Extract Email Data'].json.from_email }}",
-        "subject":   "={{ $node['Parse Claude Response'].json.reply_subject }}",
-        "text":      "={{ $node['Parse Claude Response'].json.reply_body }}"
-      },
-      "position": [2000, 200]
-    },
-    {
-      "id": "log_outbound_reply",
-      "name": "Log Outbound Reply",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Content-Type",  "value": "application/json" },
-            { "name": "Prefer",        "value": "return=representation" }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "body",
-              "value": "={{ JSON.stringify({ supplier_id: $node['Match Supplier in PostgREST'].json[0].id, direction: 'outbound', subject: $node['Parse Claude Response'].json.reply_subject, body_summary: $node['Parse Claude Response'].json.reasoning, received_at: new Date().toISOString() }) }}"
-            }
-          ]
-        }
-      },
-      "position": [2200, 200]
-    },
-    {
-      "id": "close_related_ticket",
-      "name": "Close Related Ticket (if any)",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "PATCH",
-        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Parse Claude Response'].json.related_ticket_id }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Content-Type",  "value": "application/json" },
-            { "name": "Prefer",        "value": "return=representation" }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "body",
-              "value": "={{ JSON.stringify({ status: 'closed', closed_at: new Date().toISOString() }) }}"
-            }
-          ]
-        }
-      },
-      "position": [2400, 200]
-    },
-
-    {
-      "id": "route_urgency",
-      "name": "Route by Urgency",
-      "type": "n8n-nodes-base.switch",
-      "parameters": {
-        "dataType": "string",
-        "value1": "={{ $node['Parse Claude Response'].json.urgency }}",
-        "rules": {
-          "rules": [
-            { "value2": "critical", "outputIndex": 0 },
-            { "value2": "high",     "outputIndex": 1 },
-            { "value2": "medium",   "outputIndex": 2 },
-            { "value2": "low",      "outputIndex": 2 }
-          ]
-        }
-      },
-      "position": [2000, 500]
-    },
-    {
-      "id": "fetch_manager_for_routing",
-      "name": "Fetch Manager to Route To",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "GET",
-        "url": "https://postgrest-production-7960.up.railway.app/managers?role=eq.head_of_procurement",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Accept",        "value": "application/json" }
-          ]
-        }
-      },
-      "position": [2200, 380]
-    },
-    {
-      "id": "slack_critical",
-      "name": "Log Escalation to Trace",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
-            { "name": "Content-Type",  "value": "application/json" },
-            { "name": "Prefer",        "value": "return=representation" }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            { "name": "body", "value": "={{ JSON.stringify({ signal: 'intake', value: 'supplier_reply_escalated', notes: 'Reply from ' + $node['Match Supplier in PostgREST'].json[0].name + ' — urgency: ' + $node['Parse Claude Response'].json.urgency + '. Reason: ' + $node['Parse Claude Response'].json.route_reason + '. Jira ticket created. Ticket visible on Operations Board.' }) }}" }
-          ]
-        }
-      },
-      "position": [2400, 380]
-    },
-    {
-      "id": "slack_high",
-      "name": "Log High-Urgency Reply to Trace",
-      "type": "n8n-nodes-base.noOp",
-      "parameters": {},
-      "position": [2400, 520]
-    },
-    {
-      "id": "create_jira_for_reply",
-      "name": "Create Jira — Supplier Reply Needs Action",
-      "type": "n8n-nodes-base.jira",
-      "parameters": {
-        "operation": "create",
-        "project": "PROC",
-        "issueType": "Task",
-        "priority": "={{ $node['Parse Claude Response'].json.urgency === 'critical' ? 'Highest' : 'High' }}",
-        "summary": "={{ '[REPLY] ' + $node['Match Supplier in PostgREST'].json[0].name + ' — ' + $node['Extract Email Data'].json.subject }}",
-        "description": "=*Inbound from:* {{ $node['Extract Email Data'].json.from_name }} <{{ $node['Extract Email Data'].json.from_email }}>\n*Subject:* {{ $node['Extract Email Data'].json.subject }}\n\n*Original email:*\n{{ $node['Extract Email Data'].json.body }}\n\n*Why agent cannot resolve:*\n{{ $node['Parse Claude Response'].json.route_reason }}\n\n*Agent reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}\n\n*Draft reply — ready to send or edit:*\n{{ $node['Parse Claude Response'].json.reply_body }}",
-        "assignee": "={{ $node['Fetch Manager to Route To'].json[0]?.email }}"
-      },
-      "position": [2400, 660]
-    }
-  ],
-  "connections": {
-    "Inbound Supplier Email":                 { "main": [[{ "node": "Extract Email Data",                           "type": "main", "index": 0 }]] },
-    "Extract Email Data":                     { "main": [[{ "node": "Match Supplier in PostgREST",                 "type": "main", "index": 0 }]] },
-    "Match Supplier in PostgREST":            { "main": [[{ "node": "Supplier Known?",                            "type": "main", "index": 0 }]] },
-    "Supplier Known?":                        { "main": [
-      [{ "node": "Fetch Open Tickets for Supplier",          "type": "main", "index": 0 }],
-      [{ "node": "Flag Unknown Sender",                      "type": "main", "index": 0 }]
-    ]},
-    "Fetch Open Tickets for Supplier":        { "main": [[{ "node": "Fetch Email Thread History",                  "type": "main", "index": 0 }]] },
-    "Fetch Email Thread History":             { "main": [[{ "node": "Log Inbound Email",                           "type": "main", "index": 0 }]] },
-    "Log Inbound Email":                      { "main": [[{ "node": "Fetch Supplier Contracts",                    "type": "main", "index": 0 }]] },
-    "Fetch Supplier Contracts":               { "main": [[{ "node": "Claude — Read & Reason on Reply",             "type": "main", "index": 0 }]] },
-    "Claude — Read & Reason on Reply":        { "main": [[{ "node": "Parse Claude Response",                      "type": "main", "index": 0 }]] },
-    "Parse Claude Response":                  { "main": [[{ "node": "Update Email Record — Commitments",           "type": "main", "index": 0 }]] },
-    "Update Email Record — Commitments":      { "main": [[{ "node": "Can Agent Resolve?",                          "type": "main", "index": 0 }]] },
-    "Can Agent Resolve?":                     { "main": [
-      [{ "node": "Send Reply Directly to Supplier",          "type": "main", "index": 0 }],
-      [{ "node": "Route by Urgency",                         "type": "main", "index": 0 }]
-    ]},
-    "Send Reply Directly to Supplier":        { "main": [[{ "node": "Log Outbound Reply",                         "type": "main", "index": 0 }]] },
-    "Log Outbound Reply":                     { "main": [[{ "node": "Close Related Ticket (if any)",              "type": "main", "index": 0 }]] },
-    "Route by Urgency":                       { "main": [
-      [{ "node": "Fetch Manager to Route To",                "type": "main", "index": 0 }],
-      [{ "node": "Fetch Manager to Route To",                "type": "main", "index": 0 }],
-      [{ "node": "Fetch Manager to Route To",                "type": "main", "index": 0 }]
-    ]},
-    "Fetch Manager to Route To":              { "main": [[{ "node": "Slack — Critical: Needs Immediate Attention", "type": "main", "index": 0 },
-                                                           { "node": "Slack — High: Route to Manager",             "type": "main", "index": 0 },
-                                                           { "node": "Create Jira — Supplier Reply Needs Action",  "type": "main", "index": 0 }]] }
-  }
+                                     },
+                      "position":  [
+                                       2400,
+                                       520
+                                   ]
+                  },
+                  {
+                      "id":  "create_jira_for_reply",
+                      "name":  "Create Jira â€” Supplier Reply Needs Action",
+                      "type":  "n8n-nodes-base.jira",
+                      "parameters":  {
+                                         "operation":  "create",
+                                         "project":  "PROC",
+                                         "issueType":  "Task",
+                                         "priority":  "={{ $node[\u0027Parse Claude Response\u0027].json.urgency === \u0027critical\u0027 ? \u0027Highest\u0027 : \u0027High\u0027 }}",
+                                         "summary":  "={{ \u0027[REPLY] \u0027 + $node[\u0027Match Supplier in PostgREST\u0027].json[0].name + \u0027 â€” \u0027 + $node[\u0027Extract Email Data\u0027].json.subject }}",
+                                         "description":  "=*Inbound from:* {{ $node[\u0027Extract Email Data\u0027].json.from_name }} \u003c{{ $node[\u0027Extract Email Data\u0027].json.from_email }}\u003e\n*Subject:* {{ $node[\u0027Extract Email Data\u0027].json.subject }}\n\n*Original email:*\n{{ $node[\u0027Extract Email Data\u0027].json.body }}\n\n*Why agent cannot resolve:*\n{{ $node[\u0027Parse Claude Response\u0027].json.route_reason }}\n\n*Agent reasoning:*\n{{ $node[\u0027Parse Claude Response\u0027].json.reasoning }}\n\n*Draft reply â€” ready to send or edit:*\n{{ $node[\u0027Parse Claude Response\u0027].json.reply_body }}",
+                                         "assignee":  "={{ $node[\u0027Fetch Manager to Route To\u0027].json[0]?.email }}"
+                                     },
+                      "position":  [
+                                       2400,
+                                       660
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Inbound Supplier Email":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Extract Email Data",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Extract Email Data":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Match Supplier in PostgREST",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Match Supplier in PostgREST":  {
+                                                            "main":  [
+                                                                         [
+                                                                             {
+                                                                                 "node":  "Supplier Known?",
+                                                                                 "type":  "main",
+                                                                                 "index":  0
+                                                                             }
+                                                                         ]
+                                                                     ]
+                                                        },
+                        "Supplier Known?":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Fetch Open Tickets for Supplier",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ],
+                                                             [
+                                                                 {
+                                                                     "node":  "Flag Unknown Sender",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Fetch Open Tickets for Supplier":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Fetch Email Thread History",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            },
+                        "Fetch Email Thread History":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Log Inbound Email",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Log Inbound Email":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Fetch Supplier Contracts",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Fetch Supplier Contracts":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Claude â€” Read \u0026 Reason on Reply",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Claude â€” Read \u0026 Reason on Reply":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Parse Claude Response",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                        "Parse Claude Response":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Update Email Record â€” Commitments",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Update Email Record â€” Commitments":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Can Agent Resolve?",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                        "Can Agent Resolve?":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Send Reply Directly to Supplier",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ],
+                                                                [
+                                                                    {
+                                                                        "node":  "Route by Urgency",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Send Reply Directly to Supplier":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Log Outbound Reply",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            },
+                        "Log Outbound Reply":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Close Related Ticket (if any)",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Route by Urgency":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Fetch Manager to Route To",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ],
+                                                              [
+                                                                  {
+                                                                      "node":  "Log High-Urgency Reply to Trace",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ],
+                                                              [
+                                                                  {
+                                                                      "node":  "Log High-Urgency Reply to Trace",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Fetch Manager to Route To":  {
+                                                          "main":  [
+                                                                       {
+                                                                           "node":  "Log Escalation to Trace",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       },
+                                                                       {
+                                                                           "node":  "Create Jira — Supplier Reply Needs Action",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                      }
+                    }
 }

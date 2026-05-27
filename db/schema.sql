@@ -923,6 +923,7 @@ create table tickets (
   -- What it's about
   title           text not null,
   description     text,
+  category        spend_category,        -- denormalized for budget join (avoids correlated subquery)
   branch_id       uuid references branches(id),
   cost_center_id  uuid references cost_centers(id),
   supplier_id     uuid references suppliers(id),
@@ -1238,11 +1239,8 @@ left join users u      on u.id  = t.owner_id
 left join decisions d  on d.ticket_id = t.id
 left join budget_positions bp
   on bp.branch_id = t.branch_id
-  and bp.cost_center_id = t.cost_center_id
-  and bp.category = (
-    select category from contracts
-    where id = t.contract_id limit 1
-  )
+  and bp.cost_center_id is not distinct from t.cost_center_id
+  and bp.category = t.category
   and bp.period = (
     extract(year from now())::text || '-Q' ||
     ceil(extract(month from now()) / 3.0)::text
@@ -1492,6 +1490,22 @@ create index idx_clauses_contract       on contract_clauses(contract_id);
 create index idx_clauses_type           on contract_clauses(clause_type);
 create index idx_benchmarks_supplier    on vendor_pricing_benchmarks(supplier_id);
 
+-- Performance: covering index for 3-tier budget check
+-- budget_positions is hit on every approval — index must cover all columns read
+create index idx_budget_pos_lookup
+  on budget_positions(branch_id, category, period)
+  include (budget, committed, spent, available);
+
+-- Performance: partial index for Operations Board
+-- Only indexes rows the board actually queries — no overhead for closed tickets
+create index idx_tickets_board
+  on tickets(status, created_at)
+  where status in ('open', 'pending_confirm', 'pending_review',
+                   'signature_required', 'escalated');
+
+-- Performance: category lookup on tickets for budget join
+create index idx_tickets_category       on tickets(category) where category is not null;
+
 
 -- =============================================================================
 -- ROW LEVEL SECURITY
@@ -1563,6 +1577,189 @@ begin
     execute 'create policy "app_role_all" on budget_reallocations
       for all to truespend using (true) with check (true)';
     execute 'create policy "app_role_all" on budget_pools
+      for all to truespend using (true) with check (true)';
+  end if;
+end $$;
+
+
+-- =============================================================================
+-- ATOMIC BUDGET FUNCTIONS
+-- Race condition fix: concurrent PATCH operations on budget_positions both
+-- read-then-write → one write is silently lost. These functions use row-level
+-- locking (FOR UPDATE) to serialize concurrent budget mutations.
+-- Called via PostgREST RPC: POST /rpc/commit_budget
+-- =============================================================================
+
+-- commit_budget — called on approval. Moves amount from available → committed.
+-- Returns the updated row. Errors on insufficient budget.
+create or replace function commit_budget(
+  p_branch_id       uuid,
+  p_cost_center_id  uuid,
+  p_category        spend_category,
+  p_period          text,
+  p_amount          numeric
+) returns budget_positions language plpgsql security definer as $$
+declare
+  v_row budget_positions;
+begin
+  select * into v_row
+  from budget_positions
+  where branch_id = p_branch_id
+    and cost_center_id is not distinct from p_cost_center_id
+    and category = p_category
+    and period = p_period
+  for update;  -- row-level lock serializes concurrent calls
+
+  if not found then
+    raise exception 'Budget position not found: % / % / % / %',
+      p_branch_id, p_cost_center_id, p_category, p_period;
+  end if;
+
+  if (v_row.budget - v_row.committed - v_row.spent) < p_amount then
+    raise exception 'Insufficient budget: available=%, requested=%',
+      (v_row.budget - v_row.committed - v_row.spent), p_amount;
+  end if;
+
+  update budget_positions
+  set committed   = committed + p_amount,
+      updated_at  = now()
+  where branch_id = p_branch_id
+    and cost_center_id is not distinct from p_cost_center_id
+    and category = p_category
+    and period = p_period
+  returning * into v_row;
+
+  return v_row;
+end $$;
+
+-- release_budget — called on rejection or cancellation.
+-- Moves amount from committed back to available.
+create or replace function release_budget(
+  p_branch_id       uuid,
+  p_cost_center_id  uuid,
+  p_category        spend_category,
+  p_period          text,
+  p_amount          numeric
+) returns budget_positions language plpgsql security definer as $$
+declare
+  v_row budget_positions;
+begin
+  select * into v_row
+  from budget_positions
+  where branch_id = p_branch_id
+    and cost_center_id is not distinct from p_cost_center_id
+    and category = p_category
+    and period = p_period
+  for update;
+
+  if not found then
+    raise exception 'Budget position not found: % / % / % / %',
+      p_branch_id, p_cost_center_id, p_category, p_period;
+  end if;
+
+  update budget_positions
+  set committed   = greatest(committed - p_amount, 0),
+      updated_at  = now()
+  where branch_id = p_branch_id
+    and cost_center_id is not distinct from p_cost_center_id
+    and category = p_category
+    and period = p_period
+  returning * into v_row;
+
+  return v_row;
+end $$;
+
+-- record_spend — called when invoice is approved for payment.
+-- Releases committed amount, increments spent.
+-- These should always match: if PO was for €5k, invoice should be ~€5k (±2% tolerance).
+create or replace function record_spend(
+  p_branch_id       uuid,
+  p_cost_center_id  uuid,
+  p_category        spend_category,
+  p_period          text,
+  p_committed_release numeric,   -- amount to release from committed (PO amount)
+  p_spend_amount      numeric    -- actual invoice amount to record as spent
+) returns budget_positions language plpgsql security definer as $$
+declare
+  v_row budget_positions;
+begin
+  select * into v_row
+  from budget_positions
+  where branch_id = p_branch_id
+    and cost_center_id is not distinct from p_cost_center_id
+    and category = p_category
+    and period = p_period
+  for update;
+
+  if not found then
+    raise exception 'Budget position not found: % / % / % / %',
+      p_branch_id, p_cost_center_id, p_category, p_period;
+  end if;
+
+  update budget_positions
+  set committed   = greatest(committed - p_committed_release, 0),
+      spent       = spent + p_spend_amount,
+      updated_at  = now()
+  where branch_id = p_branch_id
+    and cost_center_id is not distinct from p_cost_center_id
+    and category = p_category
+    and period = p_period
+  returning * into v_row;
+
+  return v_row;
+end $$;
+
+-- Grant RPC access to application role
+grant execute on function commit_budget  to truespend;
+grant execute on function release_budget to truespend;
+grant execute on function record_spend   to truespend;
+
+
+-- =============================================================================
+-- WORKFLOW MONITORING
+-- Grafana reads this table. Every workflow run writes a row.
+-- Enables: SLA alerting, duration trending, error rate dashboards.
+-- =============================================================================
+
+create table workflow_runs (
+  id                uuid primary key default uuid_generate_v4(),
+  workflow_name     text not null,
+  -- 'contract_watcher' | 'hyperscaler_monitor' | 'intake_receiver' |
+  -- 'reorder_trigger' | 'supplier_reply_handler' | 'supplier_onboarding'
+  n8n_execution_id  text,                    -- n8n's execution ID for deep-link
+  -- Timing
+  started_at        timestamptz not null,
+  completed_at      timestamptz,
+  duration_ms       int generated always as (
+    case when completed_at is not null
+    then extract(epoch from (completed_at - started_at))::int * 1000
+    else null end
+  ) stored,
+  -- Outcome
+  status            text not null default 'running',
+  -- 'running' | 'success' | 'partial' | 'failed'
+  records_processed int default 0,
+  records_errored   int default 0,
+  -- What happened
+  summary           text,                    -- e.g. "12 contracts checked, 2 renewals triggered"
+  error_message     text,
+  error_node        text,                    -- which n8n node failed
+  -- Context (for alerting logic)
+  branch_id         uuid references branches(id),  -- null = org-wide workflow
+  created_at        timestamptz default now()
+);
+
+create index idx_workflow_runs_name   on workflow_runs(workflow_name, started_at desc);
+create index idx_workflow_runs_status on workflow_runs(status) where status in ('running', 'failed');
+
+-- RLS for workflow monitoring
+alter table workflow_runs enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.schemata where schema_name = 'auth'
+  ) then
+    execute 'create policy "app_role_all" on workflow_runs
       for all to truespend using (true) with check (true)';
   end if;
 end $$;
