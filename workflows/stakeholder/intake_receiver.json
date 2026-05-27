@@ -1,0 +1,410 @@
+{
+  "name": "TrueSpend — Intake Receiver",
+  "description": "Receives all stakeholder submissions from the intake UI. Agent reasons across all five signals, acts immediately, communicates with supplier directly. Routes to a person only if genuinely unresolvable.",
+  "nodes": [
+    {
+      "id": "webhook_trigger",
+      "name": "Intake Form Submitted",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "path": "intake",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "responseData": "allEntries"
+      },
+      "position": [0, 300]
+    },
+    {
+      "id": "generate_reference",
+      "name": "Generate Ticket Reference",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "reference",
+              "value": "=TS-{{ new Date().getFullYear() }}-{{ String(Math.floor(Math.random() * 9000) + 1000) }}"
+            },
+            {
+              "name": "received_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "position": [200, 300]
+    },
+    {
+      "id": "create_ticket",
+      "name": "Create Ticket in Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "tickets",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "reference",      "fieldValue": "={{ $json.reference }}" },
+            { "fieldId": "source",         "fieldValue": "intake" },
+            { "fieldId": "status",         "fieldValue": "reasoning" },
+            { "fieldId": "title",          "fieldValue": "={{ $node['Intake Form Submitted'].json.body.title }}" },
+            { "fieldId": "description",    "fieldValue": "={{ $node['Intake Form Submitted'].json.body.description }}" },
+            { "fieldId": "requested_by",   "fieldValue": "={{ $node['Intake Form Submitted'].json.body.submitted_by }}" },
+            { "fieldId": "amount",         "fieldValue": "={{ $node['Intake Form Submitted'].json.body.amount }}" },
+            { "fieldId": "currency",       "fieldValue": "={{ $node['Intake Form Submitted'].json.body.currency || 'EUR' }}" },
+            { "fieldId": "target_close",   "fieldValue": "={{ new Date(Date.now() + 15 * 60 * 1000).toISOString() }}" }
+          ]
+        }
+      },
+      "position": [400, 300]
+    },
+    {
+      "id": "respond_immediately",
+      "name": "Respond to UI — Received",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'received', reference: $node['Generate Ticket Reference'].json.reference, message: 'The agent is reviewing this. You will hear back shortly.' }) }}"
+      },
+      "position": [600, 150]
+    },
+    {
+      "id": "fetch_supplier",
+      "name": "Fetch Supplier Context",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "suppliers",
+        "filterType": "string",
+        "filters": "name.ilike.=%{{ $node['Intake Form Submitted'].json.body.supplier_name }}%"
+      },
+      "position": [600, 300]
+    },
+    {
+      "id": "fetch_contract",
+      "name": "Fetch Contract Context",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "contracts",
+        "filterType": "string",
+        "filters": "supplier_id.eq.={{ $json[0]?.id }}&branch_id.eq.={{ $node['Intake Form Submitted'].json.body.branch_id }}"
+      },
+      "position": [800, 300]
+    },
+    {
+      "id": "fetch_budget",
+      "name": "Fetch Budget Context",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "budget_positions",
+        "filterType": "string",
+        "filters": "branch_id.eq.={{ $node['Intake Form Submitted'].json.body.branch_id }}&period.eq.={{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}"
+      },
+      "position": [1000, 300]
+    },
+    {
+      "id": "fetch_manager",
+      "name": "Fetch Responsible Manager",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "managers",
+        "filterType": "string",
+        "filters": "branches.cs.={{ '{\"' + $node['Intake Form Submitted'].json.body.branch_id + '\"}' }}"
+      },
+      "position": [1000, 450]
+    },
+    {
+      "id": "call_claude_reason",
+      "name": "Claude — Reason on Intake",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",        "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type",      "value": "application/json" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system. You reason across five signals simultaneously — contract terms, consumption vs budget, supplier health, request pattern, and policy state — and reach a confident disposition on every procurement request. You act immediately when confident. You communicate directly with suppliers. You only route to a human when the situation genuinely requires human judgment. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this intake request and produce a complete disposition including any supplier communication required.\\n\\nREQUEST:\\n{{ JSON.stringify($node['Intake Form Submitted'].json.body) }}\\n\\nSIGNAL 1 — CONTRACT CONTEXT:\\n{{ JSON.stringify($node['Fetch Contract Context'].json) }}\\n\\nSIGNAL 2 — BUDGET CONTEXT:\\n{{ JSON.stringify($node['Fetch Budget Context'].json) }}\\n\\nSIGNAL 3 — SUPPLIER HEALTH:\\n{{ JSON.stringify($node['Fetch Supplier Context'].json) }}\\n\\nSIGNAL 4 — REQUEST PATTERN: This is a {{ $node['Intake Form Submitted'].json.body.ticket_type }} request for {{ $node['Intake Form Submitted'].json.body.amount }} {{ $node['Intake Form Submitted'].json.body.currency || 'EUR' }} submitted by {{ $node['Intake Form Submitted'].json.body.submitted_by }}.\\n\\nSIGNAL 5 — POLICY: Standard delegated authority applies. Auto-execute up to manager spend authority. One-touch above. Escalate if novel, high-risk, or supplier health is red.\\n\\nReturn JSON:\\n{\\n  disposition: 'auto_execute' | 'one_touch' | 'escalate',\\n  confidence: 0.00-1.00,\\n  reasoning: string,\\n  recommendation: string,\\n  brief: string,\\n  action_taken: string,\\n  supplier_email_subject: string | null,\\n  supplier_email_body: string | null,\\n  requires_order: boolean,\\n  order_details: object | null\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [1200, 300]
+    },
+    {
+      "id": "parse_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "disposition",             "value": "={{ JSON.parse($json.content[0].text).disposition }}" },
+            { "name": "confidence",              "value": "={{ JSON.parse($json.content[0].text).confidence }}" },
+            { "name": "reasoning",               "value": "={{ JSON.parse($json.content[0].text).reasoning }}" },
+            { "name": "recommendation",          "value": "={{ JSON.parse($json.content[0].text).recommendation }}" },
+            { "name": "brief",                   "value": "={{ JSON.parse($json.content[0].text).brief }}" },
+            { "name": "action_taken",            "value": "={{ JSON.parse($json.content[0].text).action_taken }}" },
+            { "name": "supplier_email_subject",  "value": "={{ JSON.parse($json.content[0].text).supplier_email_subject }}" },
+            { "name": "supplier_email_body",     "value": "={{ JSON.parse($json.content[0].text).supplier_email_body }}" },
+            { "name": "requires_order",          "value": "={{ JSON.parse($json.content[0].text).requires_order }}" },
+            { "name": "order_details",           "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).order_details) }}" }
+          ]
+        }
+      },
+      "position": [1400, 300]
+    },
+    {
+      "id": "write_decision",
+      "name": "Write Decision to Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "decisions",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "ticket_id",      "fieldValue": "={{ $node['Create Ticket in Supabase'].json.id }}" },
+            { "fieldId": "disposition",    "fieldValue": "={{ $json.disposition }}" },
+            { "fieldId": "confidence",     "fieldValue": "={{ $json.confidence }}" },
+            { "fieldId": "reasoning",      "fieldValue": "={{ $json.reasoning }}" },
+            { "fieldId": "recommendation", "fieldValue": "={{ $json.recommendation }}" },
+            { "fieldId": "brief",          "fieldValue": "={{ $json.brief }}" },
+            { "fieldId": "model_used",     "fieldValue": "claude-sonnet-4-6" }
+          ]
+        }
+      },
+      "position": [1600, 300]
+    },
+    {
+      "id": "write_trace",
+      "name": "Write Signal Trace",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "trace_log",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "decision_id", "fieldValue": "={{ $node['Write Decision to Supabase'].json.id }}" },
+            { "fieldId": "signal",      "fieldValue": "contract" },
+            { "fieldId": "value",       "fieldValue": "={{ JSON.stringify($node['Fetch Contract Context'].json) }}" },
+            { "fieldId": "notes",       "fieldValue": "All five signals logged — contract, budget, supplier, request, policy" }
+          ]
+        }
+      },
+      "position": [1600, 450]
+    },
+    {
+      "id": "route_disposition",
+      "name": "Route by Disposition",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $node['Parse Claude Response'].json.disposition }}",
+        "rules": {
+          "rules": [
+            { "value2": "auto_execute", "outputIndex": 0 },
+            { "value2": "one_touch",    "outputIndex": 1 },
+            { "value2": "escalate",     "outputIndex": 2 }
+          ]
+        }
+      },
+      "position": [1800, 300]
+    },
+
+    {
+      "id": "send_supplier_email",
+      "name": "Send Email to Supplier",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail":   "={{ $node['Fetch Supplier Context'].json[0]?.contact_email }}",
+        "subject":   "={{ $node['Parse Claude Response'].json.supplier_email_subject }}",
+        "text":      "={{ $node['Parse Claude Response'].json.supplier_email_body }}"
+      },
+      "position": [2000, 150]
+    },
+    {
+      "id": "log_supplier_email",
+      "name": "Log Email to Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "insert",
+        "tableId": "supplier_emails",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "supplier_id",   "fieldValue": "={{ $node['Fetch Supplier Context'].json[0]?.id }}" },
+            { "fieldId": "direction",     "fieldValue": "outbound" },
+            { "fieldId": "subject",       "fieldValue": "={{ $node['Parse Claude Response'].json.supplier_email_subject }}" },
+            { "fieldId": "body_summary",  "fieldValue": "={{ $node['Parse Claude Response'].json.action_taken }}" },
+            { "fieldId": "received_at",   "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [2000, 280]
+    },
+    {
+      "id": "close_ticket_auto",
+      "name": "Close Ticket — Auto Executed",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "update",
+        "tableId": "tickets",
+        "filters": "id.eq.={{ $node['Create Ticket in Supabase'].json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "status",     "fieldValue": "closed" },
+            { "fieldId": "closed_at",  "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "position": [2000, 420]
+    },
+    {
+      "id": "notify_submitter_done",
+      "name": "Notify Submitter — Done",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail":   "={{ $node['Intake Form Submitted'].json.body.submitted_by_email }}",
+        "subject":   "=✅ Done: {{ $node['Intake Form Submitted'].json.body.title }} [{{ $node['Generate Ticket Reference'].json.reference }}]",
+        "text":      "=Your request has been processed.\n\nReference: {{ $node['Generate Ticket Reference'].json.reference }}\nAction taken: {{ $node['Parse Claude Response'].json.action_taken }}\n\nNo further action needed from you."
+      },
+      "position": [2000, 560]
+    },
+
+    {
+      "id": "one_touch_slack",
+      "name": "Send One-Touch to Manager",
+      "type": "n8n-nodes-base.slack",
+      "parameters": {
+        "channel": "={{ $node['Fetch Responsible Manager'].json[0]?.email }}",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "textUi": { "text": "⚡ One-touch needed", "type": "plain_text" }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*{{ $node['Intake Form Submitted'].json.body.title }}*\n*Submitted by:* {{ $node['Intake Form Submitted'].json.body.submitted_by }}\n*Amount:* {{ $node['Intake Form Submitted'].json.body.amount }} {{ $node['Intake Form Submitted'].json.body.currency || 'EUR' }}\n*Supplier:* {{ $node['Intake Form Submitted'].json.body.supplier_name }}\n*Reference:* {{ $node['Generate Ticket Reference'].json.reference }}"
+              }
+            },
+            {
+              "type": "section",
+              "textUi": {
+                "type": "mrkdwn",
+                "text": "=*Agent recommendation:*\n{{ $node['Parse Claude Response'].json.recommendation }}"
+              }
+            },
+            {
+              "type": "actions",
+              "elementsUi": {
+                "elementsValues": [
+                  { "type": "button", "textUi": { "text": "✅ Approve & Send" }, "style": "primary", "value": "={{ 'approve:' + $node['Create Ticket in Supabase'].json.id }}" },
+                  { "type": "button", "textUi": { "text": "❌ Reject"          }, "style": "danger",  "value": "={{ 'reject:' + $node['Create Ticket in Supabase'].json.id }}"  },
+                  { "type": "button", "textUi": { "text": "📄 Full Brief"      },                     "value": "={{ 'brief:' + $node['Create Ticket in Supabase'].json.id }}"   }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "position": [2000, 750]
+    },
+    {
+      "id": "update_ticket_pending",
+      "name": "Update Ticket — Pending Confirm",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "update",
+        "tableId": "tickets",
+        "filters": "id.eq.={{ $node['Create Ticket in Supabase'].json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "status",    "fieldValue": "pending_confirm" },
+            { "fieldId": "owner_id",  "fieldValue": "={{ $node['Fetch Responsible Manager'].json[0]?.id }}" }
+          ]
+        }
+      },
+      "position": [2200, 750]
+    },
+
+    {
+      "id": "create_jira_escalation",
+      "name": "Create Jira Escalation",
+      "type": "n8n-nodes-base.jira",
+      "parameters": {
+        "operation": "create",
+        "project": "PROC",
+        "issueType": "Task",
+        "priority": "High",
+        "summary": "={{ '[ESCALATE] ' + $node['Intake Form Submitted'].json.body.title + ' — ' + $node['Generate Ticket Reference'].json.reference }}",
+        "description": "=*Submitted by:* {{ $node['Intake Form Submitted'].json.body.submitted_by }}\n*Amount:* {{ $node['Intake Form Submitted'].json.body.amount }} {{ $node['Intake Form Submitted'].json.body.currency }}\n*Supplier:* {{ $node['Intake Form Submitted'].json.body.supplier_name }}\n\n*Agent Brief:*\n{{ $node['Parse Claude Response'].json.brief }}\n\n*Confidence:* {{ $node['Parse Claude Response'].json.confidence }}\n*Reasoning:* {{ $node['Parse Claude Response'].json.reasoning }}",
+        "assignee": "={{ $node['Fetch Responsible Manager'].json[0]?.email }}"
+      },
+      "position": [2000, 950]
+    },
+    {
+      "id": "update_ticket_escalated",
+      "name": "Update Ticket — Escalated",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "update",
+        "tableId": "tickets",
+        "filters": "id.eq.={{ $node['Create Ticket in Supabase'].json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "status",    "fieldValue": "escalated" },
+            { "fieldId": "jira_key",  "fieldValue": "={{ $json.key }}" },
+            { "fieldId": "jira_url",  "fieldValue": "={{ $json.self }}" },
+            { "fieldId": "owner_id",  "fieldValue": "={{ $node['Fetch Responsible Manager'].json[0]?.id }}" }
+          ]
+        }
+      },
+      "position": [2200, 950]
+    }
+  ],
+  "connections": {
+    "Intake Form Submitted":          { "main": [[{ "node": "Generate Ticket Reference",       "type": "main", "index": 0 }]] },
+    "Generate Ticket Reference":      { "main": [[{ "node": "Create Ticket in Supabase",       "type": "main", "index": 0 }]] },
+    "Create Ticket in Supabase":      { "main": [
+      [{ "node": "Respond to UI — Received",   "type": "main", "index": 0 }],
+      [{ "node": "Fetch Supplier Context",     "type": "main", "index": 0 }]
+    ]},
+    "Fetch Supplier Context":         { "main": [[{ "node": "Fetch Contract Context",          "type": "main", "index": 0 }]] },
+    "Fetch Contract Context":         { "main": [[{ "node": "Fetch Budget Context",            "type": "main", "index": 0 }]] },
+    "Fetch Budget Context":           { "main": [
+      [{ "node": "Fetch Responsible Manager",  "type": "main", "index": 0 }],
+      [{ "node": "Claude — Reason on Intake",  "type": "main", "index": 0 }]
+    ]},
+    "Fetch Responsible Manager":      { "main": [[{ "node": "Claude — Reason on Intake",      "type": "main", "index": 0 }]] },
+    "Claude — Reason on Intake":      { "main": [[{ "node": "Parse Claude Response",          "type": "main", "index": 0 }]] },
+    "Parse Claude Response":          { "main": [[{ "node": "Write Decision to Supabase",     "type": "main", "index": 0 }]] },
+    "Write Decision to Supabase":     { "main": [
+      [{ "node": "Write Signal Trace",         "type": "main", "index": 0 }],
+      [{ "node": "Route by Disposition",       "type": "main", "index": 0 }]
+    ]},
+    "Route by Disposition":           { "main": [
+      [{ "node": "Send Email to Supplier",     "type": "main", "index": 0 }],
+      [{ "node": "Send One-Touch to Manager",  "type": "main", "index": 0 }],
+      [{ "node": "Create Jira Escalation",     "type": "main", "index": 0 }]
+    ]},
+    "Send Email to Supplier":         { "main": [[{ "node": "Log Email to Supabase",          "type": "main", "index": 0 }]] },
+    "Log Email to Supabase":          { "main": [[{ "node": "Close Ticket — Auto Executed",   "type": "main", "index": 0 }]] },
+    "Close Ticket — Auto Executed":   { "main": [[{ "node": "Notify Submitter — Done",        "type": "main", "index": 0 }]] },
+    "Send One-Touch to Manager":      { "main": [[{ "node": "Update Ticket — Pending Confirm","type": "main", "index": 0 }]] },
+    "Create Jira Escalation":         { "main": [[{ "node": "Update Ticket — Escalated",      "type": "main", "index": 0 }]] }
+  }
+}
