@@ -16,7 +16,7 @@ ENV VITE_POSTGREST_JWT=$VITE_POSTGREST_JWT
 ENV VITE_N8N_WEBHOOK_URL=$VITE_N8N_WEBHOOK_URL
 
 COPY intake/package.json intake/package-lock.json* ./
-RUN npm ci --prefer-offline
+RUN npm ci
 
 COPY intake/ .
 RUN npm run build
