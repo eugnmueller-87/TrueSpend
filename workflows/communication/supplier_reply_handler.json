@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "TrueSpend â€” Supplier Reply Handler",
     "description":  "Catches ALL inbound supplier emails regardless of how the original action was triggered. Agent reads, reasons, replies directly. Routes to a human only if it genuinely cannot resolve. The human gets a full thread + draft reply â€” never starts from scratch.",
     "nodes":  [
@@ -668,7 +668,7 @@
                       "type":  "n8n-nodes-base.jira",
                       "parameters":  {
                                          "operation":  "create",
-                                         "project":  "PROC",
+                                         "project":  "KAN",
                                          "issueType":  "Task",
                                          "priority":  "={{ $node[\u0027Parse Claude Response\u0027].json.urgency === \u0027critical\u0027 ? \u0027Highest\u0027 : \u0027High\u0027 }}",
                                          "summary":  "={{ \u0027[REPLY] \u0027 + $node[\u0027Match Supplier in PostgREST\u0027].json[0].name + \u0027 â€” \u0027 + $node[\u0027Extract Email Data\u0027].json.subject }}",

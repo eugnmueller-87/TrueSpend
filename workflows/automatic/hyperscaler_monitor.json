@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "TrueSpend â€” Hyperscaler Daily Monitor",
     "description":  "Runs every weekday at 6:00 AM. Fetches all hyperscaler_positions. Detects: overshoot risk (projected \u003e committed), undershoot risk (projected \u003c 80% of committed = wasting money), idle resources (idle_resources_eur \u003e 5000), reservation utilization below 75%. For each anomaly Claude reasons and either: acts directly (flags for right-sizing, drafts amendment request to hyperscaler account team), sends one-touch to manager, or posts to Grafana alert channel. Posts daily summary to Slack #procurement-ops.",
     "nodes":  [

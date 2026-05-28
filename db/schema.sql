@@ -237,12 +237,19 @@ create table branches (
   region          branch_region not null,
   country         text not null,
   currency        text not null default 'EUR',
+  -- Legal entity — used on PO headers, contracts, and invoices
+  legal_name      text,           -- e.g. "TrueSpend GmbH"
+  street_address  text,           -- e.g. "Taunusanlage 12"
+  city_zip        text,           -- e.g. "60325 Frankfurt am Main"
+  vat_number      text,           -- e.g. "DE123456789"
+  po_email        text,           -- issuing email shown on POs, e.g. "procurement.dach@truespend.com"
+  po_prefix       text,           -- PO number prefix, e.g. "DACH" → PO-DACH-2025-0042
   -- Budget — top-level annual allocation (set by CFO)
   annual_budget   numeric(15,2),
-  pool_reserve    numeric(15,2) default 0, -- CFO-held unallocated reserve
+  pool_reserve    numeric(15,2) default 0,
   -- ERP mapping
-  erp_company_code text,          -- SAP company code or equivalent
-  cost_center_codes jsonb,        -- [{code: "CC-4210", name: "DACH Sales", gl_account: "6100"}]
+  erp_company_code text,
+  cost_center_codes jsonb,
   -- Ownership
   budget_owner    text,
   created_at      timestamptz default now()

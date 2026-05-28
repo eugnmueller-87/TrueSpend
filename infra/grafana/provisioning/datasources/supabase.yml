@@ -1,18 +1,18 @@
 apiVersion: 1
 
 datasources:
-  - name: Supabase PostgreSQL
-    uid: supabase-pg          # matches uid in truespend_main.json
+  - name: TrueSpend PostgreSQL
+    uid: supabase-pg          # uid kept for dashboard compatibility
     type: postgres
     access: proxy
-    url: ${SUPABASE_DB_HOST}:${SUPABASE_DB_PORT}
-    database: ${SUPABASE_DB_NAME}
-    user: ${SUPABASE_DB_USER}
+    url: ${DATABASE_HOST}:${DATABASE_PORT}
+    database: ${DATABASE_NAME}
+    user: ${DATABASE_USER}
     secureJsonData:
-      password: ${SUPABASE_DB_PASSWORD}
+      password: ${DATABASE_PASSWORD}
     jsonData:
-      sslmode: require        # Supabase requires SSL
-      postgresVersion: 1500   # PostgreSQL 15
+      sslmode: require
+      postgresVersion: 1500
       timescaledb: false
     isDefault: true
-    editable: false           # lock it so nobody changes it via UI
+    editable: false

@@ -1,1052 +1,1143 @@
-﻿{
-    "name":  "TrueSpend â€” Intake Receiver",
-    "description":  "Receives all stakeholder submissions from the intake UI. Agent reasons across all five signals, acts immediately, communicates with supplier directly. Routes to a person only if genuinely unresolvable.",
-    "nodes":  [
-                  {
-                      "id":  "webhook_trigger",
-                      "name":  "Intake Form Submitted",
-                      "type":  "n8n-nodes-base.webhook",
-                      "parameters":  {
-                                         "path":  "intake",
-                                         "httpMethod":  "POST",
-                                         "responseMode":  "responseNode",
-                                         "responseData":  "allEntries"
-                                     },
-                      "position":  [
-                                       0,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "generate_reference",
-                      "name":  "Generate Ticket Reference",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "reference",
-                                                                           "value":  "=TS-{{ new Date().getFullYear() }}-{{ String(Math.floor(Math.random() * 9000) + 1000) }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "received_at",
-                                                                           "value":  "={{ new Date().toISOString() }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       200,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "create_ticket",
-                      "name":  "Create Ticket in PostgREST",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/tickets",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ reference: $node[\u0027Generate Ticket Reference\u0027].json.reference, source: \u0027intake\u0027, status: \u0027reasoning\u0027, title: $node[\u0027Intake Form Submitted\u0027].json.body.title, description: $node[\u0027Intake Form Submitted\u0027].json.body.description, requested_by: $node[\u0027Intake Form Submitted\u0027].json.body.submitted_by, amount: $node[\u0027Intake Form Submitted\u0027].json.body.amount, currency: $node[\u0027Intake Form Submitted\u0027].json.body.currency || \u0027EUR\u0027, target_close: new Date(Date.now() + 15 * 60 * 1000).toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       400,
-                                       300
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "respond_immediately",
-                      "name":  "Respond to UI â€” Received",
-                      "type":  "n8n-nodes-base.respondToWebhook",
-                      "parameters":  {
-                                         "respondWith":  "json",
-                                         "responseBody":  "={{ JSON.stringify({ status: \u0027received\u0027, reference: $node[\u0027Generate Ticket Reference\u0027].json.reference, message: \u0027The agent is reviewing this. You will hear back shortly.\u0027 }) }}"
-                                     },
-                      "position":  [
-                                       600,
-                                       150
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_supplier",
-                      "name":  "Fetch Supplier Context",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/suppliers?name=ilike.*{{ encodeURIComponent($node[\u0027Intake Form Submitted\u0027].json.body.supplier_name) }}*",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       600,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_contract",
-                      "name":  "Fetch Contract Context",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/contracts?supplier_id=eq.{{ $json[0]?.id }}\u0026branch_id=eq.{{ $node[\u0027Intake Form Submitted\u0027].json.body.branch_id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       800,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_budget",
-                      "name":  "Fetch Budget Context",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node[\u0027Intake Form Submitted\u0027].json.body.branch_id }}\u0026period=eq.{{ new Date().getFullYear() + \u0027-Q\u0027 + Math.ceil((new Date().getMonth()+1)/3) }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       1000,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_manager",
-                      "name":  "Fetch Responsible Manager",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/users?branch_ids=cs.{$node[\u0027Intake Form Submitted\u0027].json.body.branch_id}\u0026active=eq.true\u0026role=in.(head_of_procurement,category_manager,ops_manager)\u0026order=spend_authority.desc\u0026limit=1",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       1000,
-                                       450
-                                   ]
-                  },
-                  {
-                      "id":  "call_claude_reason",
-                      "name":  "Claude â€” Reason on Intake",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system. You reason across five signals simultaneously â€” contract terms, consumption vs budget, supplier health, request pattern, and policy state â€” and reach a confident disposition on every procurement request. You act immediately when confident. You communicate directly with suppliers. You only route to a human when the situation genuinely requires human judgment. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this intake request and produce a complete disposition including any supplier communication required.\\n\\nREQUEST:\\n{{ JSON.stringify($node[\u0027Intake Form Submitted\u0027].json.body) }}\\n\\nSIGNAL 1 â€” CONTRACT CONTEXT:\\n{{ JSON.stringify($node[\u0027Fetch Contract Context\u0027].json) }}\\n\\nSIGNAL 2 â€” BUDGET CONTEXT:\\n{{ JSON.stringify($node[\u0027Fetch Budget Context\u0027].json) }}\\n\\nSIGNAL 3 â€” SUPPLIER HEALTH:\\n{{ JSON.stringify($node[\u0027Fetch Supplier Context\u0027].json) }}\\n\\nSIGNAL 4 â€” REQUEST PATTERN: This is a {{ $node[\u0027Intake Form Submitted\u0027].json.body.ticket_type }} request for {{ $node[\u0027Intake Form Submitted\u0027].json.body.amount }} {{ $node[\u0027Intake Form Submitted\u0027].json.body.currency || \u0027EUR\u0027 }} submitted by {{ $node[\u0027Intake Form Submitted\u0027].json.body.submitted_by }}.\\n\\nSIGNAL 5 â€” POLICY: Standard delegated authority applies. Auto-execute up to manager spend authority. One-touch above. Escalate if novel, high-risk, or supplier health is red.\\n\\nReturn JSON:\\n{\\n  disposition: \u0027auto_execute\u0027 | \u0027one_touch\u0027 | \u0027escalate\u0027,\\n  confidence: 0.00-1.00,\\n  reasoning: string,\\n  recommendation: string,\\n  brief: string,\\n  action_taken: string,\\n  supplier_email_subject: string | null,\\n  supplier_email_body: string | null,\\n  requires_order: boolean,\\n  order_details: object | null\\n}\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1200,
-                                       300
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "parse_response",
-                      "name":  "Parse Claude Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "disposition",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).disposition }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "confidence",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).confidence }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "reasoning",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).reasoning }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "recommendation",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).recommendation }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "brief",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).brief }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "action_taken",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).action_taken }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "supplier_email_subject",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).supplier_email_subject }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "supplier_email_body",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).supplier_email_body }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "requires_order",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).requires_order }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "order_details",
-                                                                           "value":  "={{ JSON.stringify(JSON.parse($json.content[0].text).order_details) }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1400,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "write_decision",
-                      "name":  "Write Decision to PostgREST",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ ticket_id: $node[\u0027Create Ticket in PostgREST\u0027].json[0]?.id || $node[\u0027Create Ticket in PostgREST\u0027].json?.id, disposition: $json.disposition, confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, brief: $json.brief, model_used: \u0027claude-sonnet-4-6\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1600,
-                                       300
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "write_trace",
-                      "name":  "Write 5 Signal Traces",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ (() =\u003e { const did = $node[\u0027Write Decision to PostgREST\u0027].json[0]?.id || $node[\u0027Write Decision to PostgREST\u0027].json?.id; const parsed = JSON.parse($node[\u0027Claude — Reason on Intake\u0027].json.content[0].text); return JSON.stringify([ { decision_id: did, signal: \u0027contract\u0027, value: JSON.stringify($node[\u0027Fetch Contract Context\u0027].json), green: !!($node[\u0027Fetch Contract Context\u0027].json[0]), notes: \u0027Signal 1: contract context\u0027 }, { decision_id: did, signal: \u0027budget\u0027, value: JSON.stringify($node[\u0027Fetch Budget Context\u0027].json), green: !!($node[\u0027Fetch Budget Context\u0027].json[0]?.available \u003e 0), notes: \u0027Signal 2: budget availability\u0027 }, { decision_id: did, signal: \u0027supplier\u0027, value: JSON.stringify($node[\u0027Fetch Supplier Context\u0027].json), green: ($node[\u0027Fetch Supplier Context\u0027].json[0]?.health !== \u0027red\u0027), notes: \u0027Signal 3: supplier health\u0027 }, { decision_id: did, signal: \u0027request\u0027, value: JSON.stringify({ ticket_type: $node[\u0027Intake Form Submitted\u0027].json.body.ticket_type, amount: $node[\u0027Intake Form Submitted\u0027].json.body.amount, submitted_by: $node[\u0027Intake Form Submitted\u0027].json.body.submitted_by }), green: true, notes: \u0027Signal 4: request pattern\u0027 }, { decision_id: did, signal: \u0027policy\u0027, value: JSON.stringify({ disposition: parsed.disposition, confidence: parsed.confidence }), green: parsed.confidence \u003e= 0.90, notes: \u0027Signal 5: policy and confidence\u0027 } ]); })() }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1600,
-                                       450
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "route_disposition",
-                      "name":  "Route by Disposition",
-                      "type":  "n8n-nodes-base.switch",
-                      "parameters":  {
-                                         "dataType":  "string",
-                                         "value1":  "={{ $node[\u0027Parse Claude Response\u0027].json.disposition }}",
-                                         "rules":  {
-                                                       "rules":  [
-                                                                     {
-                                                                         "value2":  "auto_execute",
-                                                                         "outputIndex":  0
-                                                                     },
-                                                                     {
-                                                                         "value2":  "one_touch",
-                                                                         "outputIndex":  1
-                                                                     },
-                                                                     {
-                                                                         "value2":  "escalate",
-                                                                         "outputIndex":  2
-                                                                     }
-                                                                 ]
-                                                   }
-                                     },
-                      "position":  [
-                                       1800,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "send_supplier_email",
-                      "name":  "Send Email to Supplier",
-                      "type":  "n8n-nodes-base.emailSend",
-                      "parameters":  {
-                                         "fromEmail":  "procurement@company.com",
-                                         "toEmail":  "={{ $node[\u0027Fetch Supplier Context\u0027].json[0]?.contact_email }}",
-                                         "subject":  "={{ $node[\u0027Parse Claude Response\u0027].json.supplier_email_subject }}",
-                                         "text":  "={{ $node[\u0027Parse Claude Response\u0027].json.supplier_email_body }}"
-                                     },
-                      "position":  [
-                                       2000,
-                                       150
-                                   ]
-                  },
-                  {
-                      "id":  "log_supplier_email",
-                      "name":  "Log Email to PostgREST",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/supplier_emails",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Fetch Supplier Context\u0027].json[0]?.id, direction: \u0027outbound\u0027, subject: $node[\u0027Parse Claude Response\u0027].json.supplier_email_subject, body_summary: $node[\u0027Parse Claude Response\u0027].json.action_taken, received_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2000,
-                                       280
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "close_ticket_auto",
-                      "name":  "Close Ticket â€” Auto Executed",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "PATCH",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node[\u0027Create Ticket in PostgREST\u0027].json[0]?.id || $node[\u0027Create Ticket in PostgREST\u0027].json?.id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ status: \u0027closed\u0027, closed_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2000,
-                                       420
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "notify_submitter_done",
-                      "name":  "Notify Submitter â€” Done",
-                      "type":  "n8n-nodes-base.emailSend",
-                      "parameters":  {
-                                         "fromEmail":  "procurement@company.com",
-                                         "toEmail":  "={{ $node[\u0027Intake Form Submitted\u0027].json.body.submitted_by_email }}",
-                                         "subject":  "=âœ… Done: {{ $node[\u0027Intake Form Submitted\u0027].json.body.title }} [{{ $node[\u0027Generate Ticket Reference\u0027].json.reference }}]",
-                                         "text":  "=Your request has been processed.\n\nReference: {{ $node[\u0027Generate Ticket Reference\u0027].json.reference }}\nAction taken: {{ $node[\u0027Parse Claude Response\u0027].json.action_taken }}\n\nNo further action needed from you."
-                                     },
-                      "position":  [
-                                       2000,
-                                       560
-                                   ]
-                  },
-                  {
-                      "id":  "one_touch_slack",
-                      "name":  "Log One-Touch to Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027intake\u0027, value: \u0027one_touch_pending\u0027, notes: \u0027Ticket \u0027 + ($node[\u0027Create Ticket in PostgREST\u0027].json[0]?.id || $node[\u0027Create Ticket in PostgREST\u0027].json?.id) + \u0027 â€” \u0027 + $node[\u0027Intake Form Submitted\u0027].json.body.title + \u0027 awaiting manager approval on Operations Board.\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2000,
-                                       750
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "update_ticket_pending",
-                      "name":  "Update Ticket â€” Pending Confirm",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "PATCH",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node[\u0027Create Ticket in PostgREST\u0027].json[0]?.id || $node[\u0027Create Ticket in PostgREST\u0027].json?.id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ status: \u0027pending_confirm\u0027, owner_id: $node[\u0027Fetch Responsible Manager\u0027].json[0]?.id }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2200,
-                                       750
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "create_jira_escalation",
-                      "name":  "Create Jira Escalation",
-                      "type":  "n8n-nodes-base.jira",
-                      "parameters":  {
-                                         "operation":  "create",
-                                         "project":  "PROC",
-                                         "issueType":  "Task",
-                                         "priority":  "High",
-                                         "summary":  "={{ \u0027[ESCALATE] \u0027 + $node[\u0027Intake Form Submitted\u0027].json.body.title + \u0027 â€” \u0027 + $node[\u0027Generate Ticket Reference\u0027].json.reference }}",
-                                         "description":  "=*Submitted by:* {{ $node[\u0027Intake Form Submitted\u0027].json.body.submitted_by }}\n*Amount:* {{ $node[\u0027Intake Form Submitted\u0027].json.body.amount }} {{ $node[\u0027Intake Form Submitted\u0027].json.body.currency }}\n*Supplier:* {{ $node[\u0027Intake Form Submitted\u0027].json.body.supplier_name }}\n\n*Agent Brief:*\n{{ $node[\u0027Parse Claude Response\u0027].json.brief }}\n\n*Confidence:* {{ $node[\u0027Parse Claude Response\u0027].json.confidence }}\n*Reasoning:* {{ $node[\u0027Parse Claude Response\u0027].json.reasoning }}",
-                                         "assignee":  "={{ $node[\u0027Fetch Responsible Manager\u0027].json[0]?.email }}"
-                                     },
-                      "position":  [
-                                       2000,
-                                       950
-                                   ]
-                  },
-                  {
-                      "id":  "update_ticket_escalated",
-                      "name":  "Update Ticket â€” Escalated",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "PATCH",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node[\u0027Create Ticket in PostgREST\u0027].json[0]?.id || $node[\u0027Create Ticket in PostgREST\u0027].json?.id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ status: \u0027escalated\u0027, jira_key: $json.key, jira_url: $json.self, owner_id: $node[\u0027Fetch Responsible Manager\u0027].json[0]?.id }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2200,
-                                       950
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "approve_and_commit",
-                      "name":  "RPC — Approve \u0026 Create PO",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/rpc/approve_and_commit",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ p_ticket_id: $node[\u0027Create Ticket in PostgREST\u0027].json[0]?.id || $node[\u0027Create Ticket in PostgREST\u0027].json?.id, p_branch_id: $node[\u0027Intake Form Submitted\u0027].json.body.branch_id, p_branch_code: $node[\u0027Intake Form Submitted\u0027].json.body.branch_code || \u0027HQ\u0027, p_cost_center_id: $node[\u0027Intake Form Submitted\u0027].json.body.cost_center_id || null, p_category: $node[\u0027Intake Form Submitted\u0027].json.body.category || \u0027other\u0027, p_period: new Date().getFullYear() + \u0027-Q\u0027 + Math.ceil((new Date().getMonth()+1)/3), p_supplier_id: $node[\u0027Fetch Supplier Context\u0027].json[0]?.id, p_contract_id: $node[\u0027Fetch Contract Context\u0027].json[0]?.id || null, p_description: $node[\u0027Intake Form Submitted\u0027].json.body.title, p_amount: parseFloat($node[\u0027Intake Form Submitted\u0027].json.body.amount), p_currency: $node[\u0027Intake Form Submitted\u0027].json.body.currency || \u0027EUR\u0027, p_amount_eur: parseFloat($node[\u0027Intake Form Submitted\u0027].json.body.amount_eur || $node[\u0027Intake Form Submitted\u0027].json.body.amount), p_raised_by: $node[\u0027Fetch Responsible Manager\u0027].json[0]?.id || null, p_expected_delivery: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split(\u0027T\u0027)[0], p_line_items: $node[\u0027Intake Form Submitted\u0027].json.body.line_items ? JSON.parse(JSON.stringify($node[\u0027Intake Form Submitted\u0027].json.body.line_items)) : null }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2200,
-                                       150
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "send_po_email",
-                      "name":  "Send PO to Supplier",
-                      "type":  "n8n-nodes-base.emailSend",
-                      "parameters":  {
-                                         "fromEmail":  "procurement@company.com",
-                                         "toEmail":  "={{ $node[\u0027Fetch Supplier Context\u0027].json[0]?.contact_email }}",
-                                         "subject":  "=Purchase Order {{ $node[\u0027RPC — Approve \u0026 Create PO\u0027].json[0]?.po_number || $node[\u0027RPC — Approve \u0026 Create PO\u0027].json?.po_number }} — {{ $node[\u0027Intake Form Submitted\u0027].json.body.title }}",
-                                         "text":  "=Dear {{ $node[\u0027Fetch Supplier Context\u0027].json[0]?.name }},\\n\\nPlease find below our purchase order.\\n\\nPO Number: {{ $node[\u0027RPC — Approve \u0026 Create PO\u0027].json[0]?.po_number || $node[\u0027RPC — Approve \u0026 Create PO\u0027].json?.po_number }}\\nDescription: {{ $node[\u0027Intake Form Submitted\u0027].json.body.title }}\\nAmount: {{ $node[\u0027Intake Form Submitted\u0027].json.body.currency || \u0027EUR\u0027 }} {{ $node[\u0027Intake Form Submitted\u0027].json.body.amount }}\\nExpected delivery: {{ new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split(\u0027T\u0027)[0] }}\\n\\nPlease reference the PO number on your invoice.\\n\\nTrueSpend Procurement\\nprocurement@company.com"
-                                     },
-                      "position":  [
-                                       2400,
-                                       150
-                                   ]
-                  },
-                  {
-                      "id":  "log_po_trace",
-                      "name":  "Log PO Creation to Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027budget\u0027, value: \u0027committed\u0027, notes: \u0027PO \u0027 + ($node[\u0027RPC — Approve \u0026 Create PO\u0027].json[0]?.po_number || $node[\u0027RPC — Approve \u0026 Create PO\u0027].json?.po_number) + \u0027 created. Budget committed: EUR \u0027 + $node[\u0027Intake Form Submitted\u0027].json.body.amount + \u0027. Supplier PO email sent.\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2600,
-                                       150
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  }
-              ],
-    "connections":  {
-                        "Intake Form Submitted":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Generate Ticket Reference",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Generate Ticket Reference":  {
-                                                          "main":  [
-                                                                       [
-                                                                           {
-                                                                               "node":  "Create Ticket in PostgREST",
-                                                                               "type":  "main",
-                                                                               "index":  0
-                                                                           }
-                                                                       ]
-                                                                   ]
-                                                      },
-                        "Create Ticket in PostgREST":  {
-                                                           "main":  [
-                                                                        [
-                                                                            {
-                                                                                "node":  "Respond to UI â€” Received",
-                                                                                "type":  "main",
-                                                                                "index":  0
-                                                                            }
-                                                                        ],
-                                                                        [
-                                                                            {
-                                                                                "node":  "Fetch Supplier Context",
-                                                                                "type":  "main",
-                                                                                "index":  0
-                                                                            }
-                                                                        ]
-                                                                    ]
-                                                       },
-                        "Fetch Supplier Context":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Fetch Contract Context",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Fetch Contract Context":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Fetch Budget Context",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Fetch Budget Context":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Fetch Responsible Manager",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Claude â€” Reason on Intake",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Fetch Responsible Manager":  {
-                                                          "main":  [
-                                                                       [
-                                                                           {
-                                                                               "node":  "Claude â€” Reason on Intake",
-                                                                               "type":  "main",
-                                                                               "index":  0
-                                                                           }
-                                                                       ]
-                                                                   ]
-                                                      },
-                        "Claude â€” Reason on Intake":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Parse Claude Response",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Parse Claude Response":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Write Decision to PostgREST",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Write Decision to PostgREST":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Write Signal Trace",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ],
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Route by Disposition",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Route by Disposition":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "RPC — Approve \u0026 Create PO",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Send One-Touch to Manager",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Create Jira Escalation",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Send Email to Supplier":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Log Email to PostgREST",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Log Email to PostgREST":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Close Ticket â€” Auto Executed",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Close Ticket â€” Auto Executed":  {
-                                                               "main":  [
-                                                                            [
-                                                                                {
-                                                                                    "node":  "Notify Submitter â€” Done",
-                                                                                    "type":  "main",
-                                                                                    "index":  0
-                                                                                }
-                                                                            ]
-                                                                        ]
-                                                           },
-                        "Send One-Touch to Manager":  {
-                                                          "main":  [
-                                                                       [
-                                                                           {
-                                                                               "node":  "Update Ticket â€” Pending Confirm",
-                                                                               "type":  "main",
-                                                                               "index":  0
-                                                                           }
-                                                                       ]
-                                                                   ]
-                                                      },
-                        "Create Jira Escalation":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Update Ticket â€” Escalated",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "RPC — Approve \u0026 Create PO":  {
-                                                               "main":  [
-                                                                            {
-                                                                                "node":  "Send PO to Supplier",
-                                                                                "type":  "main",
-                                                                                "index":  0
-                                                                            },
-                                                                            {
-                                                                                "node":  "Close Ticket — Auto Executed",
-                                                                                "type":  "main",
-                                                                                "index":  0
-                                                                            }
-                                                                        ]
-                                                           },
-                        "Send PO to Supplier":  {
-                                                    "main":  [
-                                                                 {
-                                                                     "node":  "Log PO Creation to Trace",
-                                                                     "type":  "main",
-                                                                     "index":  0
-                                                                 }
-                                                             ]
-                                                },
-                        "Log PO Creation to Trace":  {
-                                                         "main":  [
-                                                                      {
-                                                                          "node":  "Notify Submitter — Done",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                     }
-                    }
+{
+  "name": "TrueSpend â€” Intake Receiver",
+  "description": "Receives all stakeholder submissions from the intake UI. Agent reasons across all five signals, acts immediately, communicates with supplier directly. Routes to a person only if genuinely unresolvable.",
+  "nodes": [
+    {
+      "id": "webhook_trigger",
+      "name": "Intake Form Submitted",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "path": "intake",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "responseData": "allEntries"
+      },
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "id": "generate_reference",
+      "name": "Generate Ticket Reference",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "reference",
+              "value": "=TS-{{ new Date().getFullYear() }}-{{ String(Math.floor(Math.random() * 9000) + 1000) }}"
+            },
+            {
+              "name": "received_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "id": "create_ticket",
+      "name": "Create Ticket in PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Generate Ticket Reference'].json.reference, source: 'intake', status: 'reasoning', title: $node['Intake Form Submitted'].json.body.title, description: $node['Intake Form Submitted'].json.body.description, requested_by: $node['Intake Form Submitted'].json.body.submitted_by, amount: $node['Intake Form Submitted'].json.body.amount, currency: $node['Intake Form Submitted'].json.body.currency || 'EUR', target_close: new Date(Date.now() + 15 * 60 * 1000).toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        400,
+        300
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "respond_immediately",
+      "name": "Respond to UI â€” Received",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'received', reference: $node['Generate Ticket Reference'].json.reference, message: 'The agent is reviewing this. You will hear back shortly.' }) }}"
+      },
+      "position": [
+        600,
+        150
+      ]
+    },
+    {
+      "id": "fetch_supplier",
+      "name": "Fetch Supplier Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?name=ilike.*{{ encodeURIComponent($node['Intake Form Submitted'].json.body.supplier_name) }}*",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "id": "fetch_contract",
+      "name": "Fetch Contract Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contracts?supplier_id=eq.{{ $json[0]?.id }}&branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "id": "fetch_budget",
+      "name": "Fetch Budget Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "id": "fetch_manager",
+      "name": "Fetch Responsible Manager",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/users?branch_ids=cs.{$node['Intake Form Submitted'].json.body.branch_id}&active=eq.true&role=in.(head_of_procurement,category_manager,ops_manager)&order=spend_authority.desc&limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        1000,
+        450
+      ]
+    },
+    {
+      "id": "call_claude_reason",
+      "name": "Claude â€” Reason on Intake",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system. You reason across five signals simultaneously â€” contract terms, consumption vs budget, supplier health, request pattern, and policy state â€” and reach a confident disposition on every procurement request. You act immediately when confident. You communicate directly with suppliers. You only route to a human when the situation genuinely requires human judgment. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this intake request and produce a complete disposition including any supplier communication required.\\n\\nREQUEST:\\n{{ JSON.stringify($node['Intake Form Submitted'].json.body) }}\\n\\nSIGNAL 1 â€” CONTRACT CONTEXT:\\n{{ JSON.stringify($node['Fetch Contract Context'].json) }}\\n\\nSIGNAL 2 â€” BUDGET CONTEXT:\\n{{ JSON.stringify($node['Fetch Budget Context'].json) }}\\n\\nSIGNAL 3 â€” SUPPLIER HEALTH:\\n{{ JSON.stringify($node['Fetch Supplier Context'].json) }}\\n\\nSIGNAL 4 â€” REQUEST PATTERN: This is a {{ $node['Intake Form Submitted'].json.body.ticket_type }} request for {{ $node['Intake Form Submitted'].json.body.amount }} {{ $node['Intake Form Submitted'].json.body.currency || 'EUR' }} submitted by {{ $node['Intake Form Submitted'].json.body.submitted_by }}.\\n\\nSIGNAL 5 â€” POLICY: Standard delegated authority applies. Auto-execute up to manager spend authority. One-touch above. Escalate if novel, high-risk, or supplier health is red.\\n\\nReturn JSON:\\n{\\n  disposition: 'auto_execute' | 'one_touch' | 'escalate',\\n  confidence: 0.00-1.00,\\n  reasoning: string,\\n  recommendation: string,\\n  brief: string,\\n  action_taken: string,\\n  supplier_email_subject: string | null,\\n  supplier_email_body: string | null,\\n  requires_order: boolean,\\n  order_details: object | null\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        300
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "parse_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "disposition",
+              "value": "={{ JSON.parse($json.content[0].text).disposition }}"
+            },
+            {
+              "name": "confidence",
+              "value": "={{ JSON.parse($json.content[0].text).confidence }}"
+            },
+            {
+              "name": "reasoning",
+              "value": "={{ JSON.parse($json.content[0].text).reasoning }}"
+            },
+            {
+              "name": "recommendation",
+              "value": "={{ JSON.parse($json.content[0].text).recommendation }}"
+            },
+            {
+              "name": "brief",
+              "value": "={{ JSON.parse($json.content[0].text).brief }}"
+            },
+            {
+              "name": "action_taken",
+              "value": "={{ JSON.parse($json.content[0].text).action_taken }}"
+            },
+            {
+              "name": "supplier_email_subject",
+              "value": "={{ JSON.parse($json.content[0].text).supplier_email_subject }}"
+            },
+            {
+              "name": "supplier_email_body",
+              "value": "={{ JSON.parse($json.content[0].text).supplier_email_body }}"
+            },
+            {
+              "name": "requires_order",
+              "value": "={{ JSON.parse($json.content[0].text).requires_order }}"
+            },
+            {
+              "name": "order_details",
+              "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).order_details) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1400,
+        300
+      ]
+    },
+    {
+      "id": "write_decision",
+      "name": "Write Decision to PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id, disposition: $json.disposition, confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, brief: $json.brief, model_used: 'claude-sonnet-4-6' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1600,
+        300
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "write_trace",
+      "name": "Write 5 Signal Traces",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ (() => { const did = $node['Write Decision to PostgREST'].json[0]?.id || $node['Write Decision to PostgREST'].json?.id; const parsed = JSON.parse($node['Claude — Reason on Intake'].json.content[0].text); return JSON.stringify([ { decision_id: did, signal: 'contract', value: JSON.stringify($node['Fetch Contract Context'].json), green: !!($node['Fetch Contract Context'].json[0]), notes: 'Signal 1: contract context' }, { decision_id: did, signal: 'budget', value: JSON.stringify($node['Fetch Budget Context'].json), green: !!($node['Fetch Budget Context'].json[0]?.available > 0), notes: 'Signal 2: budget availability' }, { decision_id: did, signal: 'supplier', value: JSON.stringify($node['Fetch Supplier Context'].json), green: ($node['Fetch Supplier Context'].json[0]?.health !== 'red'), notes: 'Signal 3: supplier health' }, { decision_id: did, signal: 'request', value: JSON.stringify({ ticket_type: $node['Intake Form Submitted'].json.body.ticket_type, amount: $node['Intake Form Submitted'].json.body.amount, submitted_by: $node['Intake Form Submitted'].json.body.submitted_by }), green: true, notes: 'Signal 4: request pattern' }, { decision_id: did, signal: 'policy', value: JSON.stringify({ disposition: parsed.disposition, confidence: parsed.confidence }), green: parsed.confidence >= 0.90, notes: 'Signal 5: policy and confidence' } ]); })() }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1600,
+        450
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "route_disposition",
+      "name": "Route by Disposition",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $node['Parse Claude Response'].json.disposition }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "auto_execute",
+              "outputIndex": 0
+            },
+            {
+              "value2": "one_touch",
+              "outputIndex": 1
+            },
+            {
+              "value2": "escalate",
+              "outputIndex": 2
+            }
+          ]
+        }
+      },
+      "position": [
+        1800,
+        300
+      ]
+    },
+    {
+      "id": "send_supplier_email",
+      "name": "Send Email to Supplier",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail": "={{ $node['Fetch Supplier Context'].json[0]?.contact_email }}",
+        "subject": "={{ $node['Parse Claude Response'].json.supplier_email_subject }}",
+        "text": "={{ $node['Parse Claude Response'].json.supplier_email_body }}"
+      },
+      "position": [
+        2000,
+        150
+      ]
+    },
+    {
+      "id": "log_supplier_email",
+      "name": "Log Email to PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Fetch Supplier Context'].json[0]?.id, direction: 'outbound', subject: $node['Parse Claude Response'].json.supplier_email_subject, body_summary: $node['Parse Claude Response'].json.action_taken, received_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        280
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "close_ticket_auto",
+      "name": "Close Ticket â€” Auto Executed",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ status: 'closed', closed_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        420
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "notify_submitter_done",
+      "name": "Notify Submitter â€” Done",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail": "={{ $node['Intake Form Submitted'].json.body.submitted_by_email }}",
+        "subject": "=âœ… Done: {{ $node['Intake Form Submitted'].json.body.title }} [{{ $node['Generate Ticket Reference'].json.reference }}]",
+        "text": "=Your request has been processed.\n\nReference: {{ $node['Generate Ticket Reference'].json.reference }}\nAction taken: {{ $node['Parse Claude Response'].json.action_taken }}\n\nNo further action needed from you."
+      },
+      "position": [
+        2000,
+        560
+      ]
+    },
+    {
+      "id": "one_touch_slack",
+      "name": "Log One-Touch to Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'intake', value: 'one_touch_pending', notes: 'Ticket ' + ($node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id) + ' â€” ' + $node['Intake Form Submitted'].json.body.title + ' awaiting manager approval on Operations Board.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        750
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "update_ticket_pending",
+      "name": "Update Ticket â€” Pending Confirm",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ status: 'pending_confirm', owner_id: $node['Fetch Responsible Manager'].json[0]?.id }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2200,
+        750
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "create_jira_escalation",
+      "name": "Create Jira Escalation",
+      "type": "n8n-nodes-base.jira",
+      "parameters": {
+        "operation": "create",
+        "project": "KAN",
+        "issueType": "Task",
+        "priority": "High",
+        "summary": "={{ '[ESCALATE] ' + $node['Intake Form Submitted'].json.body.title + ' â€” ' + $node['Generate Ticket Reference'].json.reference }}",
+        "description": "=*Submitted by:* {{ $node['Intake Form Submitted'].json.body.submitted_by }}\n*Amount:* {{ $node['Intake Form Submitted'].json.body.amount }} {{ $node['Intake Form Submitted'].json.body.currency }}\n*Supplier:* {{ $node['Intake Form Submitted'].json.body.supplier_name }}\n\n*Agent Brief:*\n{{ $node['Parse Claude Response'].json.brief }}\n\n*Confidence:* {{ $node['Parse Claude Response'].json.confidence }}\n*Reasoning:* {{ $node['Parse Claude Response'].json.reasoning }}",
+        "assignee": "={{ $node['Fetch Responsible Manager'].json[0]?.email }}"
+      },
+      "position": [
+        2000,
+        950
+      ]
+    },
+    {
+      "id": "update_ticket_escalated",
+      "name": "Update Ticket â€” Escalated",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ status: 'escalated', jira_key: $json.key, jira_url: $json.self, owner_id: $node['Fetch Responsible Manager'].json[0]?.id }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2200,
+        950
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "approve_and_commit",
+      "name": "RPC — Approve & Create PO",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/rpc/approve_and_commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ p_ticket_id: $node['Create Ticket in PostgREST'].json[0]?.id || $node['Create Ticket in PostgREST'].json?.id, p_branch_id: $node['Intake Form Submitted'].json.body.branch_id, p_branch_code: $node['Intake Form Submitted'].json.body.branch_code || 'HQ', p_cost_center_id: $node['Intake Form Submitted'].json.body.cost_center_id || null, p_category: $node['Intake Form Submitted'].json.body.category || 'other', p_period: new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3), p_supplier_id: $node['Fetch Supplier Context'].json[0]?.id, p_contract_id: $node['Fetch Contract Context'].json[0]?.id || null, p_description: $node['Intake Form Submitted'].json.body.title, p_amount: parseFloat($node['Intake Form Submitted'].json.body.amount), p_currency: $node['Intake Form Submitted'].json.body.currency || 'EUR', p_amount_eur: parseFloat($node['Intake Form Submitted'].json.body.amount_eur || $node['Intake Form Submitted'].json.body.amount), p_raised_by: $node['Fetch Responsible Manager'].json[0]?.id || null, p_expected_delivery: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], p_line_items: $node['Intake Form Submitted'].json.body.line_items ? JSON.parse(JSON.stringify($node['Intake Form Submitted'].json.body.line_items)) : null }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2200,
+        150
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "build_po_html",
+      "name": "Build PO HTML",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "po_html",
+              "value": "=<!DOCTYPE html><html><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;color:#111;margin:0;padding:40px;font-size:14px}*{box-sizing:border-box}.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}.brand{color:#6366f1;font-weight:700;font-size:20px}.legal-entity{font-size:11px;color:#555;line-height:1.6}.po-title{font-size:22px;font-weight:700;margin:0}.divider{border:none;border-top:2px solid #6366f1;margin:20px 0}.section-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:20px 0 8px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 32px;margin-bottom:8px}.field label{font-size:10px;color:#888;display:block;margin-bottom:2px}.field span{font-size:13px;font-weight:600}table{width:100%;border-collapse:collapse;margin-top:8px}th{text-align:left;font-size:10px;text-transform:uppercase;color:#888;padding:8px 0;border-bottom:1px solid #e5e5e5}td{padding:10px 0;border-bottom:1px solid #f5f5f5;font-size:13px}.total{font-weight:700;font-size:14px}.footer{margin-top:36px;font-size:10px;color:#999;border-top:1px solid #e5e5e5;padding-top:14px}</style></head><body><div class='header'><div><div class='brand'>TrueSpend</div><div class='legal-entity'>{{ $node['Fetch Branch Context'].json[0]?.legal_name || 'TrueSpend GmbH' }}<br>{{ $node['Fetch Branch Context'].json[0]?.street_address || '' }}<br>{{ $node['Fetch Branch Context'].json[0]?.city_zip || '' }}<br>VAT: {{ $node['Fetch Branch Context'].json[0]?.vat_number || '' }}</div></div><div style='text-align:right'><div class='po-title'>Purchase Order</div></div></div><hr class='divider'><div class='grid'><div class='field'><label>PO Number</label><span>{{ $node['RPC — Approve & Create PO'].json[0]?.po_number || $node['RPC — Approve & Create PO'].json?.po_number }}</span></div><div class='field'><label>Date</label><span>{{ new Date().toLocaleDateString('de-DE',{day:'2-digit',month:'long',year:'numeric'}) }}</span></div><div class='field'><label>Branch</label><span>{{ $node['Fetch Branch Context'].json[0]?.name || $node['Intake Form Submitted'].json.body.branch_id }}</span></div><div class='field'><label>Currency</label><span>{{ $node['Fetch Branch Context'].json[0]?.currency || 'EUR' }}</span></div><div class='field'><label>Supplier</label><span>{{ $node['Fetch Supplier Context'].json[0]?.name || $node['Intake Form Submitted'].json.body.supplier_name }}</span></div><div class='field'><label>Expected Delivery</label><span>{{ new Date(Date.now()+14*24*60*60*1000).toLocaleDateString('de-DE',{day:'2-digit',month:'long',year:'numeric'}) }}</span></div></div><div class='section-title'>Line Items</div><table><thead><tr><th>Description</th><th style='text-align:right'>Amount</th></tr></thead><tbody><tr><td>{{ $node['Intake Form Submitted'].json.body.title }}</td><td style='text-align:right;font-weight:600'>{{ $node['Fetch Branch Context'].json[0]?.currency || $node['Intake Form Submitted'].json.body.currency || 'EUR' }} {{ Number($node['Intake Form Submitted'].json.body.amount).toLocaleString('de-DE',{minimumFractionDigits:2}) }}</td></tr></tbody><tfoot><tr><td style='padding-top:12px;font-size:10px;color:#888'>Total (excl. VAT)</td><td style='padding-top:12px;text-align:right' class='total'>{{ $node['Fetch Branch Context'].json[0]?.currency || $node['Intake Form Submitted'].json.body.currency || 'EUR' }} {{ Number($node['Intake Form Submitted'].json.body.amount).toLocaleString('de-DE',{minimumFractionDigits:2}) }}</td></tr></tfoot></table><div class='section-title'>Payment Terms</div><p style='margin:0;color:#555;font-size:13px'>30 days net from invoice date. Please reference the PO number on all correspondence and invoices.</p><div class='footer'>{{ $node['Fetch Branch Context'].json[0]?.legal_name || 'TrueSpend GmbH' }} &bull; {{ $node['Fetch Branch Context'].json[0]?.po_email || 'procurement@truespend.com' }}<br>This purchase order was generated automatically by TrueSpend Procurement OS.</div></body></html>"
+            }
+          ]
+        }
+      },
+      "position": [
+        2400,
+        150
+      ]
+    },
+    {
+      "id": "convert_po_pdf",
+      "name": "Convert PO to PDF",
+      "type": "n8n-nodes-base.convertToFile",
+      "parameters": {
+        "operation": "toHtml",
+        "binaryPropertyName": "po_pdf",
+        "options": {
+          "fileName": "=PO_{{ $node['RPC — Approve & Create PO'].json[0]?.po_number || $node['RPC — Approve & Create PO'].json?.po_number }}.pdf"
+        },
+        "inputDataFieldName": "po_html"
+      },
+      "position": [
+        2600,
+        150
+      ]
+    },
+    {
+      "id": "send_po_email",
+      "name": "Send PO to Supplier",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "truespend.ops@gmx.de",
+        "toEmail": "={{ $node['Fetch Supplier Context'].json[0]?.contact_email }}",
+        "subject": "=Purchase Order {{ $node['RPC — Approve & Create PO'].json[0]?.po_number || $node['RPC — Approve & Create PO'].json?.po_number }} — {{ $node['Intake Form Submitted'].json.body.title }}",
+        "text": "=Dear {{ $node['Fetch Supplier Context'].json[0]?.name }},\\n\\nPlease find your Purchase Order attached to this email.\\n\\nPO Number: {{ $node['RPC — Approve & Create PO'].json[0]?.po_number || $node['RPC — Approve & Create PO'].json?.po_number }}\\nDescription: {{ $node['Intake Form Submitted'].json.body.title }}\\nAmount: {{ $node['Intake Form Submitted'].json.body.currency || 'EUR' }} {{ $node['Intake Form Submitted'].json.body.amount }}\\nExpected delivery: {{ new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}\\n\\nPlease reference the PO number on your invoice.\\n\\nTrueSpend Procurement\\ntruespend.ops@gmx.de",
+        "attachments": "po_pdf"
+      },
+      "position": [
+        2800,
+        150
+      ]
+    },
+    {
+      "id": "log_po_trace",
+      "name": "Log PO Creation to Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'budget', value: 'committed', notes: 'PO ' + ($node['RPC — Approve & Create PO'].json[0]?.po_number || $node['RPC — Approve & Create PO'].json?.po_number) + ' created. Budget committed: EUR ' + $node['Intake Form Submitted'].json.body.amount + '. Supplier PO email sent.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2600,
+        150
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "fetch_branch",
+      "name": "Fetch Branch Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://postgrest-production-7960.up.railway.app/branches?id=eq.' + $node['Intake Form Submitted'].json.body.branch_id + '&select=id,name,legal_name,street_address,city_zip,vat_number,po_email,po_prefix,currency,country' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        2200,
+        350
+      ]
+    }
+  ],
+  "connections": {
+    "Intake Form Submitted": {
+      "main": [
+        [
+          {
+            "node": "Generate Ticket Reference",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Ticket Reference": {
+      "main": [
+        [
+          {
+            "node": "Create Ticket in PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Ticket in PostgREST": {
+      "main": [
+        [
+          {
+            "node": "Respond to UI â€” Received",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Supplier Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Supplier Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contract Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contract Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch Budget Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Budget Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch Responsible Manager",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claude â€” Reason on Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Responsible Manager": {
+      "main": [
+        [
+          {
+            "node": "Claude â€” Reason on Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude â€” Reason on Intake": {
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          {
+            "node": "Write Decision to PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Decision to PostgREST": {
+      "main": [
+        [
+          {
+            "node": "Write Signal Trace",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route by Disposition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Disposition": {
+      "main": [
+        [
+          {
+            "node": "RPC — Approve & Create PO",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send One-Touch to Manager",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Jira Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email to Supplier": {
+      "main": [
+        [
+          {
+            "node": "Log Email to PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Email to PostgREST": {
+      "main": [
+        [
+          {
+            "node": "Close Ticket â€” Auto Executed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close Ticket â€” Auto Executed": {
+      "main": [
+        [
+          {
+            "node": "Notify Submitter â€” Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send One-Touch to Manager": {
+      "main": [
+        [
+          {
+            "node": "Update Ticket â€” Pending Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Jira Escalation": {
+      "main": [
+        [
+          {
+            "node": "Update Ticket â€” Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RPC — Approve & Create PO": {
+      "main": [
+        {
+          "node": "Fetch Branch Context",
+          "type": "main",
+          "index": 0
+        },
+        {
+          "node": "Close Ticket — Auto Executed",
+          "type": "main",
+          "index": 0
+        }
+      ]
+    },
+    "Build PO HTML": {
+      "main": [
+        {
+          "node": "Convert PO to PDF",
+          "type": "main",
+          "index": 0
+        }
+      ]
+    },
+    "Convert PO to PDF": {
+      "main": [
+        {
+          "node": "Send PO to Supplier",
+          "type": "main",
+          "index": 0
+        }
+      ]
+    },
+    "Send PO to Supplier": {
+      "main": [
+        {
+          "node": "Log PO Creation to Trace",
+          "type": "main",
+          "index": 0
+        }
+      ]
+    },
+    "Log PO Creation to Trace": {
+      "main": [
+        {
+          "node": "Notify Submitter — Done",
+          "type": "main",
+          "index": 0
+        }
+      ]
+    },
+    "Fetch Branch Context": {
+      "main": [
+        {
+          "node": "Build PO HTML",
+          "type": "main",
+          "index": 0
+        }
+      ]
+    }
+  }
 }

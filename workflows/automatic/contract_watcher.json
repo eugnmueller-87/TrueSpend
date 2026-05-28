@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "TrueSpend â€” Daily Contract Watcher",
     "description":  "Runs every morning. Checks all contracts expiring within 90 days. Routes to auto-renew, agent reasoning, or escalation based on renewal state.",
     "nodes":  [
@@ -592,7 +592,7 @@
                       "type":  "n8n-nodes-base.jira",
                       "parameters":  {
                                          "operation":  "create",
-                                         "project":  "PROC",
+                                         "project":  "KAN",
                                          "issueType":  "Task",
                                          "summary":  "={{ \u0027[ESCALATE] \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 â€” \u0027 + $node[\u0027Loop Each Contract\u0027].json.days_remaining + \u0027 days remaining\u0027 }}",
                                          "description":  "=*Contract:* {{ $node[\u0027Loop Each Contract\u0027].json.name }}\n*Supplier:* {{ $node[\u0027Loop Each Contract\u0027].json.supplier_name }}\n*Value:* {{ $node[\u0027Loop Each Contract\u0027].json.value }} {{ $node[\u0027Loop Each Contract\u0027].json.currency }}\n\n*Agent Brief:*\n{{ $json.brief }}\n\n*Reasoning:*\n{{ $json.reasoning }}",

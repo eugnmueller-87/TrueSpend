@@ -2,7 +2,7 @@ version: "3.8"
 
 # TrueSpend — Local Infrastructure Stack
 # Runs: n8n (orchestration) + Grafana (dashboards)
-# Supabase runs on supabase.com (cloud) — not included here
+# PostgreSQL + PostgREST run on Railway (cloud) — not included here
 #
 # Usage:
 #   cp ../.env.example ../.env   # fill in your values
@@ -29,9 +29,9 @@ services:
       - TZ=Europe/Berlin
       # Pass through all secrets so n8n workflows can reference them
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - DATABASE_URL=${DATABASE_URL}
+      - POSTGREST_URL=${POSTGREST_URL}
+      - POSTGREST_JWT=${POSTGREST_JWT}
       - JIRA_BASE_URL=${JIRA_BASE_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN}
@@ -45,7 +45,6 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD}
     volumes:
       - n8n_data:/home/node/.n8n
-      - ./n8n-workflows:/home/node/.n8n/workflows:ro  # optional: mount workflow files
     networks:
       - truespend
 
@@ -62,12 +61,12 @@ services:
       - GF_SERVER_ROOT_URL=${GF_SERVER_ROOT_URL:-http://localhost:3000}
       - GF_INSTALL_PLUGINS=grafana-clock-panel
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      # Pass DB connection so provisioning file can use $__env{}
-      - SUPABASE_DB_HOST=${SUPABASE_DB_HOST}
-      - SUPABASE_DB_PORT=${SUPABASE_DB_PORT:-5432}
-      - SUPABASE_DB_NAME=${SUPABASE_DB_NAME:-postgres}
-      - SUPABASE_DB_USER=${SUPABASE_DB_USER:-postgres}
-      - SUPABASE_DB_PASSWORD=${SUPABASE_DB_PASSWORD}
+      # Railway PostgreSQL — individual vars for Grafana datasource provisioning
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PORT=${DATABASE_PORT:-5432}
+      - DATABASE_NAME=${DATABASE_NAME:-railway}
+      - DATABASE_USER=${DATABASE_USER:-postgres}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
