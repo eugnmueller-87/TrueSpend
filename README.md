@@ -13,6 +13,10 @@
   <strong>Procurement doesn't need to be faster. It needs to not exist.</strong>
 </p>
 
+<p align="center">
+  <img src="screenshots/hero.png" alt="TrueSpend Operations Board" width="100%" />
+</p>
+
 ---
 
 > *"Three things need you this week. Everything else, the agent closed."*
