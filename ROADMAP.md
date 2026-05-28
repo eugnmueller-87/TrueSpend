@@ -1,6 +1,6 @@
 # TrueSpend — Product Roadmap
-**Last updated:** 2026-05-27  
-**Status:** Core infrastructure built. P2I and controlling layer next.
+**Last updated:** 2026-05-28  
+**Status:** Core infrastructure + full P2I loop built. Ready for n8n wiring session.
 
 ---
 
@@ -114,7 +114,7 @@ Tier 2 — Branch annual total (guardrail)
   Agent runs this silently on every approval and notes in trace if > 80% consumed.
 
 Tier 3 — Manager spend authority (delegation control)
-  managers.spend_authority
+  users.spend_authority
   If request_amount > spend_authority of the assigned manager → auto-escalate.
   This is the only hard block. Everything else is a signal.
 ```
@@ -143,279 +143,203 @@ Hard block or ≥€100k → escalate → Jira PROC ticket
 - Period-end reports: budget consumed vs planned, by branch + category
 - No manual reconciliation — every decision is the record
 
-**What this means for the schema:**
-- `budget_positions` already exists with the right structure (branch, period, category, budget, committed, spent, available)
-- Need to add: `budget_buckets` table — annual plan broken into Q buckets per category per branch, owned by Controlling
-- Need to add: `fiscal_year_plan` — Controlling uploads once, agent reads all year
-- Need to add: `spend_authority_matrix` — maps org level to EUR threshold (already partially in `managers.spend_authority`)
-
 ---
 
 ## P2I — Purchase to Invoice Automation
-
-**What P2I means in TrueSpend context:**
 
 ```
 Purchase Request  →  Budget approval  →  PO creation  →  Goods receipt  →  Invoice matching  →  Payment release
 ```
 
-TrueSpend owns the first three steps fully. The last two connect to ERP (SAP/Oracle/Coupa) via API.
-
-**P2I workflow design:**
-
-### Step 1 — Purchase Request (already built: intake_receiver)
-Stakeholder submits via Operations Board form. Agent enriches with supplier, contract, and budget context.
-
-### Step 2 — Budget Pre-Approval (to build)
-Agent checks all three budget tiers. Writes approval decision to `decisions` table with budget snapshot at time of decision. Updates `budget_positions.committed` immediately on approval.
-
-This is critical: **committed must move at approval, not at invoice.** Controlling needs to know what's encumbered before the spend happens.
-
-### Step 3 — PO Generation (to build — simulation first, ERP later)
-On auto_execute: agent generates PO reference, logs to `purchase_orders` table (new), sends order to supplier via email (already built in reorder workflow). PO reference tied to ticket, contract, and budget position.
-
-### Step 4 — Goods Receipt / Service Confirmation (to build)
-Stakeholder confirms receipt on Operations Board (simple button: "Confirm delivery"). Agent updates PO status. If SLA breach detected (delivery overdue), supplier health flagged.
-
-### Step 5 — Invoice Matching (to build — 3-way match)
-When invoice arrives (email):
-- Match to PO reference (amount, supplier, line items)
-- Match to goods receipt confirmation
-- If all three match within tolerance → release to ERP for payment
-- If mismatch → one-touch ticket with discrepancy highlighted
-
-### Step 6 — Payment Release (ERP handoff)
-TrueSpend creates payment instruction record. ERP picks up via API. TrueSpend does not hold payment data — it creates the instruction and closes the loop.
+TrueSpend owns the full cycle. ERP receives the payment instruction and posts it.
 
 ---
 
-## What Controlling Gets
-
-Controlling has historically been reactive — they see what was spent after the fact. TrueSpend makes them prospective:
-
-| What they have today | What TrueSpend gives them |
-|----------------------|---------------------------|
-| Month-end spend reports | Real-time committed + spent by bucket |
-| Manual budget tracking in Excel | `budget_positions` updated on every approval |
-| Quarterly forecast based on guesswork | Agent-projected spend based on contract renewal pipeline |
-| Surprise invoices | 3-way match with automatic flag before payment |
-| Year-end budget rush | Underspend alerts in Q3 (preventing license waste) |
-| Manual accruals process | PO table gives Controlling accrual basis automatically |
-
-**Controlling-specific views to build:**
-- `controlling_dashboard` — branch × category × period heat map. Green/amber/red.
-- `commitment_register` — all approved, uncommitted POs. The accrual list.
-- `budget_variance_report` — plan vs actual vs committed, per bucket, per period.
-- `approval_audit_trail` — every decision, who took it (agent or human), budget state at time of decision. Immutable.
+## Phase Map
 
 ---
 
-## The Full Build — Phase Map
+### ✅ PHASE 0 — Core Infrastructure
+> **Status: Complete**
 
-### ✅ DONE — Core Infrastructure
+#### Database
+- [x] Schema: branches, suppliers, contracts, tickets, decisions, trace_log, budget_positions, supplier_emails, hyperscaler_positions — 28 tables total
+- [x] Compliance extensions: legal_documents, compliance_checks
+- [x] P2I tables: purchase_orders, invoices, payment_instructions, erp_sync_queue, po_sequences
+- [x] Budget tables: budget_buckets, budget_pools, budget_reallocations
+- [x] License tables: license_entitlements, license_assignments
+- [x] Asset tables: assets, asset_depreciation_log
+- [x] LLM tables: llm_api_keys, llm_consumption
+- [x] Monitoring: workflow_runs
+- [x] Views (8): contracts_expiring, weekly_digest, agent_performance, open_tickets_board, supplier_compliance_summary, budget_utilization, commitment_register, approval_audit_trail
+- [x] Atomic budget functions: commit_budget(), release_budget(), record_spend()
+- [x] P2I functions: next_po_number(), approve_and_commit(), confirm_delivery(), match_invoice(), create_payment_instruction()
+- [x] Indexes: covering index on budget_positions, partial index on tickets, category index
+- [x] RLS policies (15 tables)
+- [x] Templates: NDA (mutual, German law), DPA (Art. 28 GDPR with TOM annex)
 
-**Database**
-- Schema: branches, suppliers, contracts, tickets, decisions, trace_log, budget_positions, supplier_emails, hyperscaler_positions
-- Compliance extensions: legal_documents, compliance_checks, ALTER TABLE suppliers + tickets
-- Views: contracts_expiring, weekly_digest, agent_performance, open_tickets_board, supplier_compliance_summary
-- Templates: NDA (mutual, German law), DPA (Art. 28 GDPR)
+#### Workflows (7, all Slack-free)
+- [x] `intake_receiver` — intake → 5-signal Claude → approve_and_commit RPC → PO email → trace
+- [x] `supplier_reply_handler` — IMAP → Claude → reply or route to board
+- [x] `contract_watcher` — daily → expiry check → auto-renew or reason
+- [x] `reorder_trigger` — daily → reorder candidates → place or escalate
+- [x] `hyperscaler_monitor` — daily → cloud spend → anomaly detection
+- [x] `supplier_onboarding` — webhook → 4 parallel compliance agents → docs + ticket
+- [x] `invoice_processor` — IMAP invoices → Claude parse → 3-way match → payment instruction → ERP queue
 
-**Workflows (6, all Slack-free)**
-- `intake_receiver` — intake → Claude → auto/one-touch/escalate
-- `supplier_reply_handler` — IMAP → Claude → reply or route to board
-- `contract_watcher` — daily → expiry check → auto-renew or reason
-- `reorder_trigger` — daily → reorder candidates → place or escalate
-- `hyperscaler_monitor` — daily → cloud spend → anomaly detection
-- `supplier_onboarding` — webhook → 4 parallel agents → compliance docs
+#### Operations Board (React + Vite + Tailwind)
+- [x] Two-tab UI: Submit Request + Operations Board
+- [x] Board fetches open_tickets_board directly from PostgREST
+- [x] Auto-refresh 30s
+- [x] Approve / Reject / Sign / Acknowledge via PATCH
+- [x] Confirm Delivery button (triggers confirm_delivery RPC)
+- [x] PO number display on approved tickets
+- [x] Awaiting Delivery section
 
-**Operations Board (React)**
-- Two-tab UI: Submit Request + Operations Board
-- Board fetches open_tickets_board directly from PostgREST
-- Auto-refresh 30s, Approve/Reject/Sign/Acknowledge via PATCH
-- No Slack anywhere
+#### Stability
+- [x] All 9 Claude nodes: 120s timeout, 3× retry (2s backoff)
+- [x] All 45 PostgREST write nodes: 30s timeout, 3× retry (1s backoff)
+- [x] Race condition fix: atomic PostgreSQL functions for all budget operations
+- [x] Correlated subquery fix: tickets.category denormalized column
+- [x] workflow_runs table for Grafana health dashboards
 
-**Authentication**
-- PostgREST JWT generated (HS256, role=truespend, 10yr expiry)
-- n8n Header Auth credential: "Authorization-TrueSpend"
+#### Seeds (8 files, load in order)
+- [x] 01 — branches (10), cost_centers
+- [x] 02 — users (roles, spend authority)
+- [x] 03 — suppliers (20+)
+- [x] 04 — contracts (active, expiring, manual_required)
+- [x] 05 — hyperscaler_positions + llm_api_keys
+- [x] 06 — budget_positions (running ledger, incl. over-committed scenarios)
+- [x] 07 — tickets + trace_log (simulation scenarios)
+- [x] 08 — budget_buckets + po_sequences + trust_settings
 
 ---
 
 ### ✅ PHASE A — Budget & Controlling Layer
-**Status: Built — ready to wire in n8n**
+> **Status: Built — ready to wire in n8n**
 
-**Schema additions:**
-- `budget_buckets` table — annual budget plan per branch × category × fiscal year, maintained by Controlling. This is the source of truth for budget authority.
-- `fiscal_years` table — fiscal year definition (not always Jan–Dec), owned by Controlling
-- `purchase_orders` table — PO number, ticket_id, supplier_id, contract_id, amount, currency, status (draft/sent/acknowledged/delivered/invoiced/closed), po_date, expected_delivery
-- `invoices` table — supplier_id, po_id, invoice_number, invoice_date, amount, currency, status (received/matched/disputed/approved/paid), match_result
-
-**Budget check workflow additions:**
-- Budget pre-check node in `intake_receiver`: query `budget_buckets` for branch × category × current quarter
-- Three-tier evaluation: bucket available → branch headroom → manager authority
-- On approval: PATCH `budget_buckets.committed += amount`
-- On rejection/closed: PATCH `budget_buckets.committed -= amount` (release)
-
-**Controlling views:**
-- `budget_utilization` — bucket × period: plan / committed / spent / available / % consumed
-- `commitment_register` — all open POs not yet invoiced (accrual list for Controlling)
-- `approval_audit_trail` — immutable log of every approval decision with budget state snapshot
-
-**Operations Board additions:**
-- Controlling tab (read-only): budget utilization heat map per branch × category
-- Commitment register: open POs pending delivery/invoice
+- [x] `budget_buckets` table — annual plan per branch × category × fiscal year × quarter
+- [x] `budget_pools` — CFO-held unallocated reserves per branch
+- [x] `budget_reallocations` — immutable audit trail of every budget move
+- [x] Three-tier budget check in intake_receiver (bucket → branch → authority)
+- [x] `commit_budget()` — atomic lock + increment (called inside approve_and_commit)
+- [x] `release_budget()` — atomic lock + decrement (rejection/cancellation path)
+- [x] `record_spend()` — releases committed, increments spent (invoice approved)
+- [x] `budget_utilization` view — bucket × period: plan / committed / spent / available / % consumed
+- [x] `commitment_register` view — open POs not yet invoiced (accrual list)
+- [x] `approval_audit_trail` view — immutable log with budget state snapshot
+- [x] `trust_settings` table — per-branch + per-category autonomy thresholds
+- [x] Seed 08: budget_buckets (10 branches × categories), po_sequences, trust_settings defaults
 
 ---
 
 ### ✅ PHASE B — P2I Full Loop
-**Status: Built — ready to wire in n8n**
+> **Status: Built — ready to wire in n8n**
 
-**PO Generation:**
-- On `auto_execute`: agent generates PO (reference format: PO-{year}-{branch_code}-{seq}), creates `purchase_orders` row, sends order email to supplier (extend existing email workflow)
-- On `one_touch` approval: same, triggered by Approve button on board
-- PO template: plain text, legally sufficient, includes: TrueSpend entity, supplier legal name, contract reference, line items, delivery address, payment terms
-
-**Goods Receipt:**
-- Stakeholder clicks "Confirm Delivery" on Operations Board ticket
-- Agent checks: delivery within SLA? If late → flag supplier health
-- PO status → `delivered`, triggers invoice matching readiness
-
-**Invoice Matching (3-way):**
-- New workflow: `invoice_processor.json`
-- IMAP polls for invoices (PDF attachments from known supplier emails)
-- Claude reads invoice PDF (extract: supplier, amount, PO reference, line items, VAT)
-- 3-way match: invoice vs PO vs goods receipt
-- Match tolerance: ±2% or €50 (configurable)
-- On match: PATCH invoice status → `approved`, create payment instruction record
-- On mismatch: one-touch ticket with discrepancy highlighted on board
-
-**ERP Handoff (stub → real):**
-- `payment_instructions` table: amount, supplier bank details reference, invoice_id, po_id, instruction_date, status
-- Phase B: stub (record created, manual ERP entry)
-- Phase C: REST API call to SAP/Oracle/Coupa
+- [x] `purchase_orders` table — PO lifecycle: draft → sent → acknowledged → delivered → invoiced → closed
+- [x] `po_sequences` table — branch × year counters for gap-free PO numbering
+- [x] `invoices` table — received → matched → disputed → approved → paid
+- [x] `payment_instructions` table — PI record per approved invoice
+- [x] `erp_sync_queue` table — ERP-agnostic output queue (pending → syncing → synced/failed/skipped)
+- [x] `next_po_number()` — atomic, gap-free: PO-2026-DACH-0042 format
+- [x] `approve_and_commit()` — single RPC: PO number + budget commit + purchase_orders insert + ticket update
+- [x] `confirm_delivery()` — marks delivered, checks SLA, flags supplier health if late
+- [x] `match_invoice()` — 3-way match (invoice vs PO vs receipt), ±2% tolerance
+- [x] `create_payment_instruction()` — creates PI + erp_sync_queue entry + calls record_spend()
+- [x] `invoice_processor.json` — full IMAP → Claude parse → match → payment loop (7th workflow)
+- [x] intake_receiver: approve_and_commit RPC on auto_execute path + PO email to supplier
+- [x] Operations Board: Confirm Delivery button, PO number display, Awaiting Delivery section
 
 ---
 
 ### 🔲 PHASE C — Controlling Intelligence
-**Priority: Medium**  
-**Effort: 1 week**
+> **Priority: Medium | Effort: ~1 week**
 
-**Budget forecasting:**
-- New workflow: `budget_forecast.json` — weekly run
-- Agent reads: YTD spend by bucket, open POs (committed), contract renewal pipeline (coming spend), reorder patterns
-- Produces: projected year-end spend per bucket vs budget
-- If projection > budget: alert on Operations Board (Controlling view)
-- If projection < 85% of budget by Q3: underspend alert (use-it-or-lose-it warning, or reallocation opportunity)
-
-**Accruals automation:**
-- Controlling can export `commitment_register` as CSV (period-end)
-- Agent generates accrual entries: for every open PO with no invoice, accrue expected amount
-- This is the input to the month-end close process
-
-**Budget variance report:**
-- Monthly auto-generation: plan vs actual vs committed, by branch × category
-- Agent writes narrative: "DACH SaaS is 73% consumed in Q2 with 6 renewals pending — projected overrun of €45k in Q3. Recommend reallocation from underspent Facilities bucket."
-
-**Budget reallocation workflow:**
-- CFO/Controlling submits reallocation request via Operations Board
-- Agent checks: does source bucket have sufficient slack? Does receiving bucket make sense given pipeline?
-- Auto-approves if pure reallocation within branch. Escalates if cross-branch.
+- [ ] `budget_forecast.json` workflow — weekly run, agent projects year-end per bucket
+- [ ] Underspend alert: if projection < 85% of budget by Q3 → alert on board (use-it-or-lose-it)
+- [ ] Overrun alert: if projection > budget → alert + draft reallocation proposal
+- [ ] Accruals automation: commitment_register CSV export + agent-generated journal entry suggestions
+- [ ] Budget variance report: monthly, plan vs actual vs committed by branch × category with narrative
+- [ ] Budget reallocation workflow: CFO submits on board → agent checks source slack → auto-approve (intra-branch) or escalate (cross-branch)
+- [ ] `budget_reallocations` audit trail populated from reallocation workflow
+- [ ] Controlling tab on Operations Board: budget utilization heat map
 
 ---
 
 ### 🔲 PHASE D — ERP Integration
-**Priority: Medium — client-specific**  
-**Effort: 2–3 weeks per ERP**
+> **Priority: Medium — client-specific | Effort: 2–3 weeks per ERP**
 
-**Supported targets (in priority order):**
-1. SAP S/4HANA — BAPI/RFC or OData API
-2. Oracle Fusion — REST API
-3. Coupa — REST API (procurement-native, easiest)
-4. NetSuite — REST API
-5. Dynamics 365 — REST API
+**Supported targets (priority order):**
+1. [ ] SAP S/4HANA — BAPI/RFC or OData API
+2. [ ] Oracle Fusion — REST API
+3. [ ] Coupa — REST API (procurement-native, easiest)
+4. [ ] NetSuite — REST API
+5. [ ] Dynamics 365 — REST API
 
-**What TrueSpend pushes to ERP:**
-- Approved purchase orders → create PO in ERP
-- Matched invoices → release for payment in ERP
-- New supplier → create vendor master in ERP
-- Budget consumption → update cost center actual in ERP
+**Push to ERP:**
+- [ ] Approved POs → create PO in ERP
+- [ ] Matched invoices → release for payment in ERP
+- [ ] New suppliers → create vendor master in ERP
+- [ ] Budget consumption → update cost center actual in ERP
 
-**What TrueSpend pulls from ERP:**
-- Payment confirmation → close PO in TrueSpend
-- GL account mapping → map category to cost element
-- Cost center hierarchy → validate branch/CC mapping
+**Pull from ERP:**
+- [ ] Payment confirmation → close PO in TrueSpend
+- [ ] GL account mapping → map category to cost element
+- [ ] Cost center hierarchy → validate branch/CC mapping
 
-**Philosophy:** TrueSpend is the reasoning layer. ERP is the book of record. We push decisions in, pull confirmations back. We don't replicate ERP data structures.
+> **Philosophy:** TrueSpend is the reasoning layer. ERP is the book of record. Push decisions in, pull confirmations back. Never replicate ERP data structures.
 
 ---
 
 ### 🔲 PHASE E — Accounting & Month-End
-**Priority: Medium**  
-**Effort: 1 week**
-
-**What month-end means for TrueSpend:**
+> **Priority: Medium | Effort: ~1 week**
 
 ```
 Day 1–28:   Every approved PO commits budget in real-time
 Day 28:     Controlling exports commitment register (open accruals)
 Day 30:     All matched invoices flagged as "ready to post"
-Day 31:     Agent generates period summary: spend vs budget vs forecast
-            Exceptions highlighted: invoices unmatched, POs undelivered,
-            budget lines overrun, supplier disputes unresolved
+Day 31:     Agent generates period summary — spend vs budget vs forecast
+            Exceptions highlighted: unmatched invoices, undelivered POs,
+            overrun budget lines, unresolved supplier disputes
 ```
 
-**Journal entry preparation (simulation):**
-- Agent generates suggested journal entries for Controlling review
-- Format: GL account / cost center / amount / description / supporting document reference
-- Not a replacement for the accounting system — a pre-prepared input that eliminates the manual entry step
-
-**VAT handling:**
-- Agent extracts VAT from invoice parsing
-- Flags reverse charge situations (cross-border services)
-- Notes applicable rate per jurisdiction
-- Controlling reviews and posts — agent does not make tax decisions
+- [ ] Period-end report workflow: auto-generated on last day of month
+- [ ] Journal entry preparation: suggested GL entries per open PO (amount / CC / description / doc ref)
+- [ ] VAT handling: extract from invoice, flag reverse charge (cross-border services), note applicable rate
+- [ ] Month-end close checklist: board view showing outstanding items blocking close
 
 ---
 
 ### 🔲 PHASE F — Compliance Hardening
-**Priority: Medium**  
-**Effort: 1 week**
+> **Priority: Medium | Effort: ~1 week**
 
 **Current state:** Supplier onboarding compliance workflow built (NDA/DPA/InfoSec/LkSG agents). Schema extended. Templates ready.
 
-**What needs hardening:**
-- Apply schema migrations to Railway database (pending — see CLAUDE.md)
-- NDA/DPA e-signature integration (DocuSign or HelloSign API — currently simulation)
-- Automated compliance expiry tracking: DPA expires with contract, NDA tracks term
-- LkSG annual re-certification workflow: trigger on contract anniversary
-- Compliance dashboard on Operations Board: supplier × doc status matrix
-
-**GDPR-specific:**
-- Data subject request workflow: stakeholder submits via intake, agent routes to correct processor
-- Breach notification timer: 48h GDPR clock, auto-escalate at 44h if not resolved
-- Processing register: auto-maintained from supplier DPA data
+- [ ] NDA/DPA e-signature integration (DocuSign or HelloSign API — currently simulation)
+- [ ] Automated compliance expiry tracking: DPA expires with contract, NDA tracks term
+- [ ] LkSG annual re-certification workflow: trigger on contract anniversary
+- [ ] Compliance dashboard on Operations Board: supplier × doc status matrix
+- [ ] GDPR: data subject request workflow via intake → routes to correct processor
+- [ ] GDPR: breach notification timer — 48h clock, auto-escalate at 44h
+- [ ] GDPR: processing register auto-maintained from supplier DPA data
 
 ---
 
 ### 🔲 PHASE G — Hyperscaler FinOps Intelligence
-**Priority: Low — builds on existing monitor**  
-**Effort: 1 week**
+> **Priority: Low — builds on existing monitor | Effort: ~1 week**
 
-**Current state:** Daily monitor built. Anomaly detection working. Slack removed.
+**Current state:** Daily monitor built. Anomaly detection working. Slack-free.
 
-**Extensions:**
-- Reservation optimization agent: weekly, evaluates all reservations approaching expiry
-- Commitment amendment workflow: agent drafts amendment request when EDP/CUD needs adjustment
-- Cross-cloud arbitrage: if workload is portable, agent notes cost differential across clouds
-- RI/SP coverage dashboard on Operations Board: utilization by provider × account
-- Cost allocation: map hyperscaler spend to branch/cost center (currently unlinked)
+- [ ] Reservation optimization agent: weekly evaluation of reservations approaching expiry
+- [ ] Commitment amendment workflow: agent drafts amendment request when EDP/CUD needs adjustment
+- [ ] Cross-cloud arbitrage: cost differential notes when workload is portable
+- [ ] RI/SP coverage dashboard on Operations Board: utilization by provider × account
+- [ ] Cost allocation: map hyperscaler spend to branch/cost center (currently unlinked)
 
 ---
 
 ### 🔲 PHASE H — Trust Expansion Engine
-**Priority: Low — go-live first**  
-**Effort: 1 week**
-
-**The autonomy dial:**
+> **Priority: Low — go-live first | Effort: ~1 week**
 
 ```
 Week 1–4:   Threshold €10k. Human reviews sample weekly.
@@ -425,56 +349,57 @@ Month 6:    Threshold moves to €250k.
 Month 12:   Agent handles 80%+ of volume autonomously.
 ```
 
-**Mechanics:**
-- `trust_settings` table: current threshold, escalation rate, accuracy rate, last reviewed
-- Weekly report: auto-generated, shows accuracy metrics for the period
-- Threshold change request: submitted by Controlling/CPO on board, agent executes
-- Accuracy tracking: every auto_execute decision tracked, flagged if later reversed by human
+- [ ] Accuracy tracking: every auto_execute decision flagged if later reversed by human
+- [ ] Weekly accuracy report: auto-generated, shows confidence vs outcome correlation
+- [ ] Threshold change request: submitted by Controlling/CPO on board, agent executes
+- [ ] `trust_settings` review workflow: monthly, compares current thresholds vs accuracy data
+- [ ] Autonomy audit log: immutable record of every threshold change with rationale
 
 ---
 
 ## Go-Live Checklist
 
 ### Before first use
-- [ ] Apply schema migrations to Railway PostgreSQL (`psql` the compliance additions)
-- [ ] Set `VITE_POSTGREST_URL` + `VITE_POSTGREST_JWT` on Railway intake service
-- [ ] Re-import all 6 workflows to n8n (delete old, import new JSONs)
-- [ ] Assign "Authorization-TrueSpend" Header Auth to all PostgREST nodes in n8n
+- [ ] Apply schema to Railway PostgreSQL: `psql $DATABASE_URL -f db/schema.sql`
+- [ ] Apply all seeds in order: `for f in db/seed/0*.sql; do psql $DATABASE_URL -f $f; done`
+- [ ] Import all 7 workflows to n8n (delete old, import new JSONs)
+- [ ] Assign "Authorization-TrueSpend" Header Auth to all PostgREST nodes
 - [ ] Assign Anthropic credential to all Claude nodes
-- [ ] Import `supplier_onboarding.json` to n8n
+- [ ] Set `VITE_POSTGREST_URL` + `VITE_POSTGREST_JWT` on Railway intake service
+- [ ] Point `invoice_processor` IMAP trigger at `invoices` mailbox (separate from INBOX)
 
-### Before P2I goes live (Phase A + B)
-- [ ] Budget buckets populated by Controlling (annual plan → quarterly buckets)
-- [ ] Fiscal year defined in `fiscal_years` table
-- [ ] Manager spend authority matrix confirmed in `managers.spend_authority`
-- [ ] PO number sequence agreed (format: PO-2026-{BRANCH}-{SEQ})
-- [ ] Invoice matching tolerance agreed (±2% or €50 recommended)
+### Before P2I goes live
+- [ ] Budget buckets confirmed by Controlling (annual plan → quarterly buckets in seed 08)
+- [ ] Manager spend authority matrix confirmed in `users.spend_authority`
+- [ ] Invoice matching tolerance agreed (±2% default, configurable in match_invoice())
+- [ ] PO email template reviewed (plain text, sent to supplier.contact_email)
 
 ### Before ERP integration (Phase D)
 - [ ] ERP system confirmed (SAP/Oracle/Coupa/other)
 - [ ] API credentials provisioned
-- [ ] GL account mapping: TrueSpend category → ERP cost element
+- [ ] GL account mapping: TrueSpend spend_category → ERP cost element
 - [ ] Cost center mapping: TrueSpend branch → ERP CC
 
 ---
 
-## Known Issues (from audit 2026-05-27)
+## Known Issues
 
 ### Open
-- **H1** — `hyperscaler_positions` schema uses `projected_eur`/`committed_eur`/`reservation_util` but `hyperscaler_monitor.json` `check_flags` node references `projected_spend_eur`/`committed_spend_eur`/`reservation_utilization` — field name mismatch
-- **H3** — RLS policies only on 5 of 12 tables
-- **H4** — `contracts_expiring` view uses strict `>` — misses same-day expiries, should be `>=`
-- **M1** — `manual_required` contracts skip Claude reasoning, go straight to Jira with no brief
-- **M2** — `supplier_reply_handler.json` urgency routing fans all outputs simultaneously
-- **M3** — `intake_receiver.json` writes 1 trace_log row for all 5 signals (should be 5)
-- **L1** — auto-renew decision in `contract_watcher.json` has no ticket FK
+- **H3** — RLS policies: 15 of 28 tables explicitly covered. `trace_log`, `supplier_emails`, `branches`, `hyperscaler_positions`, `contract_changes` covered by `app_role_all` pattern but not individually enumerated. Low priority — not blocking go-live.
 
-### Fixed
+### Fixed (2026-05-27)
+- **H1** ✓ — `hyperscaler_monitor.json` check_flags already used correct field names (`projected_eur`, `committed_eur`, `reservation_util`)
+- **H2** ✓ — `order_reference` column added to `supplier_emails`
+- **H4** ✓ — `contracts_expiring` view uses `>=` (catches same-day expiries)
+- **M1** ✓ — `manual_required` contracts now route through Claude reasoning before Jira
+- **M2** ✓ — `supplier_reply_handler.json` urgency routing: critical→Jira+trace, high/medium/low→trace only
+- **M3** ✓ — `intake_receiver.json` writes 5 separate trace_log rows (bulk POST array)
 - **M4** ✓ — branch_id sends UUIDs not display names
 - **M5** ✓ — `reorder_trigger.json` uses `renewal_state` not `status`
-- **H2** ✓ — `order_reference` column added to `supplier_emails`
+- **L1** ✓ — auto-renew creates a ticket row first; decision has ticket_id FK
 - **L2** ✓ — `hyperscaler_monitor.json` trace signal is `consumption`
-- **Slack** ✓ — zero Slack nodes in all 6 workflows
+- **managers→users** ✓ — all workflow references to `/managers` updated to `/users`
+- **Slack** ✓ — zero Slack nodes in all 7 workflows
 
 ---
 
