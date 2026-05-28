@@ -61,9 +61,9 @@ jobs:
                 "eid": "5d530fe4-480e-4096-9a36-fc700ecd6f03",
                 "input": {
                   "source": { "image": "'"$IMAGE"'" },
-                  "startCommand": "nginx -g '\''daemon off;'\''",
+                  "startCommand": "envsubst '\''${PORT}'\'' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g '\''daemon off;'\''",
                   "healthcheckPath": "/",
-                  "healthcheckTimeout": 30
+                  "healthcheckTimeout": 60
                 }
               }
             }' | jq .
