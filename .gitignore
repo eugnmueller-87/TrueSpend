@@ -4,7 +4,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-dist/
 build/
 
 # Environment
@@ -32,7 +31,6 @@ logs/
 
 # Node
 node_modules/
-intake/dist/
 intake/.vite/
 
 # Docker volumes (if accidentally created locally)

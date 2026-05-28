@@ -1,5 +1,6 @@
+# Pre-built dist is committed — skip npm build, just serve
 [phases.build]
-cmds = ["npm ci", "npm run build"]
+cmds = ["npm ci --omit=dev"]
 
 [start]
 cmd = "npm start"
