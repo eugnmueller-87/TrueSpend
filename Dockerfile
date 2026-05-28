@@ -25,10 +25,12 @@ RUN npm run build
 FROM nginx:1.27-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY intake/nginx.conf /etc/nginx/conf.d/default.conf
+COPY intake/nginx.conf /etc/nginx/conf.d/default.conf.template
 
-RUN rm -f /etc/nginx/conf.d/default.conf.default
+RUN rm -f /etc/nginx/conf.d/default.conf
+RUN apk add --no-cache gettext
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+# Substitute $PORT at runtime, then start nginx
+CMD ["/bin/sh", "-c", "envsubst '${PORT}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
