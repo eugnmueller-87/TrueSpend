@@ -1,1072 +1,1066 @@
 {
-    "name":  "TrueSpend â€” Automatic Reorder Trigger",
-    "description":  "Runs every 6 hours. Detects when consumable items or recurring purchases need reordering based on consumption patterns, contract terms, and stock signals. For hardware bulk reorders within existing framework contracts (Dell, Lenovo, Apple) â€” checks: is this within existing contract terms? budget headroom? supplier health green? If all yes â†’ places order automatically via supplier email + logs PO to PostgREST. If one signal uncertain â†’ one-touch Slack confirm to manager. Novel or above threshold â†’ escalate Jira.",
-    "nodes":  [
-                  {
-                      "id":  "trigger",
-                      "name":  "Every 6 Hours",
-                      "type":  "n8n-nodes-base.scheduleTrigger",
-                      "parameters":  {
-                                         "rule":  {
-                                                      "interval":  [
-                                                                       {
-                                                                           "field":  "cronExpression",
-                                                                           "expression":  "0 */6 * * *"
-                                                                       }
-                                                                   ]
-                                                  }
-                                     },
-                      "position":  [
-                                       0,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_reorder_candidates",
-                      "name":  "Fetch Reorder Candidates",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/contracts?category=in.(hardware,saas_license)\u0026auto_renew=eq.true\u0026renewal_state=neq.manual_required",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       200,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_budget_signals",
-                      "name":  "Fetch Budget Spend Signals",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/budget_positions?category=in.(hardware,saas_license)\u0026period=eq.{{ new Date().getFullYear() + \u0027-Q\u0027 + Math.ceil((new Date().getMonth()+1)/3) }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       200,
-                                       480
-                                   ]
-                  },
-                  {
-                      "id":  "check_any_candidates",
-                      "name":  "Any Reorder Candidates?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "number":  [
-                                                                           {
-                                                                               "value1":  "={{ $node[\u0027Fetch Reorder Candidates\u0027].json.length }}",
-                                                                               "operation":  "larger",
-                                                                               "value2":  0
-                                                                           }
-                                                                       ]
-                                                        }
-                                     },
-                      "position":  [
-                                       400,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "loop_contracts",
-                      "name":  "Loop Each Contract",
-                      "type":  "n8n-nodes-base.splitInBatches",
-                      "parameters":  {
-                                         "batchSize":  1
-                                     },
-                      "position":  [
-                                       600,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_supplier_health",
-                      "name":  "Fetch Supplier Health",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $json.supplier_id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       800,
-                                       200
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_contract_budget",
-                      "name":  "Fetch Contract Budget Position",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node[\u0027Loop Each Contract\u0027].json.branch_id }}\u0026period=eq.{{ new Date().getFullYear() + \u0027-Q\u0027 + Math.ceil((new Date().getMonth()+1)/3) }}\u0026category=eq.{{ $node[\u0027Loop Each Contract\u0027].json.category }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       800,
-                                       360
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_contract_terms",
-                      "name":  "Fetch Contract Terms",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/contracts?id=eq.{{ $node[\u0027Loop Each Contract\u0027].json.id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       800,
-                                       520
-                                   ]
-                  },
-                  {
-                      "id":  "call_claude",
-                      "name":  "Claude â€” Reason on Reorder",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system. You reason across contract terms, consumption signals, supplier health, and budget headroom to determine whether a reorder is needed. You act immediately when all signals are green. You draft supplier emails for purchase orders in professional procurement language. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess whether this contract requires a reorder and produce a complete disposition.\\n\\nCONTRACT:\\n{{ JSON.stringify($node[\u0027Loop Each Contract\u0027].json) }}\\n\\nSUPPLIER HEALTH:\\n{{ JSON.stringify($node[\u0027Fetch Supplier Health\u0027].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node[\u0027Fetch Contract Budget Position\u0027].json) }}\\n\\nSIGNAL: Budget positions indicate potential reorder need where spend \u003e 80% of budget for this category. Evaluate: (1) Is reorder within existing framework contract terms? (2) Is there budget headroom? (3) Is supplier health green? (4) Is the quantity and timing reasonable given consumption patterns?\\n\\nReturn JSON exactly:\\n{\\n  \\\"disposition\\\": \\\"auto_execute\\\" | \\\"one_touch\\\" | \\\"escalate\\\",\\n  \\\"confidence\\\": 0.00-1.00,\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"reorder_recommended\\\": true | false,\\n  \\\"quantity\\\": number,\\n  \\\"unit_type\\\": \\\"string\\\",\\n  \\\"estimated_value\\\": number,\\n  \\\"supplier_email_subject\\\": \\\"string\\\",\\n  \\\"supplier_email_body\\\": \\\"string\\\",\\n  \\\"order_reference\\\": \\\"string\\\"\\n}\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1000,
-                                       360
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "parse_claude_response",
-                      "name":  "Parse Claude Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "disposition",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).disposition }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "confidence",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).confidence }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "reasoning",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).reasoning }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "reorder_recommended",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).reorder_recommended }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "quantity",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).quantity }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "unit_type",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).unit_type }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "estimated_value",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).estimated_value }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "supplier_email_subject",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).supplier_email_subject }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "supplier_email_body",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).supplier_email_body }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "order_reference",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).order_reference }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1200,
-                                       360
-                                   ]
-                  },
-                  {
-                      "id":  "check_reorder_needed",
-                      "name":  "Reorder Recommended?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "boolean":  [
-                                                                            {
-                                                                                "value1":  "={{ $json.reorder_recommended }}",
-                                                                                "operation":  "true"
-                                                                            }
-                                                                        ]
-                                                        }
-                                     },
-                      "position":  [
-                                       1400,
-                                       360
-                                   ]
-                  },
-                  {
-                      "id":  "route_disposition",
-                      "name":  "Route by Disposition",
-                      "type":  "n8n-nodes-base.switch",
-                      "parameters":  {
-                                         "dataType":  "string",
-                                         "value1":  "={{ $json.disposition }}",
-                                         "rules":  {
-                                                       "rules":  [
-                                                                     {
-                                                                         "value2":  "auto_execute",
-                                                                         "outputIndex":  0
-                                                                     },
-                                                                     {
-                                                                         "value2":  "one_touch",
-                                                                         "outputIndex":  1
-                                                                     },
-                                                                     {
-                                                                         "value2":  "escalate",
-                                                                         "outputIndex":  2
-                                                                     }
-                                                                 ]
-                                                   }
-                                     },
-                      "position":  [
-                                       1600,
-                                       360
-                                   ]
-                  },
-                  {
-                      "id":  "send_order_email",
-                      "name":  "Send Order Email to Supplier",
-                      "type":  "n8n-nodes-base.emailSend",
-                      "parameters":  {
-                                         "fromEmail":  "procurement@company.com",
-                                         "toEmail":  "={{ $node[\u0027Fetch Supplier Health\u0027].json[0]?.contact_email }}",
-                                         "subject":  "={{ $node[\u0027Parse Claude Response\u0027].json.supplier_email_subject }}",
-                                         "text":  "={{ $node[\u0027Parse Claude Response\u0027].json.supplier_email_body }}"
-                                     },
-                      "position":  [
-                                       1800,
-                                       160
-                                   ]
-                  },
-                  {
-                      "id":  "log_order_email",
-                      "name":  "Log Order Email to supplier_emails",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/supplier_emails",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Loop Each Contract\u0027].json.supplier_id, direction: \u0027outbound\u0027, subject: $node[\u0027Parse Claude Response\u0027].json.supplier_email_subject, body_summary: \u0027Reorder placed: \u0027 + $node[\u0027Parse Claude Response\u0027].json.quantity + \u0027 \u0027 + $node[\u0027Parse Claude Response\u0027].json.unit_type + \u0027 â€” Ref: \u0027 + $node[\u0027Parse Claude Response\u0027].json.order_reference, order_reference: $node[\u0027Parse Claude Response\u0027].json.order_reference, received_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2000,
-                                       160
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "create_ticket_auto",
-                      "name":  "Create Ticket â€” Auto Closed",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/tickets",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ reference: $node[\u0027Parse Claude Response\u0027].json.order_reference, source: \u0027automatic\u0027, status: \u0027closed\u0027, title: \u0027Reorder: \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 â€” \u0027 + $node[\u0027Parse Claude Response\u0027].json.quantity + \u0027 \u0027 + $node[\u0027Parse Claude Response\u0027].json.unit_type, amount: $node[\u0027Parse Claude Response\u0027].json.estimated_value, currency: $node[\u0027Loop Each Contract\u0027].json.currency || \u0027EUR\u0027, closed_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2200,
-                                       160
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "write_decision_auto",
-                      "name":  "Write Decision â€” Auto Execute",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ ticket_id: $node[\u0027Create Ticket â€” Auto Closed\u0027].json[0]?.id || $node[\u0027Create Ticket â€” Auto Closed\u0027].json?.id, contract_id: $node[\u0027Loop Each Contract\u0027].json.id, disposition: \u0027auto_execute\u0027, confidence: $node[\u0027Parse Claude Response\u0027].json.confidence, reasoning: $node[\u0027Parse Claude Response\u0027].json.reasoning, recommendation: \u0027Auto-reorder placed: \u0027 + $node[\u0027Parse Claude Response\u0027].json.quantity + \u0027 \u0027 + $node[\u0027Parse Claude Response\u0027].json.unit_type + \u0027 from \u0027 + $node[\u0027Loop Each Contract\u0027].json.supplier_name + \u0027. Value: \u0027 + $node[\u0027Parse Claude Response\u0027].json.estimated_value + \u0027 \u0027 + $node[\u0027Loop Each Contract\u0027].json.currency + \u0027. Ref: \u0027 + $node[\u0027Parse Claude Response\u0027].json.order_reference, model_used: \u0027claude-sonnet-4-6\u0027, actioned_by: \u0027agent\u0027, actioned_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2400,
-                                       160
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "create_ticket_pending",
-                      "name":  "Create Ticket â€” Pending Confirm",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/tickets",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ reference: $node[\u0027Parse Claude Response\u0027].json.order_reference, source: \u0027automatic\u0027, status: \u0027pending_confirm\u0027, title: \u0027[ONE-TOUCH] Reorder: \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 â€” \u0027 + $node[\u0027Parse Claude Response\u0027].json.quantity + \u0027 \u0027 + $node[\u0027Parse Claude Response\u0027].json.unit_type, amount: $node[\u0027Parse Claude Response\u0027].json.estimated_value, currency: $node[\u0027Loop Each Contract\u0027].json.currency || \u0027EUR\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1800,
-                                       400
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "write_decision_one_touch",
-                      "name":  "Write Decision â€” One Touch",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ ticket_id: $node[\u0027Create Ticket â€” Pending Confirm\u0027].json[0]?.id || $node[\u0027Create Ticket â€” Pending Confirm\u0027].json?.id, contract_id: $node[\u0027Loop Each Contract\u0027].json.id, disposition: \u0027one_touch\u0027, confidence: $node[\u0027Parse Claude Response\u0027].json.confidence, reasoning: $node[\u0027Parse Claude Response\u0027].json.reasoning, model_used: \u0027claude-sonnet-4-6\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2000,
-                                       400
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "fetch_manager_one_touch",
-                      "name":  "Fetch Manager for One-Touch",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/users?branch_ids=cs.{$node[\u0027Loop Each Contract\u0027].json.branch_id}\u0026active=eq.true\u0026role=in.(head_of_procurement,category_manager,ops_manager)\u0026order=spend_authority.desc\u0026limit=1",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       2000,
-                                       560
-                                   ]
-                  },
-                  {
-                      "id":  "send_one_touch_slack",
-                      "name":  "Log Reorder One-Touch to Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027reorder\u0027, value: \u0027one_touch_pending\u0027, notes: \u0027Ticket \u0027 + ($node[\u0027Create Ticket â€” Pending Confirm\u0027].json[0]?.id || $node[\u0027Create Ticket â€” Pending Confirm\u0027].json?.id) + \u0027 â€” \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 reorder awaiting approval on Operations Board. Est. value: \u0027 + $node[\u0027Parse Claude Response\u0027].json.estimated_value + \u0027 EUR.\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2200,
-                                       480
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "create_ticket_escalated",
-                      "name":  "Create Ticket â€” Escalated",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/tickets",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ reference: $node[\u0027Parse Claude Response\u0027].json.order_reference, source: \u0027automatic\u0027, status: \u0027escalated\u0027, title: \u0027[ESCALATE] Reorder: \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 â€” \u0027 + $node[\u0027Parse Claude Response\u0027].json.quantity + \u0027 \u0027 + $node[\u0027Parse Claude Response\u0027].json.unit_type, amount: $node[\u0027Parse Claude Response\u0027].json.estimated_value, currency: $node[\u0027Loop Each Contract\u0027].json.currency || \u0027EUR\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1800,
-                                       620
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "write_decision_escalate",
-                      "name":  "Write Decision â€” Escalate",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ ticket_id: $node[\u0027Create Ticket â€” Escalated\u0027].json[0]?.id || $node[\u0027Create Ticket â€” Escalated\u0027].json?.id, contract_id: $node[\u0027Loop Each Contract\u0027].json.id, disposition: \u0027escalate\u0027, confidence: $node[\u0027Parse Claude Response\u0027].json.confidence, reasoning: $node[\u0027Parse Claude Response\u0027].json.reasoning, model_used: \u0027claude-sonnet-4-6\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2000,
-                                       620
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "create_jira_escalation",
-                      "name":  "Create Jira Escalation Ticket",
-                      "type":  "n8n-nodes-base.jira",
-                      "parameters":  {
-                                         "operation":  "create",
-                                         "project":  "KAN",
-                                         "issueType":  "Task",
-                                         "priority":  "High",
-                                         "summary":  "={{ \u0027[REORDER-ESCALATE] \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 â€” \u0027 + $node[\u0027Loop Each Contract\u0027].json.supplier_name }}",
-                                         "description":  "=*Contract:* {{ $node[\u0027Loop Each Contract\u0027].json.name }}\n*Supplier:* {{ $node[\u0027Loop Each Contract\u0027].json.supplier_name }}\n*Category:* {{ $node[\u0027Loop Each Contract\u0027].json.category }}\n*Recommended Quantity:* {{ $node[\u0027Parse Claude Response\u0027].json.quantity }} {{ $node[\u0027Parse Claude Response\u0027].json.unit_type }}\n*Estimated Value:* {{ $node[\u0027Parse Claude Response\u0027].json.estimated_value }} {{ $node[\u0027Loop Each Contract\u0027].json.currency }}\n*Order Reference:* {{ $node[\u0027Parse Claude Response\u0027].json.order_reference }}\n\n*Agent Reasoning:*\n{{ $node[\u0027Parse Claude Response\u0027].json.reasoning }}\n\n*Confidence:* {{ $node[\u0027Parse Claude Response\u0027].json.confidence }}\n\n*Suggested email to supplier (pending approval):*\nSubject: {{ $node[\u0027Parse Claude Response\u0027].json.supplier_email_subject }}\n\n{{ $node[\u0027Parse Claude Response\u0027].json.supplier_email_body }}"
-                                     },
-                      "position":  [
-                                       2200,
-                                       620
-                                   ]
-                  },
-                  {
-                      "id":  "update_ticket_jira_key",
-                      "name":  "Update Ticket with Jira Key",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "PATCH",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node[\u0027Create Ticket â€” Escalated\u0027].json[0]?.id || $node[\u0027Create Ticket â€” Escalated\u0027].json?.id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ jira_key: $json.key, jira_url: $json.self }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2400,
-                                       620
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "no_candidates",
-                      "name":  "Log â€” No Reorders Needed",
-                      "type":  "n8n-nodes-base.noOp",
-                      "position":  [
-                                       600,
-                                       500
-                                   ]
-                  },
-                  {
-                      "id":  "no_reorder",
-                      "name":  "Log â€” Reorder Not Recommended",
-                      "type":  "n8n-nodes-base.noOp",
-                      "position":  [
-                                       1600,
-                                       600
-                                   ]
-                  }
-              ],
-    "connections":  {
-                        "Every 6 Hours":  {
-                                              "main":  [
-                                                           [
-                                                               {
-                                                                   "node":  "Fetch Reorder Candidates",
-                                                                   "type":  "main",
-                                                                   "index":  0
-                                                               }
-                                                           ]
-                                                       ]
-                                          },
-                        "Fetch Reorder Candidates":  {
-                                                         "main":  [
-                                                                      [
-                                                                          {
-                                                                              "node":  "Any Reorder Candidates?",
-                                                                              "type":  "main",
-                                                                              "index":  0
-                                                                          }
-                                                                      ]
-                                                                  ]
-                                                     },
-                        "Any Reorder Candidates?":  {
-                                                        "main":  [
-                                                                     [
-                                                                         {
-                                                                             "node":  "Loop Each Contract",
-                                                                             "type":  "main",
-                                                                             "index":  0
-                                                                         }
-                                                                     ],
-                                                                     [
-                                                                         {
-                                                                             "node":  "Log â€” No Reorders Needed",
-                                                                             "type":  "main",
-                                                                             "index":  0
-                                                                         }
-                                                                     ]
-                                                                 ]
-                                                    },
-                        "Loop Each Contract":  {
-                                                   "main":  [
-                                                                [
-                                                                    {
-                                                                        "node":  "Fetch Supplier Health",
-                                                                        "type":  "main",
-                                                                        "index":  0
-                                                                    }
-                                                                ]
-                                                            ]
-                                               },
-                        "Fetch Supplier Health":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Fetch Contract Budget Position",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Fetch Contract Budget Position":  {
-                                                               "main":  [
-                                                                            [
-                                                                                {
-                                                                                    "node":  "Fetch Contract Terms",
-                                                                                    "type":  "main",
-                                                                                    "index":  0
-                                                                                }
-                                                                            ]
-                                                                        ]
-                                                           },
-                        "Fetch Contract Terms":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Claude â€” Reason on Reorder",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Claude â€” Reason on Reorder":  {
-                                                             "main":  [
-                                                                          [
-                                                                              {
-                                                                                  "node":  "Parse Claude Response",
-                                                                                  "type":  "main",
-                                                                                  "index":  0
-                                                                              }
-                                                                          ]
-                                                                      ]
-                                                         },
-                        "Parse Claude Response":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Reorder Recommended?",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Reorder Recommended?":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Route by Disposition",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Log â€” Reorder Not Recommended",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Route by Disposition":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Send Order Email to Supplier",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Create Ticket â€” Pending Confirm",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Create Ticket â€” Escalated",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Send Order Email to Supplier":  {
-                                                             "main":  [
-                                                                          [
-                                                                              {
-                                                                                  "node":  "Log Order Email to supplier_emails",
-                                                                                  "type":  "main",
-                                                                                  "index":  0
-                                                                              }
-                                                                          ]
-                                                                      ]
-                                                         },
-                        "Log Order Email to supplier_emails":  {
-                                                                   "main":  [
-                                                                                [
-                                                                                    {
-                                                                                        "node":  "Create Ticket â€” Auto Closed",
-                                                                                        "type":  "main",
-                                                                                        "index":  0
-                                                                                    }
-                                                                                ]
-                                                                            ]
-                                                               },
-                        "Create Ticket â€” Auto Closed":  {
-                                                              "main":  [
-                                                                           [
-                                                                               {
-                                                                                   "node":  "Write Decision â€” Auto Execute",
-                                                                                   "type":  "main",
-                                                                                   "index":  0
-                                                                               }
-                                                                           ]
-                                                                       ]
-                                                          },
-                        "Create Ticket â€” Pending Confirm":  {
-                                                                  "main":  [
-                                                                               [
-                                                                                   {
-                                                                                       "node":  "Write Decision â€” One Touch",
-                                                                                       "type":  "main",
-                                                                                       "index":  0
-                                                                                   }
-                                                                               ]
-                                                                           ]
-                                                              },
-                        "Write Decision â€” One Touch":  {
-                                                             "main":  [
-                                                                          [
-                                                                              {
-                                                                                  "node":  "Fetch Manager for One-Touch",
-                                                                                  "type":  "main",
-                                                                                  "index":  0
-                                                                              }
-                                                                          ]
-                                                                      ]
-                                                         },
-                        "Fetch Manager for One-Touch":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Send One-Touch to Manager â€” Slack",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Create Ticket â€” Escalated":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Write Decision â€” Escalate",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Write Decision â€” Escalate":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Create Jira Escalation Ticket",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Create Jira Escalation Ticket":  {
-                                                              "main":  [
-                                                                           [
-                                                                               {
-                                                                                   "node":  "Update Ticket with Jira Key",
-                                                                                   "type":  "main",
-                                                                                   "index":  0
-                                                                               }
-                                                                           ]
-                                                                       ]
-                                                          }
-                    }
+  "name": "TrueSpend â€” Automatic Reorder Trigger",
+  "description": "Runs every 6 hours. Detects when consumable items or recurring purchases need reordering based on consumption patterns, contract terms, and stock signals. For hardware bulk reorders within existing framework contracts (Dell, Lenovo, Apple) â€” checks: is this within existing contract terms? budget headroom? supplier health green? If all yes â†’ places order automatically via supplier email + logs PO to PostgREST. If one signal uncertain â†’ one-touch Slack confirm to manager. Novel or above threshold â†’ escalate Jira.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */6 * * *"
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "id": "fetch_reorder_candidates",
+      "name": "Fetch Reorder Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "https://postgrest-production-7960.up.railway.app/contracts?category=in.(hardware,saas_license)&auto_renew=eq.true&renewal_state=neq.manual_required",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "id": "fetch_budget_signals",
+      "name": "Fetch Budget Spend Signals",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?category=in.(hardware,saas_license)&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        200,
+        480
+      ]
+    },
+    {
+      "id": "check_any_candidates",
+      "name": "Any Reorder Candidates?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $node['Fetch Reorder Candidates'].json.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "id": "loop_contracts",
+      "name": "Loop Each Contract",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": {
+        "batchSize": 1
+      },
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "id": "fetch_supplier_health",
+      "name": "Fetch Supplier Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $json.supplier_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "id": "fetch_contract_budget",
+      "name": "Fetch Contract Budget Position",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node['Loop Each Contract'].json.branch_id }}&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}&category=eq.{{ $node['Loop Each Contract'].json.category }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        800,
+        360
+      ]
+    },
+    {
+      "id": "fetch_contract_terms",
+      "name": "Fetch Contract Terms",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contracts?id=eq.{{ $node['Loop Each Contract'].json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        800,
+        520
+      ]
+    },
+    {
+      "id": "call_claude",
+      "name": "Claude â€” Reason on Reorder",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system. You reason across contract terms, consumption signals, supplier health, and budget headroom to determine whether a reorder is needed. You act immediately when all signals are green. You draft supplier emails for purchase orders in professional procurement language. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess whether this contract requires a reorder and produce a complete disposition.\\n\\nCONTRACT:\\n{{ JSON.stringify($node['Loop Each Contract'].json) }}\\n\\nSUPPLIER HEALTH:\\n{{ JSON.stringify($node['Fetch Supplier Health'].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node['Fetch Contract Budget Position'].json) }}\\n\\nSIGNAL: Budget positions indicate potential reorder need where spend > 80% of budget for this category. Evaluate: (1) Is reorder within existing framework contract terms? (2) Is there budget headroom? (3) Is supplier health green? (4) Is the quantity and timing reasonable given consumption patterns?\\n\\nReturn JSON exactly:\\n{\\n  \\\"disposition\\\": \\\"auto_execute\\\" | \\\"one_touch\\\" | \\\"escalate\\\",\\n  \\\"confidence\\\": 0.00-1.00,\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"reorder_recommended\\\": true | false,\\n  \\\"quantity\\\": number,\\n  \\\"unit_type\\\": \\\"string\\\",\\n  \\\"estimated_value\\\": number,\\n  \\\"supplier_email_subject\\\": \\\"string\\\",\\n  \\\"supplier_email_body\\\": \\\"string\\\",\\n  \\\"order_reference\\\": \\\"string\\\"\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1000,
+        360
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "parse_claude_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "disposition",
+              "value": "={{ JSON.parse($json.content[0].text).disposition }}"
+            },
+            {
+              "name": "confidence",
+              "value": "={{ JSON.parse($json.content[0].text).confidence }}"
+            },
+            {
+              "name": "reasoning",
+              "value": "={{ JSON.parse($json.content[0].text).reasoning }}"
+            },
+            {
+              "name": "reorder_recommended",
+              "value": "={{ JSON.parse($json.content[0].text).reorder_recommended }}"
+            },
+            {
+              "name": "quantity",
+              "value": "={{ JSON.parse($json.content[0].text).quantity }}"
+            },
+            {
+              "name": "unit_type",
+              "value": "={{ JSON.parse($json.content[0].text).unit_type }}"
+            },
+            {
+              "name": "estimated_value",
+              "value": "={{ JSON.parse($json.content[0].text).estimated_value }}"
+            },
+            {
+              "name": "supplier_email_subject",
+              "value": "={{ JSON.parse($json.content[0].text).supplier_email_subject }}"
+            },
+            {
+              "name": "supplier_email_body",
+              "value": "={{ JSON.parse($json.content[0].text).supplier_email_body }}"
+            },
+            {
+              "name": "order_reference",
+              "value": "={{ JSON.parse($json.content[0].text).order_reference }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        360
+      ]
+    },
+    {
+      "id": "check_reorder_needed",
+      "name": "Reorder Recommended?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.reorder_recommended }}",
+              "operation": "true"
+            }
+          ]
+        }
+      },
+      "position": [
+        1400,
+        360
+      ]
+    },
+    {
+      "id": "route_disposition",
+      "name": "Route by Disposition",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.disposition }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "auto_execute",
+              "outputIndex": 0
+            },
+            {
+              "value2": "one_touch",
+              "outputIndex": 1
+            },
+            {
+              "value2": "escalate",
+              "outputIndex": 2
+            }
+          ]
+        }
+      },
+      "position": [
+        1600,
+        360
+      ]
+    },
+    {
+      "id": "send_order_email",
+      "name": "Send Order Email to Supplier",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail": "={{ $node['Fetch Supplier Health'].json[0]?.contact_email }}",
+        "subject": "={{ $node['Parse Claude Response'].json.supplier_email_subject }}",
+        "text": "={{ $node['Parse Claude Response'].json.supplier_email_body }}"
+      },
+      "position": [
+        1800,
+        160
+      ]
+    },
+    {
+      "id": "log_order_email",
+      "name": "Log Order Email to supplier_emails",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Loop Each Contract'].json.supplier_id, direction: 'outbound', subject: $node['Parse Claude Response'].json.supplier_email_subject, body_summary: 'Reorder placed: ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type + ' â€” Ref: ' + $node['Parse Claude Response'].json.order_reference, order_reference: $node['Parse Claude Response'].json.order_reference, received_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        160
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "create_ticket_auto",
+      "name": "Create Ticket â€” Auto Closed",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Parse Claude Response'].json.order_reference, source: 'automatic', status: 'closed', title: 'Reorder: ' + $node['Loop Each Contract'].json.name + ' â€” ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type, amount: $node['Parse Claude Response'].json.estimated_value, currency: $node['Loop Each Contract'].json.currency || 'EUR', closed_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2200,
+        160
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "write_decision_auto",
+      "name": "Write Decision â€” Auto Execute",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket â€” Auto Closed'].json[0]?.id || $node['Create Ticket â€” Auto Closed'].json?.id, contract_id: $node['Loop Each Contract'].json.id, disposition: 'auto_execute', confidence: $node['Parse Claude Response'].json.confidence, reasoning: $node['Parse Claude Response'].json.reasoning, recommendation: 'Auto-reorder placed: ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type + ' from ' + $node['Loop Each Contract'].json.supplier_name + '. Value: ' + $node['Parse Claude Response'].json.estimated_value + ' ' + $node['Loop Each Contract'].json.currency + '. Ref: ' + $node['Parse Claude Response'].json.order_reference, model_used: 'claude-sonnet-4-6', actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2400,
+        160
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "create_ticket_pending",
+      "name": "Create Ticket â€” Pending Confirm",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Parse Claude Response'].json.order_reference, source: 'automatic', status: 'pending_confirm', title: '[ONE-TOUCH] Reorder: ' + $node['Loop Each Contract'].json.name + ' â€” ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type, amount: $node['Parse Claude Response'].json.estimated_value, currency: $node['Loop Each Contract'].json.currency || 'EUR' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1800,
+        400
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "write_decision_one_touch",
+      "name": "Write Decision â€” One Touch",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket â€” Pending Confirm'].json[0]?.id || $node['Create Ticket â€” Pending Confirm'].json?.id, contract_id: $node['Loop Each Contract'].json.id, disposition: 'one_touch', confidence: $node['Parse Claude Response'].json.confidence, reasoning: $node['Parse Claude Response'].json.reasoning, model_used: 'claude-sonnet-4-6' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        400
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "fetch_manager_one_touch",
+      "name": "Fetch Manager for One-Touch",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/users?branch_ids=cs.{$node['Loop Each Contract'].json.branch_id}&active=eq.true&role=in.(head_of_procurement,category_manager,ops_manager)&order=spend_authority.desc&limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        560
+      ]
+    },
+    {
+      "id": "send_one_touch_slack",
+      "name": "Log Reorder One-Touch to Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'reorder', value: 'one_touch_pending', notes: 'Ticket ' + ($node['Create Ticket â€” Pending Confirm'].json[0]?.id || $node['Create Ticket â€” Pending Confirm'].json?.id) + ' â€” ' + $node['Loop Each Contract'].json.name + ' reorder awaiting approval on Operations Board. Est. value: ' + $node['Parse Claude Response'].json.estimated_value + ' EUR.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2200,
+        480
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "create_ticket_escalated",
+      "name": "Create Ticket â€” Escalated",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: $node['Parse Claude Response'].json.order_reference, source: 'automatic', status: 'escalated', title: '[ESCALATE] Reorder: ' + $node['Loop Each Contract'].json.name + ' â€” ' + $node['Parse Claude Response'].json.quantity + ' ' + $node['Parse Claude Response'].json.unit_type, amount: $node['Parse Claude Response'].json.estimated_value, currency: $node['Loop Each Contract'].json.currency || 'EUR' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1800,
+        620
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "write_decision_escalate",
+      "name": "Write Decision â€” Escalate",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Ticket â€” Escalated'].json[0]?.id || $node['Create Ticket â€” Escalated'].json?.id, contract_id: $node['Loop Each Contract'].json.id, disposition: 'escalate', confidence: $node['Parse Claude Response'].json.confidence, reasoning: $node['Parse Claude Response'].json.reasoning, model_used: 'claude-sonnet-4-6' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        620
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "create_jira_escalation",
+      "name": "Create Jira Escalation Ticket",
+      "type": "n8n-nodes-base.jira",
+      "parameters": {
+        "operation": "create",
+        "project": "KAN",
+        "issueType": "Task",
+        "priority": "High",
+        "summary": "={{ '[REORDER-ESCALATE] ' + $node['Loop Each Contract'].json.name + ' â€” ' + $node['Loop Each Contract'].json.supplier_name }}",
+        "description": "=*Contract:* {{ $node['Loop Each Contract'].json.name }}\n*Supplier:* {{ $node['Loop Each Contract'].json.supplier_name }}\n*Category:* {{ $node['Loop Each Contract'].json.category }}\n*Recommended Quantity:* {{ $node['Parse Claude Response'].json.quantity }} {{ $node['Parse Claude Response'].json.unit_type }}\n*Estimated Value:* {{ $node['Parse Claude Response'].json.estimated_value }} {{ $node['Loop Each Contract'].json.currency }}\n*Order Reference:* {{ $node['Parse Claude Response'].json.order_reference }}\n\n*Agent Reasoning:*\n{{ $node['Parse Claude Response'].json.reasoning }}\n\n*Confidence:* {{ $node['Parse Claude Response'].json.confidence }}\n\n*Suggested email to supplier (pending approval):*\nSubject: {{ $node['Parse Claude Response'].json.supplier_email_subject }}\n\n{{ $node['Parse Claude Response'].json.supplier_email_body }}"
+      },
+      "position": [
+        2200,
+        620
+      ]
+    },
+    {
+      "id": "update_ticket_jira_key",
+      "name": "Update Ticket with Jira Key",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket â€” Escalated'].json[0]?.id || $node['Create Ticket â€” Escalated'].json?.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ jira_key: $json.key, jira_url: $json.self }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2400,
+        620
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "no_candidates",
+      "name": "Log â€” No Reorders Needed",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        600,
+        500
+      ]
+    },
+    {
+      "id": "no_reorder",
+      "name": "Log â€” Reorder Not Recommended",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        1600,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Reorder Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Reorder Candidates": {
+      "main": [
+        [
+          {
+            "node": "Any Reorder Candidates?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Reorder Candidates?": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Contract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log â€” No Reorders Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Contract": {
+      "main": [
+        [
+          {
+            "node": "Fetch Supplier Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Supplier Health": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contract Budget Position",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contract Budget Position": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contract Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contract Terms": {
+      "main": [
+        [
+          {
+            "node": "Claude â€” Reason on Reorder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude â€” Reason on Reorder": {
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          {
+            "node": "Reorder Recommended?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reorder Recommended?": {
+      "main": [
+        [
+          {
+            "node": "Route by Disposition",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log â€” Reorder Not Recommended",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Disposition": {
+      "main": [
+        [
+          {
+            "node": "Send Order Email to Supplier",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Ticket â€” Pending Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Ticket â€” Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Order Email to Supplier": {
+      "main": [
+        [
+          {
+            "node": "Log Order Email to supplier_emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Order Email to supplier_emails": {
+      "main": [
+        [
+          {
+            "node": "Create Ticket â€” Auto Closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Ticket â€” Auto Closed": {
+      "main": [
+        [
+          {
+            "node": "Write Decision â€” Auto Execute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Ticket â€” Pending Confirm": {
+      "main": [
+        [
+          {
+            "node": "Write Decision â€” One Touch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Decision â€” One Touch": {
+      "main": [
+        [
+          {
+            "node": "Fetch Manager for One-Touch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Manager for One-Touch": {
+      "main": [
+        []
+      ]
+    },
+    "Create Ticket â€” Escalated": {
+      "main": [
+        [
+          {
+            "node": "Write Decision â€” Escalate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Decision â€” Escalate": {
+      "main": [
+        [
+          {
+            "node": "Create Jira Escalation Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Jira Escalation Ticket": {
+      "main": [
+        [
+          {
+            "node": "Update Ticket with Jira Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
 }

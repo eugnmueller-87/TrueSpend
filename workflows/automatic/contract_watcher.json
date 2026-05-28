@@ -1,860 +1,850 @@
 {
-    "name":  "TrueSpend â€” Daily Contract Watcher",
-    "description":  "Runs every morning. Checks all contracts expiring within 90 days. Routes to auto-renew, agent reasoning, or escalation based on renewal state.",
-    "nodes":  [
-                  {
-                      "id":  "trigger",
-                      "name":  "Every Morning 07:00",
-                      "type":  "n8n-nodes-base.scheduleTrigger",
-                      "parameters":  {
-                                         "rule":  {
-                                                      "interval":  [
-                                                                       {
-                                                                           "field":  "cronExpression",
-                                                                           "expression":  "0 7 * * 1-5"
-                                                                       }
-                                                                   ]
-                                                  }
-                                     },
-                      "position":  [
-                                       0,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_expiring",
-                      "name":  "Fetch Contracts Expiring â‰¤90 Days",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/contracts_expiring?days_remaining=lte.90",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       240,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "check_any",
-                      "name":  "Any Contracts Found?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "number":  [
-                                                                           {
-                                                                               "value1":  "={{ $json.length }}",
-                                                                               "operation":  "larger",
-                                                                               "value2":  0
-                                                                           }
-                                                                       ]
-                                                        }
-                                     },
-                      "position":  [
-                                       480,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "no_contracts",
-                      "name":  "Log â€” Nothing to Process",
-                      "type":  "n8n-nodes-base.noOp",
-                      "position":  [
-                                       720,
-                                       160
-                                   ]
-                  },
-                  {
-                      "id":  "loop_contracts",
-                      "name":  "Loop Each Contract",
-                      "type":  "n8n-nodes-base.splitInBatches",
-                      "parameters":  {
-                                         "batchSize":  1
-                                     },
-                      "position":  [
-                                       720,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "route_renewal_state",
-                      "name":  "Route by Renewal State",
-                      "type":  "n8n-nodes-base.switch",
-                      "parameters":  {
-                                         "dataType":  "string",
-                                         "value1":  "={{ $json.renewal_state }}",
-                                         "rules":  {
-                                                       "rules":  [
-                                                                     {
-                                                                         "value2":  "clean",
-                                                                         "outputIndex":  0
-                                                                     },
-                                                                     {
-                                                                         "value2":  "price_increase",
-                                                                         "outputIndex":  1
-                                                                     },
-                                                                     {
-                                                                         "value2":  "volume_change",
-                                                                         "outputIndex":  1
-                                                                     },
-                                                                     {
-                                                                         "value2":  "scope_change",
-                                                                         "outputIndex":  1
-                                                                     },
-                                                                     {
-                                                                         "value2":  "manual_required",
-                                                                         "outputIndex":  2
-                                                                     }
-                                                                 ]
-                                                   },
-                                         "fallbackOutput":  2
-                                     },
-                      "position":  [
-                                       960,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "auto_renew_check",
-                      "name":  "Auto-Renew Eligible?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "boolean":  [
-                                                                            {
-                                                                                "value1":  "={{ $json.auto_renew }}",
-                                                                                "operation":  "true"
-                                                                            }
-                                                                        ],
-                                                            "number":  [
-                                                                           {
-                                                                               "value1":  "={{ $json.days_remaining }}",
-                                                                               "operation":  "larger",
-                                                                               "value2":  30
-                                                                           }
-                                                                       ]
-                                                        }
-                                     },
-                      "position":  [
-                                       1200,
-                                       -200
-                                   ]
-                  },
-                  {
-                      "id":  "execute_auto_renew",
-                      "name":  "Execute Auto-Renewal",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ ticket_id: $node[\u0027Create Renewal Ticket\u0027].json[0]?.id || $node[\u0027Create Renewal Ticket\u0027].json?.id, contract_id: $node[\u0027Loop Each Contract\u0027].json.id, disposition: \u0027auto_execute\u0027, confidence: 0.97, reasoning: \u0027Contract \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 is clean for auto-renewal. Days remaining: \u0027 + $node[\u0027Loop Each Contract\u0027].json.days_remaining + \u0027. No changes detected.\u0027, outcome: \u0027auto_renewed\u0027, actioned_by: \u0027agent\u0027, actioned_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1440,
-                                       -320
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "notify_auto_renewed",
-                      "name":  "Log Auto-Renewal to Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027contract_renewal\u0027, value: \u0027auto_renewed\u0027, notes: \u0027Contract \u0027 + $node[\u0027Execute Auto-Renewal\u0027].json[0]?.contract_id + \u0027 auto-renewed at \u0027 + new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1680,
-                                       -320
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "fetch_changes",
-                      "name":  "Fetch Contract Changes",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/contract_changes?contract_id=eq.{{ $json.id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       1440,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_budget",
-                      "name":  "Fetch Budget Position",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node[\u0027Loop Each Contract\u0027].json.branch_id }}\u0026period=eq.{{ new Date().getFullYear() + \u0027-Q\u0027 + Math.ceil((new Date().getMonth()+1)/3) }}\u0026category=eq.{{ $node[\u0027Loop Each Contract\u0027].json.category }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       1680,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "call_claude",
-                      "name":  "Claude â€” Reason on Contract Change",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend, an agentic procurement reasoning system. You reason across contracts, consumption, supplier health, and policy to reach a confident disposition. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this contract renewal.\\n\\nCONTRACT:\\n{{ JSON.stringify($node[\u0027Loop Each Contract\u0027].json) }}\\n\\nCHANGES DETECTED:\\n{{ JSON.stringify($node[\u0027Fetch Contract Changes\u0027].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node[\u0027Fetch Budget Position\u0027].json) }}\\n\\nReturn JSON: { disposition: \u0027auto_execute\u0027|\u0027one_touch\u0027|\u0027escalate\u0027, confidence: 0.00-1.00, reasoning: string, recommendation: string, brief: string }\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1920,
-                                       0
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "parse_claude_response",
-                      "name":  "Parse Claude Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "disposition",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).disposition }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "confidence",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).confidence }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "reasoning",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).reasoning }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "recommendation",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).recommendation }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "brief",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).brief }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       2160,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "route_disposition",
-                      "name":  "Route by Disposition",
-                      "type":  "n8n-nodes-base.switch",
-                      "parameters":  {
-                                         "dataType":  "string",
-                                         "value1":  "={{ $json.disposition }}",
-                                         "rules":  {
-                                                       "rules":  [
-                                                                     {
-                                                                         "value2":  "auto_execute",
-                                                                         "outputIndex":  0
-                                                                     },
-                                                                     {
-                                                                         "value2":  "one_touch",
-                                                                         "outputIndex":  1
-                                                                     },
-                                                                     {
-                                                                         "value2":  "escalate",
-                                                                         "outputIndex":  2
-                                                                     }
-                                                                 ]
-                                                   }
-                                     },
-                      "position":  [
-                                       2400,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "write_decision_auto",
-                      "name":  "Write Decision â€” Auto Execute",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ contract_id: $node[\u0027Loop Each Contract\u0027].json.id, disposition: \u0027auto_execute\u0027, confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, actioned_by: \u0027agent\u0027, actioned_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2640,
-                                       -160
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "write_decision_one_touch",
-                      "name":  "Write Decision â€” One Touch",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ contract_id: $node[\u0027Loop Each Contract\u0027].json.id, disposition: \u0027one_touch\u0027, confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, brief: $json.brief }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2640,
-                                       0
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "send_one_touch",
-                      "name":  "Log One-Touch Pending to Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027contract_renewal\u0027, value: \u0027one_touch_pending\u0027, notes: \u0027Contract \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 needs one-touch approval. Recommendation: \u0027 + $json.recommendation }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2880,
-                                       0
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "write_decision_escalate",
-                      "name":  "Write Decision â€” Escalate",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ contract_id: $node[\u0027Loop Each Contract\u0027].json.id, disposition: \u0027escalate\u0027, confidence: $json.confidence, reasoning: $json.reasoning, brief: $json.brief }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2640,
-                                       160
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "create_jira_escalation",
-                      "name":  "Create Jira Escalation Ticket",
-                      "type":  "n8n-nodes-base.jira",
-                      "parameters":  {
-                                         "operation":  "create",
-                                         "project":  "KAN",
-                                         "issueType":  "Task",
-                                         "summary":  "={{ \u0027[ESCALATE] \u0027 + $node[\u0027Loop Each Contract\u0027].json.name + \u0027 â€” \u0027 + $node[\u0027Loop Each Contract\u0027].json.days_remaining + \u0027 days remaining\u0027 }}",
-                                         "description":  "=*Contract:* {{ $node[\u0027Loop Each Contract\u0027].json.name }}\n*Supplier:* {{ $node[\u0027Loop Each Contract\u0027].json.supplier_name }}\n*Value:* {{ $node[\u0027Loop Each Contract\u0027].json.value }} {{ $node[\u0027Loop Each Contract\u0027].json.currency }}\n\n*Agent Brief:*\n{{ $json.brief }}\n\n*Reasoning:*\n{{ $json.reasoning }}",
-                                         "priority":  "High",
-                                         "assignee":  "={{ $node[\u0027Loop Each Contract\u0027].json.owner_email }}"
-                                     },
-                      "position":  [
-                                       2880,
-                                       160
-                                   ]
-                  },
-                  {
-                      "id":  "create_renewal_ticket",
-                      "name":  "Create Renewal Ticket",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/tickets",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ reference: \u0027TS-\u0027 + new Date().getFullYear() + \u0027-RENEW-\u0027 + [\u0027Loop Each Contract\u0027].json.id.slice(-6), source: \u0027renewal\u0027, status: \u0027open\u0027, title: \u0027Auto-renewal: \u0027 + [\u0027Loop Each Contract\u0027].json.name, description: \u0027Auto-renewal triggered by contract_watcher. Days remaining: \u0027 + [\u0027Loop Each Contract\u0027].json.days_remaining, contract_id: $node[\u0027Loop Each Contract\u0027].json.id, supplier_id: $node[\u0027Loop Each Contract\u0027].json.supplier_id, branch_id: $node[\u0027Loop Each Contract\u0027].json.branch_id, amount: $node[\u0027Loop Each Contract\u0027].json.value, currency: $node[\u0027Loop Each Contract\u0027].json.currency }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1200,
-                                       -320
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  }
-              ],
-    "connections":  {
-                        "Every Morning 07:00":  {
-                                                    "main":  [
-                                                                 [
-                                                                     {
-                                                                         "node":  "Fetch Contracts Expiring â‰¤90 Days",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ]
-                                                             ]
-                                                },
-                        "Fetch Contracts Expiring â‰¤90 Days":  {
-                                                                    "main":  [
-                                                                                 [
-                                                                                     {
-                                                                                         "node":  "Any Contracts Found?",
-                                                                                         "type":  "main",
-                                                                                         "index":  0
-                                                                                     }
-                                                                                 ]
-                                                                             ]
-                                                                },
-                        "Any Contracts Found?":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Loop Each Contract",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Log â€” Nothing to Process",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Loop Each Contract":  {
-                                                   "main":  [
-                                                                [
-                                                                    {
-                                                                        "node":  "Route by Renewal State",
-                                                                        "type":  "main",
-                                                                        "index":  0
-                                                                    }
-                                                                ]
-                                                            ]
-                                               },
-                        "Route by Renewal State":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Auto-Renew Eligible?",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ],
-                                                                    [
-                                                                        {
-                                                                            "node":  "Fetch Contract Changes",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ],
-                                                                    [
-                                                                        {
-                                                                            "node":  "Fetch Contract Changes",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Auto-Renew Eligible?":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Create Renewal Ticket",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Fetch Contract Changes",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Execute Auto-Renewal":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Notify Owner â€” Auto-Renewed",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Fetch Contract Changes":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Fetch Budget Position",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Fetch Budget Position":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Claude â€” Reason on Contract Change",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Claude â€” Reason on Contract Change":  {
-                                                                     "main":  [
-                                                                                  [
-                                                                                      {
-                                                                                          "node":  "Parse Claude Response",
-                                                                                          "type":  "main",
-                                                                                          "index":  0
-                                                                                      }
-                                                                                  ]
-                                                                              ]
-                                                                 },
-                        "Parse Claude Response":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Route by Disposition",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Route by Disposition":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Write Decision â€” Auto Execute",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Write Decision â€” One Touch",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Write Decision â€” Escalate",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Write Decision â€” One Touch":  {
-                                                             "main":  [
-                                                                          [
-                                                                              {
-                                                                                  "node":  "Send One-Touch Confirm to Owner",
-                                                                                  "type":  "main",
-                                                                                  "index":  0
-                                                                              }
-                                                                          ]
-                                                                      ]
-                                                         },
-                        "Write Decision â€” Escalate":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Create Jira Escalation Ticket",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Create Renewal Ticket":  {
-                                                      "main":  [
-                                                                   {
-                                                                       "node":  "Execute Auto-Renewal",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   }
-                                                               ]
-                                                  }
-                    }
+  "name": "TrueSpend â€” Daily Contract Watcher",
+  "description": "Runs every morning. Checks all contracts expiring within 90 days. Routes to auto-renew, agent reasoning, or escalation based on renewal state.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every Morning 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "fetch_expiring",
+      "name": "Fetch Contracts Expiring â‰¤90 Days",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "https://postgrest-production-7960.up.railway.app/contracts_expiring?days_remaining=lte.90",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "id": "check_any",
+      "name": "Any Contracts Found?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "id": "no_contracts",
+      "name": "Log â€” Nothing to Process",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        720,
+        160
+      ]
+    },
+    {
+      "id": "loop_contracts",
+      "name": "Loop Each Contract",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": {
+        "batchSize": 1
+      },
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "id": "route_renewal_state",
+      "name": "Route by Renewal State",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.renewal_state }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "clean",
+              "outputIndex": 0
+            },
+            {
+              "value2": "price_increase",
+              "outputIndex": 1
+            },
+            {
+              "value2": "volume_change",
+              "outputIndex": 1
+            },
+            {
+              "value2": "scope_change",
+              "outputIndex": 1
+            },
+            {
+              "value2": "manual_required",
+              "outputIndex": 2
+            }
+          ]
+        },
+        "fallbackOutput": 2
+      },
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "id": "auto_renew_check",
+      "name": "Auto-Renew Eligible?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.auto_renew }}",
+              "operation": "true"
+            }
+          ],
+          "number": [
+            {
+              "value1": "={{ $json.days_remaining }}",
+              "operation": "larger",
+              "value2": 30
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        -200
+      ]
+    },
+    {
+      "id": "execute_auto_renew",
+      "name": "Execute Auto-Renewal",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ ticket_id: $node['Create Renewal Ticket'].json[0]?.id || $node['Create Renewal Ticket'].json?.id, contract_id: $node['Loop Each Contract'].json.id, disposition: 'auto_execute', confidence: 0.97, reasoning: 'Contract ' + $node['Loop Each Contract'].json.name + ' is clean for auto-renewal. Days remaining: ' + $node['Loop Each Contract'].json.days_remaining + '. No changes detected.', outcome: 'auto_renewed', actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1440,
+        -320
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "notify_auto_renewed",
+      "name": "Log Auto-Renewal to Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'contract_renewal', value: 'auto_renewed', notes: 'Contract ' + $node['Execute Auto-Renewal'].json[0]?.contract_id + ' auto-renewed at ' + new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1680,
+        -320
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "fetch_changes",
+      "name": "Fetch Contract Changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contract_changes?contract_id=eq.{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "id": "fetch_budget",
+      "name": "Fetch Budget Position",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node['Loop Each Contract'].json.branch_id }}&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}&category=eq.{{ $node['Loop Each Contract'].json.category }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "id": "call_claude",
+      "name": "Claude â€” Reason on Contract Change",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend, an agentic procurement reasoning system. You reason across contracts, consumption, supplier health, and policy to reach a confident disposition. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Reason on this contract renewal.\\n\\nCONTRACT:\\n{{ JSON.stringify($node['Loop Each Contract'].json) }}\\n\\nCHANGES DETECTED:\\n{{ JSON.stringify($node['Fetch Contract Changes'].json) }}\\n\\nBUDGET POSITION:\\n{{ JSON.stringify($node['Fetch Budget Position'].json) }}\\n\\nReturn JSON: { disposition: 'auto_execute'|'one_touch'|'escalate', confidence: 0.00-1.00, reasoning: string, recommendation: string, brief: string }\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1920,
+        0
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "parse_claude_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "disposition",
+              "value": "={{ JSON.parse($json.content[0].text).disposition }}"
+            },
+            {
+              "name": "confidence",
+              "value": "={{ JSON.parse($json.content[0].text).confidence }}"
+            },
+            {
+              "name": "reasoning",
+              "value": "={{ JSON.parse($json.content[0].text).reasoning }}"
+            },
+            {
+              "name": "recommendation",
+              "value": "={{ JSON.parse($json.content[0].text).recommendation }}"
+            },
+            {
+              "name": "brief",
+              "value": "={{ JSON.parse($json.content[0].text).brief }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "id": "route_disposition",
+      "name": "Route by Disposition",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.disposition }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "auto_execute",
+              "outputIndex": 0
+            },
+            {
+              "value2": "one_touch",
+              "outputIndex": 1
+            },
+            {
+              "value2": "escalate",
+              "outputIndex": 2
+            }
+          ]
+        }
+      },
+      "position": [
+        2400,
+        0
+      ]
+    },
+    {
+      "id": "write_decision_auto",
+      "name": "Write Decision â€” Auto Execute",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ contract_id: $node['Loop Each Contract'].json.id, disposition: 'auto_execute', confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2640,
+        -160
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "write_decision_one_touch",
+      "name": "Write Decision â€” One Touch",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ contract_id: $node['Loop Each Contract'].json.id, disposition: 'one_touch', confidence: $json.confidence, reasoning: $json.reasoning, recommendation: $json.recommendation, brief: $json.brief }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2640,
+        0
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "send_one_touch",
+      "name": "Log One-Touch Pending to Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'contract_renewal', value: 'one_touch_pending', notes: 'Contract ' + $node['Loop Each Contract'].json.name + ' needs one-touch approval. Recommendation: ' + $json.recommendation }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2880,
+        0
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "write_decision_escalate",
+      "name": "Write Decision â€” Escalate",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ contract_id: $node['Loop Each Contract'].json.id, disposition: 'escalate', confidence: $json.confidence, reasoning: $json.reasoning, brief: $json.brief }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2640,
+        160
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "create_jira_escalation",
+      "name": "Create Jira Escalation Ticket",
+      "type": "n8n-nodes-base.jira",
+      "parameters": {
+        "operation": "create",
+        "project": "KAN",
+        "issueType": "Task",
+        "summary": "={{ '[ESCALATE] ' + $node['Loop Each Contract'].json.name + ' â€” ' + $node['Loop Each Contract'].json.days_remaining + ' days remaining' }}",
+        "description": "=*Contract:* {{ $node['Loop Each Contract'].json.name }}\n*Supplier:* {{ $node['Loop Each Contract'].json.supplier_name }}\n*Value:* {{ $node['Loop Each Contract'].json.value }} {{ $node['Loop Each Contract'].json.currency }}\n\n*Agent Brief:*\n{{ $json.brief }}\n\n*Reasoning:*\n{{ $json.reasoning }}",
+        "priority": "High",
+        "assignee": "={{ $node['Loop Each Contract'].json.owner_email }}"
+      },
+      "position": [
+        2880,
+        160
+      ]
+    },
+    {
+      "id": "create_renewal_ticket",
+      "name": "Create Renewal Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: 'TS-' + new Date().getFullYear() + '-RENEW-' + ['Loop Each Contract'].json.id.slice(-6), source: 'renewal', status: 'open', title: 'Auto-renewal: ' + ['Loop Each Contract'].json.name, description: 'Auto-renewal triggered by contract_watcher. Days remaining: ' + ['Loop Each Contract'].json.days_remaining, contract_id: $node['Loop Each Contract'].json.id, supplier_id: $node['Loop Each Contract'].json.supplier_id, branch_id: $node['Loop Each Contract'].json.branch_id, amount: $node['Loop Each Contract'].json.value, currency: $node['Loop Each Contract'].json.currency }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        -320
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    }
+  ],
+  "connections": {
+    "Every Morning 07:00": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contracts Expiring â‰¤90 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contracts Expiring â‰¤90 Days": {
+      "main": [
+        [
+          {
+            "node": "Any Contracts Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Contracts Found?": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Contract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log â€” Nothing to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Contract": {
+      "main": [
+        [
+          {
+            "node": "Route by Renewal State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Renewal State": {
+      "main": [
+        [
+          {
+            "node": "Auto-Renew Eligible?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Contract Changes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Contract Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Renew Eligible?": {
+      "main": [
+        [
+          {
+            "node": "Create Renewal Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Contract Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Auto-Renewal": {
+      "main": [
+        []
+      ]
+    },
+    "Fetch Contract Changes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Budget Position",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Budget Position": {
+      "main": [
+        [
+          {
+            "node": "Claude â€” Reason on Contract Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude â€” Reason on Contract Change": {
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          {
+            "node": "Route by Disposition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Disposition": {
+      "main": [
+        [
+          {
+            "node": "Write Decision â€” Auto Execute",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Decision â€” One Touch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Decision â€” Escalate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Decision â€” One Touch": {
+      "main": [
+        []
+      ]
+    },
+    "Write Decision â€” Escalate": {
+      "main": [
+        [
+          {
+            "node": "Create Jira Escalation Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Renewal Ticket": {
+      "main": [
+        [
+          {
+            "node": "Execute Auto-Renewal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
 }

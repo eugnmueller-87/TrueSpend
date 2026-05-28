@@ -428,6 +428,44 @@ Month 12:   Agent handles 80%+ of volume autonomously.
 
 ---
 
+### 🔲 PHASE K — Reporting & Business Intelligence
+> **Priority: High — required for enterprise sales | Effort: ~1 week**
+
+The data layer is built. The question is how enterprise customers consume it. TrueSpend's differentiation is not just acting on procurement — it's making all procurement data visible, structured, and queryable in real time. Every Tableau, Power BI, or Metabase instance connects to the same PostgreSQL views. No data exports, no ETL, no stale reports.
+
+**Analytics views (built — in schema.sql)**
+- [x] `po_analytics` — PO pipeline: volume, value, cycle time, delivery SLA, invoice + payment linkage, supplier concentration. One row per PO.
+- [x] `invoice_analytics` — Invoice processing: match rates, dispute flags, VAT, payment cycle time, ERP sync status. One row per invoice.
+- [x] `spend_trend` — Time-series budget data: committed vs spent vs available vs plan, per branch × category × period. Budget health signal. Period start date derived for BI date axes.
+- [x] `savings_tracking` — Benchmark vs actual pricing. Savings per unit, annual saving EUR, term saving EUR, pricing position (best_in_class → above_market). Joins `vendor_pricing_benchmarks` to contracts.
+- [x] `supplier_performance` — Aggregated supplier scorecard: on-time delivery %, invoice match rate %, dispute rate %, weighted 0–100 score, compliance status, active contract value.
+- [x] `approval_velocity` — Request-to-PO cycle time by disposition (auto_execute / one_touch / escalate), category, branch. Agent vs human speed comparison. Time bucket column for histograms.
+
+**BI tool integration**
+- [x] `db/analytics/bi_catalogue.md` — full view catalogue: column definitions, recommended dashboard set, Tableau connection guide, Power BI connection guide, Metabase setup guide, analyst notes
+- [ ] Metabase Docker service added to `docker-compose.yml` — self-hosted, pre-configured with all 6 analytics views as question groups
+- [ ] Pre-built Metabase question set: 6 dashboards (Executive, AP, Controlling, Supplier, Efficiency, Savings)
+- [ ] Grafana dashboards updated: add analytics view panels alongside existing operational panels
+- [ ] `db/analytics/tableau_workbook_template.twbx` — Tableau workbook template with all 6 analytics views connected, calculated fields pre-built, colour scheme matching TrueSpend brand
+
+**Tableau / Power BI compatibility (no build required)**
+- [x] All views connect directly via standard PostgreSQL JDBC/ODBC
+- [x] Connection details documented in `bi_catalogue.md`
+- [x] All monetary values normalised to EUR with original currency preserved
+- [x] Date columns include derived `fiscal_year`, `fiscal_quarter`, `iso_week` for BI tool date hierarchies
+- [x] `period_start_date` column normalises quarterly and monthly periods to a `date` type
+- [ ] Row-level security pattern for multi-tenant: branch-scoped views per regional manager
+
+**Recommended dashboard set (6 dashboards)**
+1. Executive Procurement — spend vs budget, top suppliers, PO pipeline, agent performance
+2. Accounts Payable — match rates, disputes, payment cycle, ERP sync
+3. Controlling — budget heat map, commitment register, overrun alerts, variance vs plan
+4. Supplier Performance — scorecards, delivery SLA, invoice quality, compliance matrix
+5. Procurement Efficiency — request-to-PO velocity, agent vs human speed, bottleneck analysis
+6. Savings & Benchmarking — pricing position, savings realised, contracts at risk
+
+---
+
 ## Go-Live Checklist
 
 ### Before first use (current — manual, pre-Phase C)

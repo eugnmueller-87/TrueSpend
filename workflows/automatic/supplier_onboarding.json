@@ -1,4 +1,5 @@
-﻿{
+{
+
     "name":  "TrueSpend â€” Supplier Onboarding \u0026 Compliance",
     "description":  "Triggered when a new supplier is created. Runs 4 compliance agents in parallel: Lawyer (NDA), GDPR/DPA, InfoSec, and LkSG/Ethics. Generates required legal documents. Creates a ticket only if there are blockers or the supplier needs signature on docs. Everything else is logged to DB silently.",
     "nodes":  [

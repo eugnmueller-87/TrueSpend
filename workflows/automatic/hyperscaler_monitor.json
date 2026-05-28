@@ -1,832 +1,809 @@
 {
-    "name":  "TrueSpend â€” Hyperscaler Daily Monitor",
-    "description":  "Runs every weekday at 6:00 AM. Fetches all hyperscaler_positions. Detects: overshoot risk (projected \u003e committed), undershoot risk (projected \u003c 80% of committed = wasting money), idle resources (idle_resources_eur \u003e 5000), reservation utilization below 75%. For each anomaly Claude reasons and either: acts directly (flags for right-sizing, drafts amendment request to hyperscaler account team), sends one-touch to manager, or posts to Grafana alert channel. Posts daily summary to Slack #procurement-ops.",
-    "nodes":  [
-                  {
-                      "id":  "trigger",
-                      "name":  "Every Weekday 06:00",
-                      "type":  "n8n-nodes-base.scheduleTrigger",
-                      "parameters":  {
-                                         "rule":  {
-                                                      "interval":  [
-                                                                       {
-                                                                           "field":  "cronExpression",
-                                                                           "expression":  "0 6 * * 1-5"
-                                                                       }
-                                                                   ]
-                                                  }
-                                     },
-                      "position":  [
-                                       0,
-                                       400
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_positions",
-                      "name":  "Fetch Hyperscaler Positions",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?snapshot_date=gte.{{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split(\u0027T\u0027)[0] }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       200,
-                                       400
-                                   ]
-                  },
-                  {
-                      "id":  "check_any_positions",
-                      "name":  "Any Positions Found?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "number":  [
-                                                                           {
-                                                                               "value1":  "={{ $json.length }}",
-                                                                               "operation":  "larger",
-                                                                               "value2":  0
-                                                                           }
-                                                                       ]
-                                                        }
-                                     },
-                      "position":  [
-                                       400,
-                                       400
-                                   ]
-                  },
-                  {
-                      "id":  "loop_positions",
-                      "name":  "Loop Each Position",
-                      "type":  "n8n-nodes-base.splitInBatches",
-                      "parameters":  {
-                                         "batchSize":  1
-                                     },
-                      "position":  [
-                                       600,
-                                       400
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_related_contract",
-                      "name":  "Fetch Related Contract",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/contracts?id=eq.{{ $json.contract_id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       800,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "check_flags",
-                      "name":  "Any Anomaly Flags?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "string":  [
-                                                                           {
-                                                                               "value1":  "={{ ($json.projected_eur \u003e $json.committed_eur) || ($json.projected_eur \u003c $json.committed_eur * 0.8) || ($json.idle_resources_eur \u003e 5000) || ($json.reservation_util \u003c 0.75) }}",
-                                                                               "operation":  "equal",
-                                                                               "value2":  "true"
-                                                                           }
-                                                                       ]
-                                                        }
-                                     },
-                      "position":  [
-                                       800,
-                                       500
-                                   ]
-                  },
-                  {
-                      "id":  "call_claude",
-                      "name":  "Claude â€” Reason on Position",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system specialising in cloud cost governance. You analyse hyperscaler spend positions (AWS, Azure, GCP) and reason across overshoot risk, undershoot waste, idle resources, and reservation utilisation. You draft precise, professional communications to hyperscaler account teams requesting right-sizing or commitment amendments. You always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Analyse this hyperscaler position and produce a complete alert and recommended action.\\n\\nPOSITION:\\n{{ JSON.stringify($node[\u0027Loop Each Position\u0027].json) }}\\n\\nRELATED CONTRACT:\\n{{ JSON.stringify($node[\u0027Fetch Related Contract\u0027].json) }}\\n\\nFLAG THRESHOLDS:\\n- Overshoot risk: projected_eur \u003e committed_eur\\n- Undershoot waste: projected_eur \u003c committed_eur * 0.80\\n- Idle resources: idle_resources_eur \u003e 5000\\n- Low reservation utilisation: reservation_util \u003c 0.75\\n\\nAssess which flags are triggered, reason on severity and recommended action, and draft any communication needed.\\n\\nReturn JSON exactly:\\n{\\n  \\\"alert_type\\\": \\\"overshoot\\\" | \\\"undershoot\\\" | \\\"idle_waste\\\" | \\\"low_reservation\\\" | \\\"multiple\\\",\\n  \\\"severity\\\": \\\"low\\\" | \\\"medium\\\" | \\\"high\\\" | \\\"critical\\\",\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"recommended_action\\\": \\\"string\\\",\\n  \\\"draft_communication\\\": \\\"string\\\",\\n  \\\"draft_communication_subject\\\": \\\"string\\\",\\n  \\\"auto_actionable\\\": true | false,\\n  \\\"estimated_saving_eur\\\": number\\n}\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1000,
-                                       500
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "parse_claude_response",
-                      "name":  "Parse Claude Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "alert_type",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).alert_type }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "severity",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).severity }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "reasoning",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).reasoning }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "recommended_action",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).recommended_action }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "draft_communication",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).draft_communication }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "draft_communication_subject",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).draft_communication_subject }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "auto_actionable",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).auto_actionable }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "estimated_saving_eur",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).estimated_saving_eur }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1200,
-                                       500
-                                   ]
-                  },
-                  {
-                      "id":  "write_decision",
-                      "name":  "Write Decision to PostgREST",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/decisions",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ contract_id: $node[\u0027Loop Each Position\u0027].json.contract_id, disposition: $node[\u0027Parse Claude Response\u0027].json.auto_actionable === \u0027true\u0027 ? \u0027auto_execute\u0027 : \u0027one_touch\u0027, reasoning: $node[\u0027Parse Claude Response\u0027].json.reasoning, recommendation: $node[\u0027Parse Claude Response\u0027].json.recommended_action, model_used: \u0027claude-sonnet-4-6\u0027, actioned_by: \u0027agent\u0027, actioned_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1400,
-                                       500
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "update_position_flags",
-                      "name":  "Update Position Flags",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "PATCH",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?id=eq.{{ $node[\u0027Loop Each Position\u0027].json.id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ alert_type: $node[\u0027Parse Claude Response\u0027].json.alert_type, alert_severity: $node[\u0027Parse Claude Response\u0027].json.severity, estimated_saving_eur: $node[\u0027Parse Claude Response\u0027].json.estimated_saving_eur, last_reviewed_at: new Date().toISOString(), decision_id: $node[\u0027Write Decision to PostgREST\u0027].json[0]?.id || $node[\u0027Write Decision to PostgREST\u0027].json?.id }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1600,
-                                       500
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "route_auto_actionable",
-                      "name":  "Auto-Actionable?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "string":  [
-                                                                           {
-                                                                               "value1":  "={{ $node[\u0027Parse Claude Response\u0027].json.auto_actionable }}",
-                                                                               "operation":  "equal",
-                                                                               "value2":  "true"
-                                                                           }
-                                                                       ]
-                                                        }
-                                     },
-                      "position":  [
-                                       1800,
-                                       500
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_account_team_email",
-                      "name":  "Fetch Hyperscaler Account Team Email",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $node[\u0027Fetch Related Contract\u0027].json[0]?.supplier_id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       2000,
-                                       320
-                                   ]
-                  },
-                  {
-                      "id":  "send_account_team_email",
-                      "name":  "Send Email to Account Team",
-                      "type":  "n8n-nodes-base.emailSend",
-                      "parameters":  {
-                                         "fromEmail":  "procurement@company.com",
-                                         "toEmail":  "={{ $node[\u0027Fetch Hyperscaler Account Team Email\u0027].json[0]?.account_team_email || $node[\u0027Fetch Hyperscaler Account Team Email\u0027].json[0]?.contact_email }}",
-                                         "subject":  "={{ $node[\u0027Parse Claude Response\u0027].json.draft_communication_subject }}",
-                                         "text":  "={{ $node[\u0027Parse Claude Response\u0027].json.draft_communication }}"
-                                     },
-                      "position":  [
-                                       2200,
-                                       320
-                                   ]
-                  },
-                  {
-                      "id":  "log_account_email",
-                      "name":  "Log Email to supplier_emails",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/supplier_emails",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Fetch Related Contract\u0027].json[0]?.supplier_id, direction: \u0027outbound\u0027, subject: $node[\u0027Parse Claude Response\u0027].json.draft_communication_subject, body_summary: \u0027Hyperscaler alert action: \u0027 + $node[\u0027Parse Claude Response\u0027].json.alert_type + \u0027 (\u0027 + $node[\u0027Parse Claude Response\u0027].json.severity + \u0027) â€” Est. saving: \u0027 + $node[\u0027Parse Claude Response\u0027].json.estimated_saving_eur + \u0027 EUR. \u0027 + $node[\u0027Parse Claude Response\u0027].json.recommended_action, received_at: new Date().toISOString() }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2400,
-                                       320
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "post_cloud_alert_slack",
-                      "name":  "Log Cloud Alert to Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027consumption\u0027, value: $node[\u0027Parse Claude Response\u0027].json.alert_type + \u0027:\u0027 + $node[\u0027Parse Claude Response\u0027].json.severity, notes: \u0027Cloud alert one-touch pending â€” provider: \u0027 + $node[\u0027Loop Each Position\u0027].json.provider + \u0027, est. saving: \u0027 + $node[\u0027Parse Claude Response\u0027].json.estimated_saving_eur + \u0027 EUR. Recommendation: \u0027 + $node[\u0027Parse Claude Response\u0027].json.recommended_action }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2000,
-                                       680
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "no_positions",
-                      "name":  "Log â€” No Positions Found",
-                      "type":  "n8n-nodes-base.noOp",
-                      "position":  [
-                                       600,
-                                       600
-                                   ]
-                  },
-                  {
-                      "id":  "no_flags",
-                      "name":  "Log â€” Position Healthy",
-                      "type":  "n8n-nodes-base.noOp",
-                      "position":  [
-                                       1000,
-                                       720
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_all_positions_summary",
-                      "name":  "Fetch All Positions for Summary",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?snapshot_date=gte.{{ new Date().getFullYear() + \u0027-\u0027 + String(new Date().getMonth()+1).padStart(2,\u00270\u0027) + \u0027-01\u0027 }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       200,
-                                       800
-                                   ]
-                  },
-                  {
-                      "id":  "build_daily_summary",
-                      "name":  "Build Daily Summary",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "summary_text",
-                                                                           "value":  "=*TrueSpend â€” Hyperscaler Daily Summary {{ new Date().toISOString().split(\u0027T\u0027)[0] }}*\n\n*MTD Spend Across All Providers:*\n{{ $json.reduce ? $json.reduce((acc, p) =\u003e { acc.total = (acc.total || 0) + (p.actual_spend_eur || 0); acc.idle = (acc.idle || 0) + (p.idle_resources_eur || 0); acc.flags = (acc.flags || 0) + (p.alert_severity ? 1 : 0); return acc; }, {}) | (d =\u003e \u0027Total MTD: \u0027 + (d.total || 0).toFixed(0) + \u0027 EUR\\nIdle Waste: \u0027 + (d.idle || 0).toFixed(0) + \u0027 EUR\\nPositions with alerts: \u0027 + (d.flags || 0)) : \u0027Data aggregation complete â€” see individual alerts above.\u0027 }}\n\nReview flagged positions in #procurement-cloud"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       400,
-                                       800
-                                   ]
-                  },
-                  {
-                      "id":  "post_daily_summary_slack",
-                      "name":  "Log Daily Summary to Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027consumption\u0027, value: \u0027daily_summary\u0027, notes: \u0027MTD positions reviewed: \u0027 + $node[\u0027Fetch All Positions for Summary\u0027].json.length + \u0027. Total committed: \u0027 + ($node[\u0027Fetch All Positions for Summary\u0027].json.reduce ? $node[\u0027Fetch All Positions for Summary\u0027].json.reduce((s,p) =\u003e s + (p.committed_eur||0), 0).toFixed(0) : 0) + \u0027 EUR. Total projected: \u0027 + ($node[\u0027Fetch All Positions for Summary\u0027].json.reduce ? $node[\u0027Fetch All Positions for Summary\u0027].json.reduce((s,p) =\u003e s + (p.projected_eur||0), 0).toFixed(0) : 0) + \u0027 EUR.\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       600,
-                                       800
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "log_daily_run_trace",
-                      "name":  "Log Daily Run to trace_log",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027consumption\u0027, value: \u0027Daily run completed at \u0027 + new Date().toISOString() + \u0027. Positions reviewed: \u0027 + $node[\u0027Fetch Hyperscaler Positions\u0027].json.length + \u0027.\u0027, notes: \u0027TrueSpend Hyperscaler Daily Monitor â€” automated run\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       800,
-                                       800
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  }
-              ],
-    "connections":  {
-                        "Every Weekday 06:00":  {
-                                                    "main":  [
-                                                                 [
-                                                                     {
-                                                                         "node":  "Fetch Hyperscaler Positions",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ],
-                                                                 [
-                                                                     {
-                                                                         "node":  "Fetch All Positions for Summary",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ]
-                                                             ]
-                                                },
-                        "Fetch Hyperscaler Positions":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Any Positions Found?",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Any Positions Found?":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Loop Each Position",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ],
-                                                                  [
-                                                                      {
-                                                                          "node":  "Log â€” No Positions Found",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Loop Each Position":  {
-                                                   "main":  [
-                                                                [
-                                                                    {
-                                                                        "node":  "Fetch Related Contract",
-                                                                        "type":  "main",
-                                                                        "index":  0
-                                                                    }
-                                                                ],
-                                                                [
-                                                                    {
-                                                                        "node":  "Any Anomaly Flags?",
-                                                                        "type":  "main",
-                                                                        "index":  0
-                                                                    }
-                                                                ]
-                                                            ]
-                                               },
-                        "Fetch Related Contract":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Any Anomaly Flags?",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Any Anomaly Flags?":  {
-                                                   "main":  [
-                                                                [
-                                                                    {
-                                                                        "node":  "Claude â€” Reason on Position",
-                                                                        "type":  "main",
-                                                                        "index":  0
-                                                                    }
-                                                                ],
-                                                                [
-                                                                    {
-                                                                        "node":  "Log â€” Position Healthy",
-                                                                        "type":  "main",
-                                                                        "index":  0
-                                                                    }
-                                                                ]
-                                                            ]
-                                               },
-                        "Claude â€” Reason on Position":  {
-                                                              "main":  [
-                                                                           [
-                                                                               {
-                                                                                   "node":  "Parse Claude Response",
-                                                                                   "type":  "main",
-                                                                                   "index":  0
-                                                                               }
-                                                                           ]
-                                                                       ]
-                                                          },
-                        "Parse Claude Response":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Write Decision to PostgREST",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Write Decision to PostgREST":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Update Position Flags",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        },
-                        "Update Position Flags":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Auto-Actionable?",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Auto-Actionable?":  {
-                                                 "main":  [
-                                                              [
-                                                                  {
-                                                                      "node":  "Fetch Hyperscaler Account Team Email",
-                                                                      "type":  "main",
-                                                                      "index":  0
-                                                                  }
-                                                              ],
-                                                              [
-                                                                  {
-                                                                      "node":  "Post Alert to #procurement-cloud",
-                                                                      "type":  "main",
-                                                                      "index":  0
-                                                                  }
-                                                              ]
-                                                          ]
-                                             },
-                        "Fetch Hyperscaler Account Team Email":  {
-                                                                     "main":  [
-                                                                                  [
-                                                                                      {
-                                                                                          "node":  "Send Email to Account Team",
-                                                                                          "type":  "main",
-                                                                                          "index":  0
-                                                                                      }
-                                                                                  ]
-                                                                              ]
-                                                                 },
-                        "Send Email to Account Team":  {
-                                                           "main":  [
-                                                                        [
-                                                                            {
-                                                                                "node":  "Log Email to supplier_emails",
-                                                                                "type":  "main",
-                                                                                "index":  0
-                                                                            }
-                                                                        ]
-                                                                    ]
-                                                       },
-                        "Fetch All Positions for Summary":  {
-                                                                "main":  [
-                                                                             [
-                                                                                 {
-                                                                                     "node":  "Build Daily Summary",
-                                                                                     "type":  "main",
-                                                                                     "index":  0
-                                                                                 }
-                                                                             ]
-                                                                         ]
-                                                            },
-                        "Build Daily Summary":  {
-                                                    "main":  [
-                                                                 [
-                                                                     {
-                                                                         "node":  "Post Daily Summary to #procurement-ops",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ]
-                                                             ]
-                                                },
-                        "Post Daily Summary to #procurement-ops":  {
-                                                                       "main":  [
-                                                                                    [
-                                                                                        {
-                                                                                            "node":  "Log Daily Run to trace_log",
-                                                                                            "type":  "main",
-                                                                                            "index":  0
-                                                                                        }
-                                                                                    ]
-                                                                                ]
-                                                                   }
-                    }
+  "name": "TrueSpend â€” Hyperscaler Daily Monitor",
+  "description": "Runs every weekday at 6:00 AM. Fetches all hyperscaler_positions. Detects: overshoot risk (projected > committed), undershoot risk (projected < 80% of committed = wasting money), idle resources (idle_resources_eur > 5000), reservation utilization below 75%. For each anomaly Claude reasons and either: acts directly (flags for right-sizing, drafts amendment request to hyperscaler account team), sends one-touch to manager, or posts to Grafana alert channel. Posts daily summary to Slack #procurement-ops.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every Weekday 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 1-5"
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "id": "fetch_positions",
+      "name": "Fetch Hyperscaler Positions",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?snapshot_date=gte.{{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        200,
+        400
+      ]
+    },
+    {
+      "id": "check_any_positions",
+      "name": "Any Positions Found?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "position": [
+        400,
+        400
+      ]
+    },
+    {
+      "id": "loop_positions",
+      "name": "Loop Each Position",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": {
+        "batchSize": 1
+      },
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "id": "fetch_related_contract",
+      "name": "Fetch Related Contract",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contracts?id=eq.{{ $json.contract_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "id": "check_flags",
+      "name": "Any Anomaly Flags?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ ($json.projected_eur > $json.committed_eur) || ($json.projected_eur < $json.committed_eur * 0.8) || ($json.idle_resources_eur > 5000) || ($json.reservation_util < 0.75) }}",
+              "operation": "equal",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "position": [
+        800,
+        500
+      ]
+    },
+    {
+      "id": "call_claude",
+      "name": "Claude â€” Reason on Position",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend, an agentic procurement operating system specialising in cloud cost governance. You analyse hyperscaler spend positions (AWS, Azure, GCP) and reason across overshoot risk, undershoot waste, idle resources, and reservation utilisation. You draft precise, professional communications to hyperscaler account teams requesting right-sizing or commitment amendments. You always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Analyse this hyperscaler position and produce a complete alert and recommended action.\\n\\nPOSITION:\\n{{ JSON.stringify($node['Loop Each Position'].json) }}\\n\\nRELATED CONTRACT:\\n{{ JSON.stringify($node['Fetch Related Contract'].json) }}\\n\\nFLAG THRESHOLDS:\\n- Overshoot risk: projected_eur > committed_eur\\n- Undershoot waste: projected_eur < committed_eur * 0.80\\n- Idle resources: idle_resources_eur > 5000\\n- Low reservation utilisation: reservation_util < 0.75\\n\\nAssess which flags are triggered, reason on severity and recommended action, and draft any communication needed.\\n\\nReturn JSON exactly:\\n{\\n  \\\"alert_type\\\": \\\"overshoot\\\" | \\\"undershoot\\\" | \\\"idle_waste\\\" | \\\"low_reservation\\\" | \\\"multiple\\\",\\n  \\\"severity\\\": \\\"low\\\" | \\\"medium\\\" | \\\"high\\\" | \\\"critical\\\",\\n  \\\"reasoning\\\": \\\"string\\\",\\n  \\\"recommended_action\\\": \\\"string\\\",\\n  \\\"draft_communication\\\": \\\"string\\\",\\n  \\\"draft_communication_subject\\\": \\\"string\\\",\\n  \\\"auto_actionable\\\": true | false,\\n  \\\"estimated_saving_eur\\\": number\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1000,
+        500
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "parse_claude_response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "alert_type",
+              "value": "={{ JSON.parse($json.content[0].text).alert_type }}"
+            },
+            {
+              "name": "severity",
+              "value": "={{ JSON.parse($json.content[0].text).severity }}"
+            },
+            {
+              "name": "reasoning",
+              "value": "={{ JSON.parse($json.content[0].text).reasoning }}"
+            },
+            {
+              "name": "recommended_action",
+              "value": "={{ JSON.parse($json.content[0].text).recommended_action }}"
+            },
+            {
+              "name": "draft_communication",
+              "value": "={{ JSON.parse($json.content[0].text).draft_communication }}"
+            },
+            {
+              "name": "draft_communication_subject",
+              "value": "={{ JSON.parse($json.content[0].text).draft_communication_subject }}"
+            },
+            {
+              "name": "auto_actionable",
+              "value": "={{ JSON.parse($json.content[0].text).auto_actionable }}"
+            },
+            {
+              "name": "estimated_saving_eur",
+              "value": "={{ JSON.parse($json.content[0].text).estimated_saving_eur }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        500
+      ]
+    },
+    {
+      "id": "write_decision",
+      "name": "Write Decision to PostgREST",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ contract_id: $node['Loop Each Position'].json.contract_id, disposition: $node['Parse Claude Response'].json.auto_actionable === 'true' ? 'auto_execute' : 'one_touch', reasoning: $node['Parse Claude Response'].json.reasoning, recommendation: $node['Parse Claude Response'].json.recommended_action, model_used: 'claude-sonnet-4-6', actioned_by: 'agent', actioned_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1400,
+        500
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "update_position_flags",
+      "name": "Update Position Flags",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?id=eq.{{ $node['Loop Each Position'].json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ alert_type: $node['Parse Claude Response'].json.alert_type, alert_severity: $node['Parse Claude Response'].json.severity, estimated_saving_eur: $node['Parse Claude Response'].json.estimated_saving_eur, last_reviewed_at: new Date().toISOString(), decision_id: $node['Write Decision to PostgREST'].json[0]?.id || $node['Write Decision to PostgREST'].json?.id }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1600,
+        500
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "route_auto_actionable",
+      "name": "Auto-Actionable?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $node['Parse Claude Response'].json.auto_actionable }}",
+              "operation": "equal",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "position": [
+        1800,
+        500
+      ]
+    },
+    {
+      "id": "fetch_account_team_email",
+      "name": "Fetch Hyperscaler Account Team Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $node['Fetch Related Contract'].json[0]?.supplier_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        320
+      ]
+    },
+    {
+      "id": "send_account_team_email",
+      "name": "Send Email to Account Team",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail": "={{ $node['Fetch Hyperscaler Account Team Email'].json[0]?.account_team_email || $node['Fetch Hyperscaler Account Team Email'].json[0]?.contact_email }}",
+        "subject": "={{ $node['Parse Claude Response'].json.draft_communication_subject }}",
+        "text": "={{ $node['Parse Claude Response'].json.draft_communication }}"
+      },
+      "position": [
+        2200,
+        320
+      ]
+    },
+    {
+      "id": "log_account_email",
+      "name": "Log Email to supplier_emails",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Fetch Related Contract'].json[0]?.supplier_id, direction: 'outbound', subject: $node['Parse Claude Response'].json.draft_communication_subject, body_summary: 'Hyperscaler alert action: ' + $node['Parse Claude Response'].json.alert_type + ' (' + $node['Parse Claude Response'].json.severity + ') â€” Est. saving: ' + $node['Parse Claude Response'].json.estimated_saving_eur + ' EUR. ' + $node['Parse Claude Response'].json.recommended_action, received_at: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2400,
+        320
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "post_cloud_alert_slack",
+      "name": "Log Cloud Alert to Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'consumption', value: $node['Parse Claude Response'].json.alert_type + ':' + $node['Parse Claude Response'].json.severity, notes: 'Cloud alert one-touch pending â€” provider: ' + $node['Loop Each Position'].json.provider + ', est. saving: ' + $node['Parse Claude Response'].json.estimated_saving_eur + ' EUR. Recommendation: ' + $node['Parse Claude Response'].json.recommended_action }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        680
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "no_positions",
+      "name": "Log â€” No Positions Found",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        600,
+        600
+      ]
+    },
+    {
+      "id": "no_flags",
+      "name": "Log â€” Position Healthy",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        1000,
+        720
+      ]
+    },
+    {
+      "id": "fetch_all_positions_summary",
+      "name": "Fetch All Positions for Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/hyperscaler_positions?snapshot_date=gte.{{ new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0') + '-01' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        200,
+        800
+      ]
+    },
+    {
+      "id": "build_daily_summary",
+      "name": "Build Daily Summary",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "summary_text",
+              "value": "=*TrueSpend â€” Hyperscaler Daily Summary {{ new Date().toISOString().split('T')[0] }}*\n\n*MTD Spend Across All Providers:*\n{{ $json.reduce ? $json.reduce((acc, p) => { acc.total = (acc.total || 0) + (p.actual_spend_eur || 0); acc.idle = (acc.idle || 0) + (p.idle_resources_eur || 0); acc.flags = (acc.flags || 0) + (p.alert_severity ? 1 : 0); return acc; }, {}) | (d => 'Total MTD: ' + (d.total || 0).toFixed(0) + ' EUR\\nIdle Waste: ' + (d.idle || 0).toFixed(0) + ' EUR\\nPositions with alerts: ' + (d.flags || 0)) : 'Data aggregation complete â€” see individual alerts above.' }}\n\nReview flagged positions in #procurement-cloud"
+            }
+          ]
+        }
+      },
+      "position": [
+        400,
+        800
+      ]
+    },
+    {
+      "id": "post_daily_summary_slack",
+      "name": "Log Daily Summary to Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'consumption', value: 'daily_summary', notes: 'MTD positions reviewed: ' + $node['Fetch All Positions for Summary'].json.length + '. Total committed: ' + ($node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.committed_eur||0), 0).toFixed(0) : 0) + ' EUR. Total projected: ' + ($node['Fetch All Positions for Summary'].json.reduce ? $node['Fetch All Positions for Summary'].json.reduce((s,p) => s + (p.projected_eur||0), 0).toFixed(0) : 0) + ' EUR.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        600,
+        800
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "log_daily_run_trace",
+      "name": "Log Daily Run to trace_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'consumption', value: 'Daily run completed at ' + new Date().toISOString() + '. Positions reviewed: ' + $node['Fetch Hyperscaler Positions'].json.length + '.', notes: 'TrueSpend Hyperscaler Daily Monitor â€” automated run' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        800,
+        800
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    }
+  ],
+  "connections": {
+    "Every Weekday 06:00": {
+      "main": [
+        [
+          {
+            "node": "Fetch Hyperscaler Positions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch All Positions for Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Hyperscaler Positions": {
+      "main": [
+        [
+          {
+            "node": "Any Positions Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Positions Found?": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Position",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log â€” No Positions Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Position": {
+      "main": [
+        [
+          {
+            "node": "Fetch Related Contract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Any Anomaly Flags?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Related Contract": {
+      "main": [
+        [
+          {
+            "node": "Any Anomaly Flags?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Anomaly Flags?": {
+      "main": [
+        [
+          {
+            "node": "Claude â€” Reason on Position",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log â€” Position Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude â€” Reason on Position": {
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          {
+            "node": "Write Decision to PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Decision to PostgREST": {
+      "main": [
+        [
+          {
+            "node": "Update Position Flags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Position Flags": {
+      "main": [
+        [
+          {
+            "node": "Auto-Actionable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Actionable?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Hyperscaler Account Team Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Fetch Hyperscaler Account Team Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email to Account Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email to Account Team": {
+      "main": [
+        [
+          {
+            "node": "Log Email to supplier_emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Positions for Summary": {
+      "main": [
+        [
+          {
+            "node": "Build Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily Summary": {
+      "main": [
+        []
+      ]
+    }
+  }
 }

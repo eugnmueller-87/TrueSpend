@@ -2036,3 +2036,633 @@ begin
       for all to truespend using (true) with check (true)';
   end if;
 end $$;
+
+
+-- =============================================================================
+-- ANALYTICS VIEWS — BI layer for Tableau, Power BI, Metabase, Grafana
+-- Every view is designed to be queried directly by external BI tools.
+-- Connection: direct PostgreSQL on zephyr.proxy.rlwy.net:24934 (db: truespend)
+--             or PostgREST REST API at /po_analytics, /invoice_analytics, etc.
+-- All monetary values normalised to EUR. All dates are timestamptz (UTC).
+-- =============================================================================
+
+
+-- -----------------------------------------------------------------------------
+-- po_analytics
+-- PO pipeline: volume, value, cycle time, status distribution, supplier
+-- concentration. One row per PO, enriched with supplier, branch, contract,
+-- and timing metrics. Use for: PO dashboards, cycle time analysis, supplier
+-- concentration heat maps, delivery SLA tracking.
+-- -----------------------------------------------------------------------------
+create view po_analytics as
+select
+  -- Identity
+  po.id                                                 as po_id,
+  po.po_number,
+  po.status                                             as po_status,
+  po.category,
+
+  -- Dimensions
+  b.id                                                  as branch_id,
+  b.name                                                as branch_name,
+  b.region,
+  cc.code                                               as cost_center_code,
+  cc.name                                               as cost_center_name,
+  s.id                                                  as supplier_id,
+  s.name                                                as supplier_name,
+  s.strategic_tier                                      as supplier_tier,
+  s.health                                              as supplier_health,
+  c.name                                                as contract_name,
+  c.category                                            as contract_category,
+
+  -- Amounts
+  po.amount,
+  po.currency,
+  po.amount_eur,
+  po.vat_amount,
+  po.total_amount,
+
+  -- Dates
+  po.po_date,
+  po.expected_delivery,
+  po.delivered_at,
+  extract(year  from po.po_date)::int                   as fiscal_year,
+  extract(month from po.po_date)::int                   as fiscal_month,
+  extract(quarter from po.po_date)::int                 as fiscal_quarter,
+  to_char(po.po_date, 'IYYY-IW')                        as iso_week,
+
+  -- Cycle time (days from PO creation to delivery)
+  case
+    when po.delivered_at is not null
+    then extract(epoch from (po.delivered_at - po.po_date::timestamptz))::int / 86400
+  end                                                   as cycle_time_days,
+
+  -- Delivery SLA
+  po.delivery_overdue,
+  case
+    when po.delivered_at is not null and po.expected_delivery is not null
+    then (po.delivered_at::date - po.expected_delivery)
+  end                                                   as delivery_delta_days,  -- negative = early, positive = late
+
+  -- Invoice linkage
+  inv.id                                                as invoice_id,
+  inv.invoice_number,
+  inv.invoice_date,
+  inv.amount_eur                                        as invoiced_amount_eur,
+  inv.match_result,
+  inv.status                                            as invoice_status,
+
+  -- Payment
+  pi.id                                                 as payment_instruction_id,
+  pi.due_date                                           as payment_due_date,
+  pi.status                                             as payment_status,
+  pi.erp_posted,
+  pi.erp_posted_at,
+
+  -- Time to invoice (days from delivery to invoice received)
+  case
+    when inv.received_at is not null and po.delivered_at is not null
+    then extract(epoch from (inv.received_at - po.delivered_at))::int / 86400
+  end                                                   as days_to_invoice,
+
+  -- Time to payment (days from invoice received to payment instruction created)
+  case
+    when pi.created_at is not null and inv.received_at is not null
+    then extract(epoch from (pi.created_at - inv.received_at))::int / 86400
+  end                                                   as days_to_payment_instruction,
+
+  -- Originating ticket
+  t.reference                                           as ticket_reference,
+  t.jira_key,
+  t.source                                              as ticket_source,
+
+  po.created_at,
+  po.updated_at
+
+from purchase_orders po
+join suppliers  s  on s.id  = po.supplier_id
+join branches   b  on b.id  = po.branch_id
+left join cost_centers  cc  on cc.id = po.cost_center_id
+left join contracts      c  on c.id  = po.contract_id
+left join tickets        t  on t.id  = po.ticket_id
+left join invoices      inv on inv.po_id = po.id
+left join payment_instructions pi on pi.invoice_id = inv.id;
+
+-- Supporting index for BI tool date range filters
+create index idx_po_analytics_date on purchase_orders(po_date, branch_id, category);
+
+
+-- -----------------------------------------------------------------------------
+-- invoice_analytics
+-- Invoice processing: match rates, dispute rates, payment cycle time, VAT
+-- handling, ERP sync status. One row per invoice enriched with PO and supplier
+-- context. Use for: AP dashboards, match rate KPIs, dispute root cause analysis,
+-- payment cycle benchmarking.
+-- -----------------------------------------------------------------------------
+create view invoice_analytics as
+select
+  -- Identity
+  inv.id                                                as invoice_id,
+  inv.invoice_number,
+  inv.status                                            as invoice_status,
+  inv.match_result,
+
+  -- Dimensions
+  s.id                                                  as supplier_id,
+  s.name                                                as supplier_name,
+  s.strategic_tier                                      as supplier_tier,
+  s.health                                              as supplier_health,
+  po.branch_id,
+  b.name                                                as branch_name,
+  b.region,
+  cc.code                                               as cost_center_code,
+  po.category,
+  po.po_number,
+  po.amount_eur                                         as po_amount_eur,
+
+  -- Amounts
+  inv.amount,
+  inv.currency,
+  inv.amount_eur,
+  inv.vat_amount,
+  inv.total_amount,
+  inv.vat_rate,
+  inv.reverse_charge,
+  inv.match_delta_eur,
+  inv.match_tolerance_pct,
+
+  -- Delta as percentage of PO amount
+  round(abs(inv.match_delta_eur) / nullif(po.amount_eur, 0) * 100, 2)
+                                                        as match_delta_pct,
+
+  -- Match outcome flags
+  (inv.match_result = 'matched')                        as is_matched,
+  (inv.match_result = 'amount_mismatch')                as is_amount_dispute,
+  (inv.match_result = 'no_delivery')                    as is_delivery_dispute,
+  (inv.match_result = 'no_po')                          as is_orphan_invoice,
+  (inv.status = 'disputed')                             as is_disputed,
+
+  -- Dates
+  inv.invoice_date,
+  inv.received_at,
+  inv.matched_at,
+  inv.approved_at,
+  extract(year  from inv.received_at)::int              as fiscal_year,
+  extract(month from inv.received_at)::int              as fiscal_month,
+  extract(quarter from inv.received_at)::int            as fiscal_quarter,
+
+  -- Processing cycle times (days)
+  extract(epoch from (inv.matched_at  - inv.received_at))::int / 86400
+                                                        as days_to_match,
+  extract(epoch from (inv.approved_at - inv.received_at))::int / 86400
+                                                        as days_to_approval,
+
+  -- Payment
+  pi.id                                                 as payment_instruction_id,
+  pi.payment_ref,
+  pi.due_date                                           as payment_due_date,
+  pi.status                                             as payment_status,
+  pi.erp_posted,
+  pi.erp_reference                                      as erp_payment_reference,
+  pi.erp_posted_at,
+
+  -- ERP sync
+  esq.status                                            as erp_sync_status,
+  esq.erp_system,
+  esq.attempts                                          as erp_sync_attempts,
+  esq.error_message                                     as erp_sync_error,
+
+  -- AI parsing metadata (for audit and accuracy tracking)
+  inv.parsed_by_model,
+
+  inv.created_at,
+  inv.updated_at
+
+from invoices inv
+join suppliers s on s.id = inv.supplier_id
+left join purchase_orders po on po.id = inv.po_id
+left join branches b         on b.id  = po.branch_id
+left join cost_centers cc    on cc.id = po.cost_center_id
+left join payment_instructions pi on pi.invoice_id = inv.id
+left join erp_sync_queue esq       on esq.entity_id = inv.id
+                                   and esq.entity_type = 'invoice';
+
+create index idx_invoice_analytics_date on invoices(received_at, status);
+
+
+-- -----------------------------------------------------------------------------
+-- spend_trend
+-- Time-series spend data. One row per branch × category × period (month).
+-- Covers committed (encumbered) and spent (invoiced) separately — critical
+-- distinction for accruals and forecasting. Use for: spend trend charts,
+-- budget burn rate, YTD vs plan comparisons, forecast models.
+-- -----------------------------------------------------------------------------
+create view spend_trend as
+select
+  bp.branch_id,
+  b.name                                                as branch_name,
+  b.region,
+  bp.cost_center_id,
+  cc.code                                               as cost_center_code,
+  cc.name                                               as cost_center_name,
+  bp.category,
+  bp.period,
+
+  -- Parse period into components for BI tool date axes
+  case
+    when bp.period like '____-Q_' then
+      to_date(left(bp.period, 4) || '-' ||
+        case right(bp.period, 1)
+          when '1' then '01' when '2' then '04'
+          when '3' then '07' when '4' then '10'
+        end || '-01', 'YYYY-MM-DD')
+    when bp.period like '____-__' then
+      to_date(bp.period || '-01', 'YYYY-MM-DD')
+  end                                                   as period_start_date,
+
+  extract(year from
+    case
+      when bp.period like '____-Q_' then
+        to_date(left(bp.period, 4) || '-' ||
+          case right(bp.period, 1)
+            when '1' then '01' when '2' then '04'
+            when '3' then '07' when '4' then '10'
+          end || '-01', 'YYYY-MM-DD')
+      when bp.period like '____-__' then
+        to_date(bp.period || '-01', 'YYYY-MM-DD')
+    end
+  )::int                                                as fiscal_year,
+
+  -- Budget plan (from budget_buckets — the annual plan)
+  bb.planned_amount                                     as budget_plan_eur,
+
+  -- Running ledger (from budget_positions)
+  bp.budget                                             as budget_allocated_eur,
+  bp.committed                                          as committed_eur,        -- approved, not yet invoiced
+  bp.spent                                              as spent_eur,            -- invoiced + approved
+  bp.available                                          as available_eur,
+  (bp.committed + bp.spent)                             as total_consumed_eur,
+
+  -- Utilisation rates
+  round(bp.committed / nullif(bp.budget, 0) * 100, 1)  as committed_pct,
+  round(bp.spent     / nullif(bp.budget, 0) * 100, 1)  as spent_pct,
+  round((bp.committed + bp.spent) / nullif(bp.budget, 0) * 100, 1)
+                                                        as total_consumed_pct,
+
+  -- Budget plan vs actual (requires budget_buckets match)
+  round((bp.committed + bp.spent) / nullif(bb.planned_amount, 0) * 100, 1)
+                                                        as pct_of_plan,
+
+  -- Health signal
+  case
+    when bp.available < 0                                              then 'overrun'
+    when (bp.committed + bp.spent) / nullif(bp.budget, 0) > 0.90     then 'critical'
+    when (bp.committed + bp.spent) / nullif(bp.budget, 0) > 0.75     then 'warn'
+    else 'healthy'
+  end                                                   as budget_health,
+
+  bp.updated_at                                         as last_updated
+
+from budget_positions bp
+join branches b on b.id = bp.branch_id
+left join cost_centers cc on cc.id = bp.cost_center_id
+-- Join to budget_buckets to get the planned amount
+-- Period matching: budget_positions uses '2026-Q2', budget_buckets uses quarter int
+left join budget_buckets bb
+  on  bb.branch_id    = bp.branch_id
+  and (bb.cost_center_id = bp.cost_center_id or (bb.cost_center_id is null and bp.cost_center_id is null))
+  and bb.category     = bp.category
+  and bb.fiscal_year  = extract(year from
+        case
+          when bp.period like '____-Q_' then
+            to_date(left(bp.period, 4) || '-' ||
+              case right(bp.period, 1)
+                when '1' then '01' when '2' then '04'
+                when '3' then '07' when '4' then '10'
+              end || '-01', 'YYYY-MM-DD')
+          when bp.period like '____-__' then
+            to_date(bp.period || '-01', 'YYYY-MM-DD')
+        end)::int
+  and bb.quarter      = case
+        when bp.period like '____-Q_' then right(bp.period, 1)::int
+        else null end
+
+order by b.name, bp.category, bp.period;
+
+
+-- -----------------------------------------------------------------------------
+-- savings_tracking
+-- Benchmark vs actual pricing. Uses vendor_pricing_benchmarks to surface
+-- where TrueSpend is beating, meeting, or missing market rate. One row per
+-- contract with benchmark data. Use for: savings realisation dashboards,
+-- negotiation ROI, category manager scorecards.
+-- -----------------------------------------------------------------------------
+create view savings_tracking as
+select
+  c.id                                                  as contract_id,
+  c.name                                                as contract_name,
+  c.category,
+  c.value_eur                                           as contract_value_eur,
+  c.start_date,
+  c.expiry_date,
+  (c.expiry_date - c.start_date)::int / 365.0           as contract_term_years,
+
+  -- Supplier
+  s.id                                                  as supplier_id,
+  s.name                                                as supplier_name,
+  s.strategic_tier                                      as supplier_tier,
+  s.lock_in_score                                       as supplier_lock_in,
+
+  -- Branch
+  b.id                                                  as branch_id,
+  b.name                                                as branch_name,
+  b.region,
+
+  -- Benchmark data
+  vpb.id                                                as benchmark_id,
+  vpb.metric_name,
+  vpb.our_price,
+  vpb.our_currency,
+  vpb.market_low,
+  vpb.market_median,
+  vpb.market_high,
+  vpb.benchmark_currency,
+  vpb.unit,
+  vpb.sample_size,
+  vpb.source,
+  vpb.benchmarked_at,
+  vpb.valid_until,
+
+  -- Savings analysis (vs market median — the realistic benchmark)
+  round((vpb.market_median - vpb.our_price), 4)         as saving_per_unit,
+  round((vpb.market_median - vpb.our_price)
+        / nullif(vpb.market_median, 0) * 100, 1)        as saving_pct,
+  -- Positive = we pay less than market (good)
+  -- Negative = we pay more than market (opportunity)
+
+  -- Annual savings in EUR (saving_per_unit × contract volume)
+  round((vpb.market_median - vpb.our_price) * coalesce(c.volume, 0), 2)
+                                                        as annual_saving_eur,
+
+  -- Total term savings
+  round((vpb.market_median - vpb.our_price) * coalesce(c.volume, 0)
+        * ((c.expiry_date - c.start_date)::numeric / 365), 2)
+                                                        as term_saving_eur,
+
+  -- Positioning
+  case
+    when vpb.our_price <= vpb.market_low     then 'best_in_class'
+    when vpb.our_price <= vpb.market_median  then 'below_market'
+    when vpb.our_price <= vpb.market_high    then 'above_median'
+    else                                          'above_market'
+  end                                                   as pricing_position,
+
+  -- Renewal urgency
+  (c.expiry_date - current_date)                        as days_to_expiry,
+  c.renewal_state,
+  c.auto_renew,
+
+  -- Contract intelligence
+  c.escalation_clause,
+  c.escalation_rate,
+  c.tco_eur,
+  c.exit_penalty_eur,
+  c.lock_in_score                                       as contract_lock_in
+
+from contracts c
+join suppliers s on s.id = c.supplier_id
+join branches  b on b.id = c.branch_id
+-- Inner join: only contracts that have benchmark data appear in this view
+join vendor_pricing_benchmarks vpb on vpb.supplier_id = c.supplier_id
+  and vpb.category = c.category
+
+where c.expiry_date >= current_date - interval '12 months'  -- include recently expired for lookback
+order by abs(term_saving_eur) desc nulls last;
+
+create index idx_benchmarks_category on vendor_pricing_benchmarks(category, supplier_id);
+
+
+-- -----------------------------------------------------------------------------
+-- supplier_performance
+-- On-time delivery rate, invoice dispute rate, health trend, compliance status.
+-- Aggregated per supplier. Use for: supplier scorecards, QBR preparation,
+-- strategic vs tail spend analysis, SRM dashboards.
+-- -----------------------------------------------------------------------------
+create view supplier_performance as
+select
+  s.id                                                  as supplier_id,
+  s.name                                                as supplier_name,
+  s.category                                            as primary_category,
+  s.health                                              as current_health,
+  s.strategic_tier,
+  s.lock_in_score,
+  s.open_disputes,
+  s.compliance_status,
+  s.onboarding_complete,
+  s.infosec_score,
+
+  -- PO metrics (lifetime)
+  count(distinct po.id)                                 as total_pos,
+  coalesce(sum(po.amount_eur), 0)                       as total_po_value_eur,
+  coalesce(avg(po.amount_eur), 0)                       as avg_po_value_eur,
+  count(distinct po.id) filter (
+    where po.status = 'cancelled'
+  )                                                     as cancelled_pos,
+
+  -- Delivery SLA
+  count(distinct po.id) filter (
+    where po.delivered_at is not null
+  )                                                     as delivered_pos,
+  count(distinct po.id) filter (
+    where po.delivered_at is not null
+    and po.expected_delivery is not null
+    and po.delivered_at::date > po.expected_delivery
+  )                                                     as late_deliveries,
+  round(
+    count(distinct po.id) filter (
+      where po.delivered_at is not null
+      and (po.expected_delivery is null
+           or po.delivered_at::date <= po.expected_delivery)
+    )::numeric
+    / nullif(count(distinct po.id) filter (where po.delivered_at is not null), 0)
+    * 100, 1
+  )                                                     as on_time_delivery_pct,
+
+  -- Average delivery delay (days, for late orders only)
+  round(avg(
+    case
+      when po.delivered_at is not null
+      and po.expected_delivery is not null
+      and po.delivered_at::date > po.expected_delivery
+      then (po.delivered_at::date - po.expected_delivery)
+    end
+  ), 1)                                                 as avg_late_days,
+
+  -- Invoice quality
+  count(distinct inv.id)                                as total_invoices,
+  count(distinct inv.id) filter (
+    where inv.match_result = 'matched'
+  )                                                     as matched_invoices,
+  count(distinct inv.id) filter (
+    where inv.status = 'disputed'
+  )                                                     as disputed_invoices,
+  round(
+    count(distinct inv.id) filter (where inv.match_result = 'matched')::numeric
+    / nullif(count(distinct inv.id), 0) * 100, 1
+  )                                                     as invoice_match_rate_pct,
+  round(
+    count(distinct inv.id) filter (where inv.status = 'disputed')::numeric
+    / nullif(count(distinct inv.id), 0) * 100, 1
+  )                                                     as invoice_dispute_rate_pct,
+
+  -- Active contracts
+  count(distinct c.id) filter (
+    where c.expiry_date >= current_date
+  )                                                     as active_contracts,
+  coalesce(sum(c.value_eur) filter (
+    where c.expiry_date >= current_date
+  ), 0)                                                 as active_contract_value_eur,
+
+  -- Upcoming renewals (next 90 days)
+  count(distinct c.id) filter (
+    where c.expiry_date between current_date and current_date + 90
+  )                                                     as renewals_next_90d,
+
+  -- Compliance docs
+  s.nda_status,
+  s.dpa_status,
+  s.lksg_compliant,
+
+  -- Overall supplier score (0-100)
+  -- Weighted: delivery 40% + invoice quality 30% + compliance 20% + health 10%
+  round((
+    coalesce(
+      count(distinct po.id) filter (
+        where po.delivered_at is not null
+        and (po.expected_delivery is null or po.delivered_at::date <= po.expected_delivery)
+      )::numeric
+      / nullif(count(distinct po.id) filter (where po.delivered_at is not null), 0)
+      * 40, 20)  -- default 20 if no delivery data
+    +
+    coalesce(
+      count(distinct inv.id) filter (where inv.match_result = 'matched')::numeric
+      / nullif(count(distinct inv.id), 0)
+      * 30, 15)  -- default 15 if no invoice data
+    +
+    case s.compliance_status
+      when 'green'   then 20
+      when 'amber'   then 12
+      when 'red'     then 0
+      when 'pending' then 8
+      else 10
+    end
+    +
+    case s.health
+      when 'green' then 10
+      when 'watch' then 5
+      when 'red'   then 0
+    end
+  ), 1)                                                 as supplier_score
+
+from suppliers s
+left join purchase_orders po on po.supplier_id = s.id
+left join invoices        inv on inv.supplier_id = s.id
+left join contracts       c  on c.supplier_id  = s.id
+
+group by
+  s.id, s.name, s.category, s.health, s.strategic_tier,
+  s.lock_in_score, s.open_disputes, s.compliance_status,
+  s.onboarding_complete, s.infosec_score,
+  s.nda_status, s.dpa_status, s.lksg_compliant
+
+order by total_po_value_eur desc nulls last;
+
+
+-- -----------------------------------------------------------------------------
+-- approval_velocity
+-- Time from request to PO, broken down by disposition path, category,
+-- branch, and whether agent or human handled it. Use for: process efficiency
+-- KPIs, identifying bottlenecks, benchmarking auto vs manual approval speed,
+-- demonstrating agent ROI.
+-- -----------------------------------------------------------------------------
+create view approval_velocity as
+select
+  -- Ticket identity
+  t.id                                                  as ticket_id,
+  t.reference                                           as ticket_reference,
+  t.source                                              as ticket_source,
+  t.category,
+
+  -- Dimensions
+  b.id                                                  as branch_id,
+  b.name                                                as branch_name,
+  b.region,
+  cc.code                                               as cost_center_code,
+  s.name                                                as supplier_name,
+
+  -- Decision
+  d.disposition,
+  d.confidence,
+  d.actioned_by,
+  -- 'agent' = auto-executed, anything else = human touched it
+  (d.actioned_by = 'agent')                             as agent_handled,
+  d.created_at                                          as decision_at,
+
+  -- Amounts
+  t.amount_eur,
+
+  -- Timing: ticket created → decision made
+  extract(epoch from (d.created_at - t.created_at))::int / 60
+                                                        as minutes_to_decision,
+
+  -- Timing: ticket created → PO created
+  extract(epoch from (po.created_at - t.created_at))::int / 60
+                                                        as minutes_to_po,
+
+  -- Timing: decision → PO created (pure processing time)
+  extract(epoch from (po.created_at - d.created_at))::int / 60
+                                                        as minutes_decision_to_po,
+
+  -- Timing buckets (for histogram charts)
+  case
+    when extract(epoch from (po.created_at - t.created_at))::int / 60 < 5    then '< 5 min'
+    when extract(epoch from (po.created_at - t.created_at))::int / 60 < 60   then '5–60 min'
+    when extract(epoch from (po.created_at - t.created_at))::int / 60 < 480  then '1–8 hrs'
+    when extract(epoch from (po.created_at - t.created_at))::int / 60 < 1440 then '8–24 hrs'
+    when extract(epoch from (po.created_at - t.created_at))::int / 60 < 4320 then '1–3 days'
+    else '> 3 days'
+  end                                                   as time_to_po_bucket,
+
+  -- Date dimensions
+  t.created_at                                          as requested_at,
+  extract(year  from t.created_at)::int                 as fiscal_year,
+  extract(month from t.created_at)::int                 as fiscal_month,
+  extract(quarter from t.created_at)::int               as fiscal_quarter,
+  to_char(t.created_at, 'IYYY-IW')                      as iso_week,
+
+  -- PO context
+  po.po_number,
+  po.amount_eur                                         as po_amount_eur,
+  po.status                                             as po_status
+
+from tickets t
+left join branches       b  on b.id  = t.branch_id
+left join cost_centers   cc on cc.id = t.cost_center_id
+left join suppliers      s  on s.id  = t.supplier_id
+left join decisions      d  on d.ticket_id = t.id
+left join purchase_orders po on po.ticket_id = t.id
+
+where t.status not in ('open', 'reasoning')  -- only completed or actioned tickets
+
+order by t.created_at desc;
+
+create index idx_approval_velocity on tickets(created_at, status, category);
+
+
+-- Grant SELECT on all analytics views to application role
+grant select on po_analytics        to truespend;
+grant select on invoice_analytics   to truespend;
+grant select on spend_trend         to truespend;
+grant select on savings_tracking    to truespend;
+grant select on supplier_performance to truespend;
+grant select on approval_velocity   to truespend;
