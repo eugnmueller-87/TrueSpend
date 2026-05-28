@@ -3,10 +3,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+# Build context is repo root; intake/ contains the app
+COPY intake/package.json intake/package-lock.json* ./
 RUN npm ci --prefer-offline
 
-COPY . .
+COPY intake/ .
 RUN npm run build
 
 # ── Stage 2: serve ────────────────────────────────────────────
@@ -16,7 +17,7 @@ FROM nginx:1.27-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Copy nginx config — replaces default
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY intake/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Remove default nginx config that would conflict
 RUN rm -f /etc/nginx/conf.d/default.conf.default
