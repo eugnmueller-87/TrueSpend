@@ -252,7 +252,56 @@ TrueSpend owns the full cycle. ERP receives the payment instruction and posts it
 
 ---
 
-### 🔲 PHASE C — Controlling Intelligence
+### 🔲 PHASE C — Production Deployment & Setup Wizard
+> **Priority: High — required before any customer install | Effort: ~1 week**
+
+Current state: installation requires ~100 manual steps across Railway, n8n UI, and terminal. Not repeatable, not auditable, not production-ready.
+
+**Setup wizard (`setup.sh`)**
+- [ ] Interactive CLI: prompts for Anthropic key, email (IMAP/SMTP), Jira config, domain name, admin passwords
+- [ ] Auto-generates `N8N_ENCRYPTION_KEY` and `POSTGREST_JWT_SECRET` (openssl) — no manual key generation
+- [ ] Auto-generates signed `POSTGREST_JWT` (HS256) from secret — no manual JWT encoding
+- [ ] Writes `.env` from template — operator never edits a config file manually
+- [ ] Runs schema migrations + seeds against local PostgreSQL
+- [ ] Health check: connects to each service, verifies all 8 key tables + 7 RPC functions exist
+- [ ] Prints per-component status summary (✅/❌) before exiting
+- [ ] `--migrate-only` flag for upgrades: applies only new migration files, skips wizard prompts
+
+**Full self-contained `docker-compose.yml`**
+- [ ] All 5 services in one file: postgres + postgrest + n8n + grafana + intake
+- [ ] Remove dead vars: `SUPABASE_*`, `SLACK_BOT_TOKEN` (neither used in current stack)
+- [ ] PostgREST config via `infra/postgrest/postgrest.conf` (not env-var-only)
+- [ ] Intake nginx: runtime env injection via `envsubst` so `POSTGREST_JWT` doesn't need to be a build-time Vite var
+
+**n8n provisioning files (zero UI clicking)**
+- [ ] `infra/n8n/credentials/anthropic.json` — credential template, secret from `${ANTHROPIC_API_KEY}`
+- [ ] `infra/n8n/credentials/postgrest_header_auth.json` — JWT from `${POSTGREST_JWT}`
+- [ ] `infra/n8n/credentials/imap_main.json` + `imap_invoices.json` — two mailboxes
+- [ ] `infra/n8n/credentials/smtp.json`
+- [ ] `infra/n8n/credentials/jira.json` (optional, skipped if not configured)
+- [ ] All 7 workflow JSONs reference credentials by name (not ID) — provisioning files and workflows agree at startup
+- [ ] n8n auto-imports workflows from mounted `infra/n8n/workflows/` on startup — zero manual imports
+
+**Versioned migrations (replace single schema dump)**
+- [ ] `infra/migrations/001_initial_schema.sql`
+- [ ] `infra/migrations/002_p2i_tables.sql`
+- [ ] `infra/migrations/003_stability_indexes.sql`
+- [ ] `infra/migrations/004_atomic_functions.sql`
+- [ ] `schema_migrations` tracking table — idempotent re-runs, rollback-safe, ordered
+- [ ] Migration runner in setup.sh applies only unapplied files
+
+**Railway one-click option (for PaaS deployments)**
+- [ ] `railway.toml` defining all 5 services with correct env var linking between services
+- [ ] "Deploy to Railway" button in README
+
+**Quality gate updates**
+- [ ] Add `invoice_processor.json` + `supplier_onboarding.json` to JSON validity checks
+- [ ] Check provisioning credential files exist and contain no hardcoded secrets
+- [ ] Check migration files are sequentially numbered with no gaps
+
+---
+
+### 🔲 PHASE D — Controlling Intelligence
 > **Priority: Medium | Effort: ~1 week**
 
 - [ ] `budget_forecast.json` workflow — weekly run, agent projects year-end per bucket
@@ -266,7 +315,7 @@ TrueSpend owns the full cycle. ERP receives the payment instruction and posts it
 
 ---
 
-### 🔲 PHASE D — ERP Integration
+### 🔲 PHASE E — ERP Integration
 > **Priority: Medium — client-specific | Effort: 2–3 weeks per ERP**
 
 **Supported targets (priority order):**
@@ -291,7 +340,7 @@ TrueSpend owns the full cycle. ERP receives the payment instruction and posts it
 
 ---
 
-### 🔲 PHASE E — Accounting & Month-End
+### 🔲 PHASE F — Accounting & Month-End
 > **Priority: Medium | Effort: ~1 week**
 
 ```
@@ -310,7 +359,7 @@ Day 31:     Agent generates period summary — spend vs budget vs forecast
 
 ---
 
-### 🔲 PHASE F — Compliance Hardening
+### 🔲 PHASE G — Compliance Hardening
 > **Priority: Medium | Effort: ~1 week**
 
 **Current state:** Supplier onboarding compliance workflow built (NDA/DPA/InfoSec/LkSG agents). Schema extended. Templates ready.
@@ -325,7 +374,7 @@ Day 31:     Agent generates period summary — spend vs budget vs forecast
 
 ---
 
-### 🔲 PHASE G — Hyperscaler FinOps Intelligence
+### 🔲 PHASE H — Hyperscaler FinOps Intelligence
 > **Priority: Low — builds on existing monitor | Effort: ~1 week**
 
 **Current state:** Daily monitor built. Anomaly detection working. Slack-free.
@@ -338,7 +387,7 @@ Day 31:     Agent generates period summary — spend vs budget vs forecast
 
 ---
 
-### 🔲 PHASE H — Trust Expansion Engine
+### 🔲 PHASE I — Trust Expansion Engine
 > **Priority: Low — go-live first | Effort: ~1 week**
 
 ```
@@ -359,14 +408,18 @@ Month 12:   Agent handles 80%+ of volume autonomously.
 
 ## Go-Live Checklist
 
-### Before first use
+### Before first use (current — manual, pre-Phase C)
 - [ ] Apply schema to Railway PostgreSQL: `psql $DATABASE_URL -f db/schema.sql`
 - [ ] Apply all seeds in order: `for f in db/seed/0*.sql; do psql $DATABASE_URL -f $f; done`
 - [ ] Import all 7 workflows to n8n (delete old, import new JSONs)
-- [ ] Assign "Authorization-TrueSpend" Header Auth to all PostgREST nodes
-- [ ] Assign Anthropic credential to all Claude nodes
+- [ ] Assign "Authorization-TrueSpend" Header Auth to all PostgREST nodes (~45 nodes)
+- [ ] Assign Anthropic credential to all Claude nodes (~9 nodes)
 - [ ] Set `VITE_POSTGREST_URL` + `VITE_POSTGREST_JWT` on Railway intake service
 - [ ] Point `invoice_processor` IMAP trigger at `invoices` mailbox (separate from INBOX)
+
+### Before first use (post-Phase C — wizard handles the above)
+- [ ] `git clone` + `bash setup.sh` — wizard prompts for API keys, generates secrets, applies migrations, health-checks the stack
+- [ ] `docker compose up -d` — all 5 services start, n8n auto-imports workflows and credentials
 
 ### Before P2I goes live
 - [ ] Budget buckets confirmed by Controlling (annual plan → quarterly buckets in seed 08)
