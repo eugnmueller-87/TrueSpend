@@ -6,6 +6,15 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Accept build-time env vars for Vite
+ARG VITE_POSTGREST_URL
+ARG VITE_POSTGREST_JWT
+ARG VITE_N8N_WEBHOOK_URL
+
+ENV VITE_POSTGREST_URL=$VITE_POSTGREST_URL
+ENV VITE_POSTGREST_JWT=$VITE_POSTGREST_JWT
+ENV VITE_N8N_WEBHOOK_URL=$VITE_N8N_WEBHOOK_URL
+
 COPY intake/package.json intake/package-lock.json* ./
 RUN npm ci --prefer-offline
 
@@ -19,8 +28,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 COPY intake/nginx.conf /etc/nginx/conf.d/default.conf
 
 RUN rm -f /etc/nginx/conf.d/default.conf.default
-RUN apk add --no-cache gettext
 
 EXPOSE 80
 
-CMD ["/bin/sh", "-c", "envsubst '${N8N_WEBHOOK_URL}' < /etc/nginx/conf.d/default.conf > /tmp/nginx.conf && mv /tmp/nginx.conf /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["nginx", "-g", "daemon off;"]

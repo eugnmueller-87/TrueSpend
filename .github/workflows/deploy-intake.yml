@@ -7,13 +7,14 @@ on:
       - 'intake/**'
       - 'Dockerfile'
       - '.github/workflows/deploy-intake.yml'
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/truespend-intake
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,30 +31,53 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=sha-
-            type=raw,value=latest
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           build-args: |
             VITE_POSTGREST_URL=${{ secrets.VITE_POSTGREST_URL }}
             VITE_POSTGREST_JWT=${{ secrets.VITE_POSTGREST_JWT }}
             VITE_N8N_WEBHOOK_URL=${{ secrets.VITE_N8N_WEBHOOK_URL }}
 
-      - name: Deploy to Railway
+      - name: Deploy image to Railway
         run: |
           IMAGE="ghcr.io/${{ env.IMAGE_NAME }}:latest"
-          echo "Deployed image: $IMAGE"
-          echo "IMAGE_TAG=ghcr.io/${{ env.IMAGE_NAME }}:sha-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "Deploying $IMAGE to Railway..."
+
+          # Update Railway service to use the newly built image
+          curl -s -X POST https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "query": "mutation SvcUpdate($sid: String!, $eid: String!, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $sid, environmentId: $eid, input: $input) }",
+              "variables": {
+                "sid": "65cdbfea-b0d1-4b90-9e9d-aacff0b1ca86",
+                "eid": "5d530fe4-480e-4096-9a36-fc700ecd6f03",
+                "input": {
+                  "source": { "image": "'"$IMAGE"'" },
+                  "startCommand": "nginx -g '\''daemon off;'\''",
+                  "healthcheckPath": "/",
+                  "healthcheckTimeout": 30
+                }
+              }
+            }' | jq .
+
+          # Trigger deploy
+          DEP=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "query": "mutation Deploy($sid: String!, $eid: String!) { serviceInstanceDeployV2(serviceId: $sid, environmentId: $eid) }",
+              "variables": {
+                "sid": "65cdbfea-b0d1-4b90-9e9d-aacff0b1ca86",
+                "eid": "5d530fe4-480e-4096-9a36-fc700ecd6f03"
+              }
+            }' | jq -r '.data.serviceInstanceDeployV2')
+
+          echo "Deployment ID: $DEP"
