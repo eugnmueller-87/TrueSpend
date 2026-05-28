@@ -301,7 +301,29 @@ Current state: installation requires ~100 manual steps across Railway, n8n UI, a
 
 ---
 
-### 🔲 PHASE D — Controlling Intelligence
+### 🔲 PHASE D — Enterprise Document Intake
+> **Priority: High — required for any enterprise customer | Effort: ~1 week**
+
+Current state: IMAP polling is fine for SMB/demo. Enterprise customers are on M365, Google Workspace, or on-prem Exchange — and invoices increasingly don't arrive by email at all.
+
+**Inbound email — provider-neutral (replaces IMAP as default)**
+- [ ] Inbound email parse service (SendGrid or Mailgun) — customer forwards `procurement@company.com` or sets MX record to `intake.truespend.com`. Provider parses and POSTs to n8n webhook. Zero dependency on customer mail infrastructure, works for any email provider
+- [ ] M365 Graph API webhook option — for tenants that prefer direct integration. Email arrives in shared mailbox → Graph fires POST to n8n. Instant, no polling
+- [ ] Gmail API + Pub/Sub option — same pattern for Google Workspace tenants
+- [ ] Generic IMAP retained as fallback for SMB / self-hosted deployments
+
+**Structured invoice formats (skip Claude parsing entirely)**
+- [ ] ZUGFeRD / XRechnung parser — German structured invoice standard (XML embedded in PDF). Legally required for B2G in Germany. Parse XML directly → call match_invoice() — no Claude step, 100% field accuracy
+- [ ] Peppol access point integration — EU e-invoicing standard, mandatory in several member states and growing. Connect via access point provider (Storecove, Qvalia, etc.) → receive structured invoice via webhook → match_invoice()
+- [ ] EDI intake stub — SFTP drop zone receives ANSI X12 / EDIFACT files → parse → match_invoice(). Full EDI connectors land in Phase F (ERP Integration)
+
+**Decision routing**
+- [ ] Intake router: detect document type on arrival (PDF → Claude parse, ZUGFeRD XML → direct parse, Peppol → direct match) — one entry point, correct path chosen automatically
+- [ ] Supplier capability register: track which suppliers send which format → route without detection overhead
+
+---
+
+### 🔲 PHASE E — Controlling Intelligence
 > **Priority: Medium | Effort: ~1 week**
 
 - [ ] `budget_forecast.json` workflow — weekly run, agent projects year-end per bucket
@@ -315,7 +337,7 @@ Current state: installation requires ~100 manual steps across Railway, n8n UI, a
 
 ---
 
-### 🔲 PHASE E — ERP Integration
+### 🔲 PHASE F — ERP Integration
 > **Priority: Medium — client-specific | Effort: 2–3 weeks per ERP**
 
 **Supported targets (priority order):**
@@ -340,7 +362,7 @@ Current state: installation requires ~100 manual steps across Railway, n8n UI, a
 
 ---
 
-### 🔲 PHASE F — Accounting & Month-End
+### 🔲 PHASE G — Accounting & Month-End
 > **Priority: Medium | Effort: ~1 week**
 
 ```
@@ -359,7 +381,7 @@ Day 31:     Agent generates period summary — spend vs budget vs forecast
 
 ---
 
-### 🔲 PHASE G — Compliance Hardening
+### 🔲 PHASE H — Compliance Hardening
 > **Priority: Medium | Effort: ~1 week**
 
 **Current state:** Supplier onboarding compliance workflow built (NDA/DPA/InfoSec/LkSG agents). Schema extended. Templates ready.
@@ -374,7 +396,7 @@ Day 31:     Agent generates period summary — spend vs budget vs forecast
 
 ---
 
-### 🔲 PHASE H — Hyperscaler FinOps Intelligence
+### 🔲 PHASE I — Hyperscaler FinOps Intelligence
 > **Priority: Low — builds on existing monitor | Effort: ~1 week**
 
 **Current state:** Daily monitor built. Anomaly detection working. Slack-free.
@@ -387,7 +409,7 @@ Day 31:     Agent generates period summary — spend vs budget vs forecast
 
 ---
 
-### 🔲 PHASE I — Trust Expansion Engine
+### 🔲 PHASE J — Trust Expansion Engine
 > **Priority: Low — go-live first | Effort: ~1 week**
 
 ```
