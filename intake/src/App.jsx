@@ -160,7 +160,7 @@ const NAV_PRIMARY = [
   { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
   { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
   { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
-  { id: 'catalog',   label: 'Catalogue',   Icon: IconCatalog },
+  { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
   { id: 'mine',      label: 'My requests', Icon: IconList },
   { id: 'home',      label: 'New request', Icon: IconPlus },
 ]
@@ -247,14 +247,14 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
         </div>
       )}
 
-      <div className="sidebar__sectionhead">Reference</div>
+      <div className="sidebar__sectionhead">Analytics</div>
       <nav className="sidebar__nav">
         {[
-          { label: 'Suppliers',  Icon: IconBuilding, url: 'https://grafana-production-49fc.up.railway.app/d/3c77930d-33a5-4f55-b104-766e171573bf/suppliers' },
-          { label: 'Budgets',    Icon: IconWrench,   url: 'https://grafana-production-49fc.up.railway.app/d/06389734-1dd7-4bae-89c0-dcce8b1c8d09/budgets' },
-          { label: 'Contracts',  Icon: IconRefresh,  url: 'https://grafana-production-49fc.up.railway.app/d/7731a334-ca87-4301-a364-9b816c58b64c/contracts' },
-          { label: 'Expiring',   Icon: IconClock,    url: 'https://grafana-production-49fc.up.railway.app/d/a1b2c3d4-expiry-dash-0001/expiring-contracts-and-licenses' },
-          { label: 'PO Status',  Icon: IconTruck,    url: 'https://grafana-production-49fc.up.railway.app/d/po-board-dash-0001/purchase-orders' },
+          { label: 'Vendor Intel', Icon: IconBuilding, url: 'https://grafana-production-49fc.up.railway.app/d/3c77930d-33a5-4f55-b104-766e171573bf/suppliers' },
+          { label: 'Budgets',      Icon: IconWrench,   url: 'https://grafana-production-49fc.up.railway.app/d/06389734-1dd7-4bae-89c0-dcce8b1c8d09/budgets' },
+          { label: 'Contracts',    Icon: IconRefresh,  url: 'https://grafana-production-49fc.up.railway.app/d/7731a334-ca87-4301-a364-9b816c58b64c/contracts' },
+          { label: 'Expiring',     Icon: IconClock,    url: 'https://grafana-production-49fc.up.railway.app/d/a1b2c3d4-expiry-dash-0001/expiring-contracts-and-licenses' },
+          { label: 'PO Status',    Icon: IconTruck,    url: 'https://grafana-production-49fc.up.railway.app/d/po-board-dash-0001/purchase-orders' },
         ].map(({ label, Icon, url }) => (
           <button key={label} className="sidebar__link" onClick={() => window.open(url, '_blank')}>
             <span className="sidebar__link-icon"><Icon size={16} /></span>
@@ -726,7 +726,7 @@ const CatalogScreen = ({ cart, onAddToCart, onOpenCart }) => {
   const cartCount = cart.reduce((s, l) => s + l.qty, 0)
 
   useEffect(() => {
-    pgFetch('/catalog_by_supplier?active=eq.true&order=supplier_name.asc,sort_order.asc,name.asc')
+    pgFetch('/catalog_by_supplier?order=supplier_name.asc,sort_order.asc,name.asc')
       .then(rows => {
         // Group by supplier
         const grouped = {}
@@ -2125,7 +2125,7 @@ export default function App() {
     if (tab === 'board')     return ['Operations']
     if (tab === 'orders')    return ['Orders']
     if (tab === 'suppliers') return ['Suppliers']
-    if (tab === 'catalog')   return ['Catalogue']
+    if (tab === 'catalog')   return ['Catalogues']
     if (tab === 'mine')      return ['My requests']
     if (tab === 'home')   return ['New request']
     if (tab === 'request')return ['New request', FORM_CONFIG[reqType]?.title || 'Request']
