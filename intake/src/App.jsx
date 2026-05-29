@@ -92,6 +92,7 @@ const IconLaptop   = (p) => <Icon {...p}><rect x="3" y="5" width="18" height="11
 const IconApp      = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor"/><circle cx="9" cy="6.5" r="0.6" fill="currentColor"/></Icon>
 const IconCloud    = (p) => <Icon {...p}><path d="M17 18a4 4 0 0 0 0-8 6 6 0 0 0-11.7 1.5A4.5 4.5 0 0 0 6.5 18z"/></Icon>
 const IconWrench   = (p) => <Icon {...p}><path d="M14.7 6.3a4 4 0 0 0 5.7 5.7l-9.4 9.4a2 2 0 0 1-2.8-2.8z"/><path d="M17 7l-2-2"/></Icon>
+const IconClock    = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></Icon>
 const IconPackage  = (p) => <Icon {...p}><path d="M12 3l9 4.5v9L12 21l-9-4.5v-9z"/><path d="M3 7.5l9 4.5 9-4.5"/><path d="M12 12v9"/></Icon>
 
 // ─── Status config ─────────────────────────────────────────────────────────────
@@ -262,6 +263,7 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
           { label: 'Suppliers',  Icon: IconBuilding, url: 'https://grafana-production-49fc.up.railway.app/d/3c77930d-33a5-4f55-b104-766e171573bf/suppliers' },
           { label: 'Budgets',    Icon: IconWrench,   url: 'https://grafana-production-49fc.up.railway.app/d/06389734-1dd7-4bae-89c0-dcce8b1c8d09/budgets' },
           { label: 'Contracts',  Icon: IconRefresh,  url: 'https://grafana-production-49fc.up.railway.app/d/7731a334-ca87-4301-a364-9b816c58b64c/contracts' },
+          { label: 'Expiring',   Icon: IconClock,    url: 'https://grafana-production-49fc.up.railway.app/d/a1b2c3d4-expiry-dash-0001/expiring-contracts-and-licenses' },
         ].map(({ label, Icon, url }) => (
           <button key={label} className="sidebar__link" onClick={() => window.open(url, '_blank')}>
             <span className="sidebar__link-icon"><Icon size={16} /></span>
