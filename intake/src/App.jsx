@@ -128,42 +128,7 @@ const BOARD_SECTIONS = [
   { id: 'con', Icon: IconZap,     title: 'Quick confirm',      urgent: false, status: 'pending_confirm',    hint: 'Standard request — one-touch and the agent does the rest.' },
 ]
 
-// ─── Catalog data ──────────────────────────────────────────────────────────────
-const CATALOG = [
-  {
-    category: 'Hardware', Icon: IconLaptop,
-    items: [
-      { id: 'mac-pro-14', name: 'MacBook Pro 14"',     supplier: 'Apple',    price: 2199,  sku: 'APPMBP14M3PRO', desc: 'M3 Pro · 18 GB · 512 GB. Standard dev config.' },
-      { id: 'mac-pro-16', name: 'MacBook Pro 16"',     supplier: 'Apple',    price: 2999,  sku: 'APPMBP16M3MAX', desc: 'M3 Max · 36 GB · 1 TB. Power user config.' },
-      { id: 'dell-u27',   name: 'Dell UltraSharp 27"', supplier: 'Dell',     price: 549,   sku: 'DELLU2723QE',   desc: '4K USB-C monitor, 90 W PD. Standard desk monitor.' },
-      { id: 'dock-uc',    name: 'CalDigit TS4 Dock',   supplier: 'CalDigit', price: 299,   sku: 'CDTS4',         desc: 'Thunderbolt 4, 18 ports. Standard docking station.' },
-      { id: 'iphone-15',  name: 'iPhone 15 Pro',       supplier: 'Apple',    price: 1199,  sku: 'APPIPH15P256',  desc: '256 GB. Standard corporate mobile.' },
-    ],
-  },
-  {
-    category: 'Software', Icon: IconApp,
-    items: [
-      { id: 'ms365-e3',   name: 'Microsoft 365 E3',   supplier: 'Microsoft', price: 36, sku: 'MS365E3',   desc: 'Per user / month. Teams, Outlook, Office, SharePoint.', per: '/mo' },
-      { id: 'github-ent', name: 'GitHub Enterprise',  supplier: 'GitHub',    price: 21, sku: 'GHENT',     desc: 'Per user / month. Advanced Security + GHAS.', per: '/mo' },
-      { id: 'figma-org',  name: 'Figma Organization', supplier: 'Figma',     price: 45, sku: 'FIGMAORG',  desc: 'Per editor / month. Unlimited projects.', per: '/mo' },
-      { id: 'slack-pro',  name: 'Slack Pro',          supplier: 'Salesforce',price: 8,  sku: 'SLKPRO',    desc: 'Per user / month. Standard workspace.', per: '/mo' },
-    ],
-  },
-  {
-    category: 'Cloud', Icon: IconCloud,
-    items: [
-      { id: 'aws-ri', name: 'AWS Reserved Instance', supplier: 'Amazon Web Services', price: 0, sku: 'AWS-RI',  desc: 'Variable — submit for budget allocation. Agent reviews utilisation first.', variable: true },
-      { id: 'gcp-cu', name: 'GCP Committed Use',     supplier: 'Google Cloud',        price: 0, sku: 'GCP-CUD', desc: 'Variable — commit discount contract. Agent checks prior spend.', variable: true },
-    ],
-  },
-  {
-    category: 'Services', Icon: IconWrench,
-    items: [
-      { id: 'soc2', name: 'SOC 2 Type II audit', supplier: 'Deloitte',  price: 35000, sku: 'SOC2T2',     desc: 'Annual audit. Fixed price per framework agreement.' },
-      { id: 'pen',  name: 'Penetration test',    supplier: 'NCC Group', price: 18000, sku: 'PENTESTANN', desc: 'Annual web + infra pentest. Standard scope.' },
-    ],
-  },
-]
+// CATALOG constant removed — now fetched live from catalog_by_supplier view
 
 const FORM_CONFIG = {
   purchase: { title: 'Purchase request',    hint: 'New supplier or one-off spend.' },
@@ -670,7 +635,7 @@ const CartModal = ({ cart, onClose, onUpdateQty, onRemove, onPlace }) => {
     </div>
   )
 
-  const total = cart.reduce((s, l) => s + (l.item.variable ? 0 : l.item.price * l.qty), 0)
+  const total = cart.reduce((s, l) => s + (l.item.variable ? 0 : (l.item.unit_price || l.item.price || 0) * l.qty), 0)
   const itemCount = cart.reduce((s, l) => s + l.qty, 0)
 
   return (
@@ -707,7 +672,7 @@ const CartModal = ({ cart, onClose, onUpdateQty, onRemove, onPlace }) => {
                 </button>
               </div>
               <div className="money" style={{ fontSize: 14, minWidth: 72, textAlign: 'right' }}>
-                {line.item.variable ? 'Variable' : fmt(line.item.price * line.qty)}
+                {line.item.variable ? 'Variable' : fmt((line.item.unit_price || line.item.price || 0) * line.qty)}
               </div>
               <button className="iconbtn" style={{ width: 24, height: 24 }} onClick={() => onRemove(line.item.id)}>
                 <IconX size={12} />
@@ -741,18 +706,57 @@ const CartModal = ({ cart, onClose, onUpdateQty, onRemove, onPlace }) => {
 }
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────
+const SUPPLIER_ICON = {
+  'Apple':         (p) => <Icon {...p}><path d="M12 5c1.5-2 4-2.5 4-2.5s.5 2.5-1 4c-1.2 1.2-2.5 1-2.5 1S11 6.5 12 5z"/><path d="M12 7.5C9 7.5 6 10 6 14c0 3.5 2.5 6.5 4 6.5.8 0 1.5-.5 2-.5s1.2.5 2 .5c1.5 0 4-3 4-6.5 0-4-3-6.5-6-6.5z"/></Icon>,
+  'Dell Technologies': (p) => <Icon {...p}><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 12h10M12 9v6"/></Icon>,
+  'Lenovo':        (p) => <Icon {...p}><rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M8 17v2M16 17v2M6 19h12"/></Icon>,
+  'Microsoft 365': (p) => <Icon {...p}><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></Icon>,
+  'Salesforce':    (p) => <Icon {...p}><path d="M10 8a4 4 0 0 1 7.8-1.2A3.5 3.5 0 0 1 21 10.5a3.5 3.5 0 0 1-3.5 3.5H7a4 4 0 0 1-1-7.9"/><path d="M9 16l3 3 3-3"/></Icon>,
+  'AWS':           (p) => <Icon {...p}><path d="M17 18a4 4 0 0 0 0-8 6 6 0 0 0-11.7 1.5A4.5 4.5 0 0 0 6.5 18z"/><path d="M9 15l3 3 3-3"/></Icon>,
+  'Google Cloud':  (p) => <Icon {...p}><path d="M17 18a4 4 0 0 0 0-8 6 6 0 0 0-11.7 1.5A4.5 4.5 0 0 0 6.5 18z"/><circle cx="9" cy="12" r="1.5" fill="currentColor"/><circle cx="15" cy="12" r="1.5" fill="currentColor"/></Icon>,
+}
+const DefaultSupplierIcon = (p) => <Icon {...p}><rect x="4" y="2" width="16" height="20" rx="1.5"/><path d="M8 6h8M8 10h8M8 14h5"/></Icon>
+
+const HEALTH_DOT = { green: '#3D7A5A', watch: '#B07219', red: '#B5462E' }
+
 const CatalogScreen = ({ cart, onAddToCart, onOpenCart }) => {
-  const [activeCat, setActiveCat] = useState(CATALOG[0].category)
-  const cat = CATALOG.find(c => c.category === activeCat)
+  const [suppliers, setSuppliers] = useState(null)   // grouped: { supplierName: { health, items[] } }
+  const [activeSupplier, setActiveSupplier] = useState(null)
   const cartCount = cart.reduce((s, l) => s + l.qty, 0)
+
+  useEffect(() => {
+    pgFetch('/catalog_by_supplier?active=eq.true&order=supplier_name.asc,sort_order.asc,name.asc')
+      .then(rows => {
+        // Group by supplier
+        const grouped = {}
+        for (const row of rows) {
+          if (!grouped[row.supplier_name]) {
+            grouped[row.supplier_name] = { health: row.supplier_health, category: row.supplier_category, items: [] }
+          }
+          grouped[row.supplier_name].items.push(row)
+        }
+        setSuppliers(grouped)
+        setActiveSupplier(Object.keys(grouped)[0] || null)
+      })
+      .catch(() => setSuppliers({}))
+  }, [])
+
+  if (suppliers === null) return (
+    <div className="content step-in" style={{ maxWidth: 1180 }}>
+      <div style={{ padding: '80px 0', textAlign: 'center', color: '#75695F' }}>Loading catalogues…</div>
+    </div>
+  )
+
+  const supplierNames = Object.keys(suppliers)
+  const current = activeSupplier ? suppliers[activeSupplier] : null
 
   return (
     <div className="content step-in" style={{ maxWidth: 1180 }}>
       <div className="pagehead">
         <div>
-          <div className="pagehead__eyebrow">Catalog</div>
+          <div className="pagehead__eyebrow">Catalogues</div>
           <h1 className="pagehead__title">Pre-negotiated.</h1>
-          <div className="pagehead__sub">Contract on file. Budget check only. Order completes the same day.</div>
+          <div className="pagehead__sub">Contract on file for every item. Budget check only — order closes the same day.</div>
         </div>
         <div className="pagehead__actions">
           {cartCount > 0 && (
@@ -764,48 +768,99 @@ const CatalogScreen = ({ cart, onAddToCart, onOpenCart }) => {
         </div>
       </div>
 
-      <div className="tabs">
-        {CATALOG.map(c => (
-          <button key={c.category} className={'tab' + (activeCat === c.category ? ' tab--active' : '')} onClick={() => setActiveCat(c.category)}>
-            {c.category}
-          </button>
-        ))}
-      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 0, background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 8, overflow: 'hidden' }}>
 
-      <div className="cat-grid">
-        {cat.items.map(item => {
-          const inCart = cart.find(l => l.item.id === item.id)
-          return (
-            <div key={item.id} className="cat-item" style={inCart ? { borderColor: '#B07219', boxShadow: '0 0 0 1px #B07219' } : {}}>
-              <div className="cat-item__name">{item.name}</div>
-              <div className="cat-item__desc">{item.desc}</div>
-              <div className="cat-item__meta">
-                <span>{item.supplier}</span>
-                <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#C9BFAE', display: 'inline-block' }} />
-                <span className="ref" style={{ color: '#A89B8B' }}>{item.sku}</span>
-              </div>
-              <div className="cat-item__foot">
-                <span className="cat-item__price">
-                  {item.variable ? 'Variable' : fmt(item.price)}
-                  {item.per && !item.variable && <span className="cat-item__price-mo">{item.per}</span>}
+        {/* Left: supplier list */}
+        <div style={{ borderRight: '1px solid #E5DDD0', background: '#FAF7F2' }}>
+          <div style={{ padding: '12px 16px 8px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#A89B8B' }}>
+            Suppliers
+          </div>
+          {supplierNames.map(name => {
+            const sup = suppliers[name]
+            const active = activeSupplier === name
+            const SIcon = SUPPLIER_ICON[name] || DefaultSupplierIcon
+            const inCartCount = cart.filter(l => sup.items.some(i => i.id === l.item.id)).reduce((s, l) => s + l.qty, 0)
+            return (
+              <button
+                key={name}
+                onClick={() => setActiveSupplier(name)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  width: '100%', padding: '10px 16px', border: 'none', cursor: 'pointer',
+                  background: active ? '#FFFEFB' : 'transparent',
+                  borderLeft: active ? '2px solid #B07219' : '2px solid transparent',
+                  textAlign: 'left',
+                }}
+              >
+                <span style={{ color: active ? '#B07219' : '#75695F', flexShrink: 0 }}>
+                  <SIcon size={15} />
                 </span>
-                {inCart ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button className="btn btn--secondary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onAddToCart(item, -1)}>
-                      <IconMinus size={12} />
-                    </button>
-                    <span style={{ minWidth: 20, textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#161413', fontVariantNumeric: 'tabular-nums' }}>{inCart.qty}</span>
-                    <button className="btn btn--primary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onAddToCart(item, 1)}>
-                      <IconPlus size={12} />
-                    </button>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: active ? 600 : 400, color: active ? '#161413' : '#3D3633', letterSpacing: '-0.005em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {name}
                   </div>
-                ) : (
-                  <button className="btn btn--secondary btn--sm" onClick={() => onAddToCart(item, 1)}>Add</button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: HEALTH_DOT[sup.health] || '#C9BFAE', flexShrink: 0 }} />
+                    <span style={{ fontSize: 10.5, color: '#A89B8B' }}>{sup.items.length} items</span>
+                  </div>
+                </span>
+                {inCartCount > 0 && (
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 8, background: '#B07219', color: '#fff' }}>{inCartCount}</span>
                 )}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Right: item grid */}
+        <div style={{ padding: 20 }}>
+          {current && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, paddingBottom: 14, borderBottom: '1px solid #EEE7DA' }}>
+                {(() => { const SIcon = SUPPLIER_ICON[activeSupplier] || DefaultSupplierIcon; return <SIcon size={18} color="#B07219" /> })()}
+                <span style={{ fontFamily: "'Instrument Serif', serif", fontSize: 22, color: '#161413', letterSpacing: '-0.02em' }}>{activeSupplier}</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#75695F', marginLeft: 4 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: HEALTH_DOT[current.health] || '#C9BFAE', display: 'inline-block' }} />
+                  {current.health || 'unknown'} health
+                </span>
               </div>
-            </div>
-          )
-        })}
+              <div className="cat-grid">
+                {current.items.map(item => {
+                  const inCart = cart.find(l => l.item.id === item.id)
+                  return (
+                    <div key={item.id} className="cat-item" style={inCart ? { borderColor: '#B07219', boxShadow: '0 0 0 1px #B07219' } : {}}>
+                      <div className="cat-item__name">{item.name}</div>
+                      <div className="cat-item__desc">{item.description}</div>
+                      <div className="cat-item__meta">
+                        <span style={{ fontSize: 11, padding: '1px 5px', borderRadius: 3, background: '#EFEBE1', color: '#75695F' }}>{item.category}</span>
+                        <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#C9BFAE', display: 'inline-block' }} />
+                        <span className="ref" style={{ color: '#A89B8B' }}>{item.sku}</span>
+                      </div>
+                      <div className="cat-item__foot">
+                        <span className="cat-item__price">
+                          {item.variable ? 'Variable' : item.unit_price ? fmt(item.unit_price) : '—'}
+                          {item.price_per && !item.variable && <span className="cat-item__price-mo">{item.price_per}</span>}
+                        </span>
+                        {inCart ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <button className="btn btn--secondary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onAddToCart(item, -1)}><IconMinus size={12}/></button>
+                            <span style={{ minWidth: 20, textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#161413', fontVariantNumeric: 'tabular-nums' }}>{inCart.qty}</span>
+                            <button className="btn btn--primary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onAddToCart(item, 1)}><IconPlus size={12}/></button>
+                          </div>
+                        ) : (
+                          <button className="btn btn--secondary btn--sm" onClick={() => onAddToCart(item, 1)}>Add</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+          {!current && (
+            <div style={{ padding: '60px 24px', textAlign: 'center', color: '#75695F' }}>Select a supplier.</div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1627,7 +1682,7 @@ export default function App() {
     const title = cartLines.length === 1
       ? `Purchase — ${cartLines[0].item.name}${cartLines[0].qty > 1 ? ` × ${cartLines[0].qty}` : ''}`
       : `Purchase — ${cartLines.length} catalog items`
-    const desc = cartLines.map(l => `${l.item.name} × ${l.qty} (${l.item.sku})`).join(', ') + (notes ? `. Notes: ${notes}` : '')
+    const desc = cartLines.map(l => `${l.item.name} × ${l.qty} (${l.item.sku || l.item.id})`).join(', ') + (notes ? `. Notes: ${notes}` : '')
     try {
       await fetch(N8N_WEBHOOK, {
         method: 'POST',
