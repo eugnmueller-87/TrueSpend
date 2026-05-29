@@ -786,16 +786,199 @@ const CatalogScreen = ({ cart, onAddToCart, onOpenCart }) => {
   )
 }
 
+// ─── Signal badge ──────────────────────────────────────────────────────────────
+const SIGNAL_LABEL = { policy: 'Policy', supplier: 'Supplier', contract: 'Contract', request: 'Request', consumption: 'Budget' }
+
+const SignalBadge = ({ signal, green, weight, notes }) => (
+  <div style={{
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    padding: '10px 14px', borderRadius: 6,
+    background: green ? '#EEF3EE' : '#F6E5DE',
+    border: `1px solid ${green ? '#C5D9C8' : '#E8C3B5'}`,
+    fontSize: 12.5,
+  }}>
+    <span style={{
+      flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
+      background: green ? '#3D7A5A' : '#B5462E',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      marginTop: 1,
+    }}>
+      {green
+        ? <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+        : <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      }
+    </span>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: notes ? 2 : 0 }}>
+        <span style={{ fontWeight: 600, color: '#161413', letterSpacing: '-0.01em' }}>
+          {SIGNAL_LABEL[signal] || signal}
+        </span>
+        <span style={{ fontSize: 11, color: '#A89B8B', fontVariantNumeric: 'tabular-nums' }}>
+          {Math.round(parseFloat(weight) * 100)}%
+        </span>
+      </div>
+      {notes && <div style={{ color: '#4A4340', lineHeight: 1.45 }}>{notes}</div>}
+    </div>
+  </div>
+)
+
+// ─── Request detail panel ──────────────────────────────────────────────────────
+const RequestDetail = ({ ticket }) => {
+  const [detail, setDetail] = useState(null)  // { decision, signals }
+
+  useEffect(() => {
+    pgFetch(`/decisions?ticket_id=eq.${ticket.id}&order=created_at.desc&limit=1`)
+      .then(async (decisions) => {
+        if (!decisions.length) { setDetail({}); return }
+        const dec = decisions[0]
+        const signals = await pgFetch(`/trace_log?decision_id=eq.${dec.id}&order=created_at.asc`)
+        setDetail({ decision: dec, signals })
+      })
+      .catch(() => setDetail({}))
+  }, [ticket.id])
+
+  // Parse description into line items (format: "Name × qty (SKU), ...")
+  const parseItems = (desc) => {
+    if (!desc) return null
+    // Try to detect catalog item format: "Name × N (SKU)"
+    const parts = desc.split(/,\s*(?=[A-Z])/)
+    if (parts.length > 1 && parts[0].includes('×')) return parts
+    return null
+  }
+
+  const items = parseItems(ticket.description)
+  const DISP_LABEL = { auto_execute: 'Auto-executed', one_touch: 'One-touch', escalate: 'Escalated', auto_approved: 'Auto-approved' }
+  const DISP_COLOR = { auto_execute: '#3D7A5A', one_touch: '#B07219', escalate: '#2B5F7A' }
+
+  return (
+    <div style={{ padding: '20px 24px 24px', background: '#FDFAF5', borderTop: '1px solid #EEE7DA' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+
+        {/* Left: What was ordered */}
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>
+            What was ordered
+          </div>
+          {items ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {items.map((line, i) => {
+                const m = line.match(/^(.+?)\s*×\s*(\d+)\s*(?:\(([^)]+)\))?/)
+                if (!m) return <div key={i} style={{ fontSize: 13, color: '#3D3633' }}>{line}</div>
+                const [, name, qty, sku] = m
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '9px 12px', background: '#FFFEFB',
+                    border: '1px solid #E5DDD0', borderRadius: 6,
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#161413', letterSpacing: '-0.005em' }}>{name.trim()}</div>
+                      {sku && <div style={{ fontSize: 11, color: '#A89B8B', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{sku}</div>}
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#3D3633', letterSpacing: '-0.01em' }}>× {qty}</div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13.5, color: '#3D3633', lineHeight: 1.6, padding: '10px 0' }}>
+              {ticket.description || ticket.title}
+            </div>
+          )}
+
+          {ticket.category && (
+            <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#EFEBE1', color: '#75695F', fontWeight: 500 }}>
+                {ticket.category}
+              </span>
+              {ticket.submitted_by && (
+                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#EFEBE1', color: '#75695F' }}>
+                  {ticket.submitted_by}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Right: Approval trail */}
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>
+            Approval trail
+          </div>
+
+          {detail === null && (
+            <div style={{ fontSize: 12.5, color: '#A89B8B', padding: '10px 0' }}>Loading…</div>
+          )}
+
+          {detail !== null && !detail.decision && (
+            <div style={{
+              padding: '14px', borderRadius: 6,
+              background: '#F7EFDE', border: '1px solid #E9DAB5',
+              fontSize: 12.5, color: '#8F5C12', lineHeight: 1.5,
+            }}>
+              <strong>In review</strong> — the agent is processing this request. Signals haven't been written yet.
+            </div>
+          )}
+
+          {detail?.decision && (
+            <>
+              {/* Decision summary */}
+              <div style={{
+                padding: '12px 14px', borderRadius: 6, marginBottom: 12,
+                background: '#FFFEFB', border: '1px solid #E5DDD0',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, letterSpacing: '-0.005em',
+                    color: DISP_COLOR[detail.decision.disposition] || '#3D3633',
+                  }}>
+                    {DISP_LABEL[detail.decision.disposition] || detail.decision.disposition}
+                  </span>
+                  <span style={{ fontSize: 12, color: '#75695F', fontVariantNumeric: 'tabular-nums' }}>
+                    {Math.round(parseFloat(detail.decision.confidence) * 100)}% confidence
+                  </span>
+                </div>
+                {detail.decision.recommendation && (
+                  <div style={{ fontSize: 12.5, color: '#3D3633', lineHeight: 1.45 }}>
+                    {detail.decision.recommendation}
+                  </div>
+                )}
+                {detail.decision.reasoning && (
+                  <div style={{ fontSize: 12, color: '#75695F', lineHeight: 1.45, marginTop: 6, borderTop: '1px solid #EEE7DA', paddingTop: 6 }}>
+                    {detail.decision.reasoning}
+                  </div>
+                )}
+              </div>
+
+              {/* Signal cards */}
+              {detail.signals?.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {detail.signals.map((s, i) => (
+                    <SignalBadge key={i} signal={s.signal} green={s.green} weight={s.weight} notes={s.notes} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── My Requests ──────────────────────────────────────────────────────────────
 const MyRequestsScreen = ({ user }) => {
   const [tickets, setTickets] = useState(null)
+  const [openId,  setOpenId]  = useState(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!user?.email) { setTickets([]); return }
     pgFetch(`/tickets?submitted_by_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=50`)
       .then(setTickets)
       .catch(() => setTickets([]))
   }, [user?.email])
+
+  useEffect(() => { load() }, [load])
 
   return (
     <div className="content step-in" style={{ maxWidth: 1180 }}>
@@ -806,10 +989,9 @@ const MyRequestsScreen = ({ user }) => {
           <div className="pagehead__sub">Everything you've submitted, with where the agent took it.</div>
         </div>
         <div className="pagehead__actions">
-          <button className="btn btn--tertiary" onClick={() => {
-            setTickets(null)
-            pgFetch(`/tickets?submitted_by_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=50`).then(setTickets).catch(() => setTickets([]))
-          }}><IconRotateCw size={14}/> Refresh</button>
+          <button className="btn btn--tertiary" onClick={() => { setTickets(null); load() }}>
+            <IconRotateCw size={14}/> Refresh
+          </button>
         </div>
       </div>
 
@@ -823,21 +1005,29 @@ const MyRequestsScreen = ({ user }) => {
             <div className="eyebrow" style={{ textAlign: 'right' }}>Ref</div>
           </div>
           {tickets.map(t => (
-            <div key={t.id} className="trow" style={{ cursor: 'default' }}>
-              <div><StatusPill status={t.status} /></div>
-              <div className="trow__main">
-                <div className="trow__title">{t.title}</div>
-                <div className="trow__meta">
-                  <span className="ref">{t.reference}</span>
-                  <span className="dot" />
-                  <span>{timeAgo(t.created_at)}</span>
+            <div key={t.id}>
+              <div
+                className="trow"
+                style={{ cursor: 'pointer' }}
+                onClick={() => setOpenId(openId === t.id ? null : t.id)}
+              >
+                <div><StatusPill status={t.status} /></div>
+                <div className="trow__main">
+                  <div className="trow__title">{t.title}</div>
+                  <div className="trow__meta">
+                    <span className="ref">{t.reference}</span>
+                    <span className="dot" />
+                    <span>{timeAgo(t.created_at)}</span>
+                  </div>
+                </div>
+                <div><div className="trow__supplier">{t.supplier_name || '—'}</div></div>
+                <div><div className="trow__value">{t.value_eur ? fmt(t.value_eur) : '—'}</div></div>
+                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                  <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#8F5C12' }}>{t.reference}</span>
+                  <IconChevDown size={14} style={{ color: '#A89B8B', transform: openId === t.id ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                 </div>
               </div>
-              <div><div className="trow__supplier">{t.supplier_name || '—'}</div></div>
-              <div><div className="trow__value">{t.value_eur ? fmt(t.value_eur) : '—'}</div></div>
-              <div style={{ textAlign: 'right' }}>
-                <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#8F5C12' }}>{t.reference}</span>
-              </div>
+              {openId === t.id && <RequestDetail ticket={t} />}
             </div>
           ))}
         </div>
