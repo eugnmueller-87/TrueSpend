@@ -910,15 +910,104 @@ const RequestDetail = ({ ticket }) => {
             <div style={{ fontSize: 12.5, color: '#A89B8B', padding: '10px 0' }}>Loading…</div>
           )}
 
-          {detail !== null && !detail.decision && (
-            <div style={{
-              padding: '14px', borderRadius: 6,
-              background: '#F7EFDE', border: '1px solid #E9DAB5',
-              fontSize: 12.5, color: '#8F5C12', lineHeight: 1.5,
-            }}>
-              <strong>In review</strong> — the agent is processing this request. Signals haven't been written yet.
-            </div>
-          )}
+          {detail !== null && !detail.decision && (() => {
+            // Map status → step index (0-based) in the pipeline
+            const STEPS = [
+              { key: 'received',  label: 'Received',         sub: 'Ticket created in DB' },
+              { key: 'reasoning', label: 'Agent reasoning',  sub: 'Running 5 signals via Claude' },
+              { key: 'decision',  label: 'Decision written', sub: 'Disposition + confidence scored' },
+              { key: 'routed',    label: 'Routed',           sub: 'Board updated or auto-executed' },
+              { key: 'done',      label: 'Closed',           sub: 'Approved, rejected, or executed' },
+            ]
+            const STATUS_STEP = {
+              reasoning:         1,
+              pending_review:    3, pending_confirm: 3, signature_required: 3, escalated: 3,
+              approved:          4, rejected: 4, auto_executed: 4, closed: 4,
+            }
+            const currentStep = STATUS_STEP[ticket.status] ?? 1
+            const isStuck = ticket.status === 'reasoning'
+            const stuckMin = Math.round((Date.now() - new Date(ticket.created_at)) / 60000)
+
+            return (
+              <div>
+                {/* Pipeline steps */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {STEPS.map((step, i) => {
+                    const done    = i < currentStep
+                    const active  = i === currentStep
+                    const pending = i > currentStep
+                    return (
+                      <div key={step.key} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
+                        {/* Timeline spine */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 20, flexShrink: 0 }}>
+                          <div style={{
+                            width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                            background: done ? '#3D7A5A' : active ? (isStuck ? '#B07219' : '#2B5F7A') : '#E5DDD0',
+                            border: `2px solid ${done ? '#3D7A5A' : active ? (isStuck ? '#B07219' : '#2B5F7A') : '#D4C9B8'}`,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            zIndex: 1,
+                          }}>
+                            {done && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>}
+                            {active && !isStuck && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'white' }} />}
+                            {active && isStuck && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'white' }} />}
+                          </div>
+                          {i < STEPS.length - 1 && (
+                            <div style={{
+                              width: 2, flex: 1, minHeight: 16,
+                              background: done ? '#3D7A5A' : '#E5DDD0',
+                              margin: '2px 0',
+                            }} />
+                          )}
+                        </div>
+
+                        {/* Step label */}
+                        <div style={{ paddingBottom: i < STEPS.length - 1 ? 14 : 0, paddingTop: 0, flex: 1 }}>
+                          <div style={{
+                            fontSize: 12.5, fontWeight: active ? 700 : done ? 600 : 400,
+                            color: done ? '#3D7A5A' : active ? (isStuck ? '#8F5C12' : '#161413') : '#A89B8B',
+                            letterSpacing: '-0.005em',
+                            display: 'flex', alignItems: 'center', gap: 6,
+                          }}>
+                            {step.label}
+                            {active && isStuck && (
+                              <span style={{
+                                fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                                background: '#F7EFDE', color: '#8F5C12', border: '1px solid #E9DAB5',
+                                fontWeight: 600, letterSpacing: '0.04em',
+                              }}>
+                                STUCK {stuckMin}m
+                              </span>
+                            )}
+                            {active && !isStuck && (
+                              <span style={{
+                                fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                                background: '#E6EEF2', color: '#2B5F7A', border: '1px solid #C5D5DE',
+                                fontWeight: 600, letterSpacing: '0.04em',
+                              }}>
+                                NOW
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 11.5, color: pending ? '#C9BFAE' : '#75695F', marginTop: 1 }}>{step.sub}</div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Stuck explanation */}
+                {isStuck && (
+                  <div style={{
+                    marginTop: 14, padding: '10px 12px', borderRadius: 6,
+                    background: '#F7EFDE', border: '1px solid #E9DAB5',
+                    fontSize: 12, color: '#8F5C12', lineHeight: 1.5,
+                  }}>
+                    The agent received the request but hasn't written a decision yet. This usually means the n8n workflow is still running or hit an error. The Operations Board will update automatically once it completes.
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {detail?.decision && (
             <>
