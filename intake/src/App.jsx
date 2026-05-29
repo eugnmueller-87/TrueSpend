@@ -94,6 +94,8 @@ const IconCloud    = (p) => <Icon {...p}><path d="M17 18a4 4 0 0 0 0-8 6 6 0 0 0
 const IconWrench   = (p) => <Icon {...p}><path d="M14.7 6.3a4 4 0 0 0 5.7 5.7l-9.4 9.4a2 2 0 0 1-2.8-2.8z"/><path d="M17 7l-2-2"/></Icon>
 const IconClock    = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></Icon>
 const IconPackage  = (p) => <Icon {...p}><path d="M12 3l9 4.5v9L12 21l-9-4.5v-9z"/><path d="M3 7.5l9 4.5 9-4.5"/><path d="M12 12v9"/></Icon>
+const IconTruck    = (p) => <Icon {...p}><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11v12H5z"/><path d="M14 7h5l3 4v4h-8V7z"/><circle cx="7.5" cy="17.5" r="1.5"/><circle cx="17.5" cy="17.5" r="1.5"/></Icon>
+const IconFile     = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></Icon>
 
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS = {
@@ -191,10 +193,32 @@ const AGENT_FEED = [
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 const NAV_PRIMARY = [
   { id: 'board',   label: 'Operations',  Icon: IconBoard,   countKey: 'open' },
+  { id: 'orders',  label: 'Orders',      Icon: IconTruck,   countKey: 'orders' },
   { id: 'catalog', label: 'Catalog',     Icon: IconCatalog },
   { id: 'mine',    label: 'My requests', Icon: IconList },
   { id: 'home',    label: 'New request', Icon: IconPlus },
 ]
+
+// ─── PO Status config ──────────────────────────────────────────────────────────
+const PO_STATUS = {
+  sent:         { label: 'Sent to supplier',  dot: '#2B5F7A', bg: '#E6EEF2', fg: '#2B5F7A' },
+  acknowledged: { label: 'Acknowledged',      dot: '#B07219', bg: '#F7EFDE', fg: '#8F5C12' },
+  delivered:    { label: 'Delivered',         dot: '#3D7A5A', bg: '#EEF3EE', fg: '#3D7A5A' },
+  invoiced:     { label: 'Invoiced',          dot: '#8B6AA1', bg: '#F0EBF6', fg: '#6B4F8A' },
+  closed:       { label: 'Closed',            dot: '#A89B8B', bg: '#EFEBE1', fg: '#75695F' },
+  draft:        { label: 'Draft',             dot: '#C9BFAE', bg: '#F5F1EA', fg: '#A89B8B' },
+  cancelled:    { label: 'Cancelled',         dot: '#B5462E', bg: '#F6E5DE', fg: '#B5462E' },
+}
+
+const PoStatusPill = ({ status }) => {
+  const s = PO_STATUS[status] || PO_STATUS.draft
+  return (
+    <span className="pill" style={{ background: s.bg, color: s.fg }}>
+      <span className="pill__dot" style={{ background: s.dot }} />
+      {s.label}
+    </span>
+  )
+}
 
 const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwitchUser }) => {
   const sidebarTab = tab === 'request' ? 'home' : tab
@@ -264,6 +288,7 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
           { label: 'Budgets',    Icon: IconWrench,   url: 'https://grafana-production-49fc.up.railway.app/d/06389734-1dd7-4bae-89c0-dcce8b1c8d09/budgets' },
           { label: 'Contracts',  Icon: IconRefresh,  url: 'https://grafana-production-49fc.up.railway.app/d/7731a334-ca87-4301-a364-9b816c58b64c/contracts' },
           { label: 'Expiring',   Icon: IconClock,    url: 'https://grafana-production-49fc.up.railway.app/d/a1b2c3d4-expiry-dash-0001/expiring-contracts-and-licenses' },
+          { label: 'PO Status',  Icon: IconTruck,    url: 'https://grafana-production-49fc.up.railway.app/d/po-board-dash-0001/purchase-orders' },
         ].map(({ label, Icon, url }) => (
           <button key={label} className="sidebar__link" onClick={() => window.open(url, '_blank')}>
             <span className="sidebar__link-icon"><Icon size={16} /></span>
@@ -782,6 +807,227 @@ const CatalogScreen = ({ cart, onAddToCart, onOpenCart }) => {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// ─── Orders Board ─────────────────────────────────────────────────────────────
+const PO_SECTIONS = [
+  { id: 'active',    label: 'In flight',      statuses: ['sent','acknowledged'],  hint: 'Sent to supplier — awaiting delivery.' },
+  { id: 'delivered', label: 'Pending invoice', statuses: ['delivered'],            hint: 'Goods received — invoice expected.' },
+  { id: 'invoiced',  label: 'Invoiced',        statuses: ['invoiced'],             hint: 'Invoice matched — payment instruction pending.' },
+  { id: 'closed',    label: 'Closed',          statuses: ['closed','draft'],       hint: 'Completed or draft POs.' },
+]
+
+const OrdersBoard = ({ onCountChange }) => {
+  const [pos,    setPos]    = useState(null)
+  const [openId, setOpenId] = useState(null)
+  const [filter, setFilter] = useState('active')  // 'active' | 'all'
+
+  const load = useCallback(async () => {
+    try {
+      const data = await pgFetch('/purchase_orders_board?order=sort_order.asc,created_at.desc')
+      setPos(data)
+      const live = data.filter(p => ['sent','acknowledged','delivered','invoiced'].includes(p.po_status))
+      onCountChange(live.length)
+    } catch {
+      setPos([])
+      onCountChange(0)
+    }
+  }, [onCountChange])
+
+  useEffect(() => { load() }, [load])
+
+  const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+
+  if (pos === null) return (
+    <div className="content content--with-rail step-in">
+      <div style={{ padding: '80px 0', textAlign: 'center', color: '#75695F' }}>Loading…</div>
+    </div>
+  )
+
+  const displayed = filter === 'active'
+    ? pos.filter(p => ['sent','acknowledged','delivered','invoiced'].includes(p.po_status))
+    : pos
+
+  const totalValue = displayed.reduce((s, p) => s + parseFloat(p.amount_eur || 0), 0)
+  const sections   = PO_SECTIONS.filter(sec =>
+    filter === 'all' || sec.id !== 'closed'
+  )
+
+  return (
+    <div className="content step-in" style={{ maxWidth: 1180 }}>
+      {/* Header */}
+      <div className="pagehead">
+        <div>
+          <div className="pagehead__eyebrow">Orders · {today}</div>
+          <h1 className="pagehead__title">
+            {displayed.length} {displayed.length === 1 ? 'order' : 'orders'}.
+          </h1>
+          <div className="pagehead__sub">Every approved purchase order. Immutable — no deletions.</div>
+        </div>
+        <div className="pagehead__actions">
+          <button className={`btn btn--sm ${filter === 'active' ? 'btn--ink' : 'btn--tertiary'}`} onClick={() => setFilter('active')}>In flight</button>
+          <button className={`btn btn--sm ${filter === 'all'    ? 'btn--ink' : 'btn--tertiary'}`} onClick={() => setFilter('all')}>All orders</button>
+          <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
+        </div>
+      </div>
+
+      {/* Stats strip */}
+      <div className="stats" style={{ marginBottom: 24 }}>
+        <div className="stat">
+          <div className="stat__label">In flight</div>
+          <div className="stat__val">{pos.filter(p=>['sent','acknowledged'].includes(p.po_status)).length}</div>
+          <div className="stat__hint">Sent, awaiting delivery</div>
+        </div>
+        <div className="stat">
+          <div className="stat__label">Pending invoice</div>
+          <div className="stat__val">{pos.filter(p=>p.po_status==='delivered').length}</div>
+          <div className="stat__hint">Delivered, invoice due</div>
+        </div>
+        <div className="stat">
+          <div className="stat__label">Total value</div>
+          <div className="stat__val">{fmt(totalValue)}</div>
+          <div className="stat__hint">{filter === 'active' ? 'In-flight orders' : 'All open orders'}</div>
+        </div>
+        <div className="stat">
+          <div className="stat__label">Overdue</div>
+          <div className="stat__val stat__val--gold">
+            {pos.filter(p => p.expected_delivery && new Date(p.expected_delivery) < new Date() && ['sent','acknowledged'].includes(p.po_status)).length}
+          </div>
+          <div className="stat__hint">Past expected delivery</div>
+        </div>
+      </div>
+
+      {/* Sections */}
+      {sections.map(sec => {
+        const inSec = displayed.filter(p => sec.statuses.includes(p.po_status))
+        if (!inSec.length) return null
+        return (
+          <section key={sec.id} className="section" style={{ marginBottom: 24 }}>
+            <div className="section__head">
+              <span className="section__icon"><IconPackage size={16}/></span>
+              <span className="section__title">{sec.label}</span>
+              <span className="section__count">{inSec.length}</span>
+              <span className="section__hint">{sec.hint}</span>
+            </div>
+            <div className="tlist">
+              {/* Header row */}
+              <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#75695F' }}>
+                <div>Status</div>
+                <div>Order</div>
+                <div>Supplier</div>
+                <div style={{ textAlign: 'right' }}>Value</div>
+                <div style={{ textAlign: 'right' }}>Expected</div>
+              </div>
+              {inSec.map(po => {
+                const isOpen = openId === po.id
+                const overdue = po.expected_delivery && new Date(po.expected_delivery) < new Date() && ['sent','acknowledged'].includes(po.po_status)
+                return (
+                  <div key={po.id}>
+                    <div className="trow" style={{ cursor: 'pointer' }} onClick={() => setOpenId(isOpen ? null : po.id)}>
+                      <div><PoStatusPill status={po.po_status} /></div>
+                      <div className="trow__main">
+                        <div className="trow__title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#8F5C12', fontWeight: 700 }}>{po.po_number}</span>
+                          {po.pdf_url && (
+                            <a href={po.pdf_url} target="_blank" rel="noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: '#2B5F7A', textDecoration: 'none', padding: '1px 6px', borderRadius: 3, background: '#E6EEF2', border: '1px solid #C5D5DE' }}>
+                              <IconFile size={10}/> PDF
+                            </a>
+                          )}
+                        </div>
+                        <div className="trow__meta">
+                          <span>{po.description?.substring(0, 55)}</span>
+                          {po.ticket_reference && <><span className="dot"/><span className="ref">{po.ticket_reference}</span></>}
+                          {po.branch_name && <><span className="dot"/><span>{po.branch_name}</span></>}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="trow__supplier">{po.supplier_name || '—'}</div>
+                        {po.submitted_by && <div className="trow__supplier-meta">{po.submitted_by}</div>}
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="trow__value">{po.amount_eur ? fmt(po.amount_eur) : '—'}</div>
+                        {po.currency && po.currency !== 'EUR' && <div style={{ fontSize: 11, color: '#A89B8B' }}>{po.currency}</div>}
+                      </div>
+                      <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                        {po.expected_delivery ? (
+                          <span style={{ fontSize: 12, color: overdue ? '#B5462E' : '#75695F', fontWeight: overdue ? 600 : 400 }}>
+                            {overdue ? '⚠ ' : ''}{new Date(po.expected_delivery).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          </span>
+                        ) : <span style={{ fontSize: 12, color: '#C9BFAE' }}>—</span>}
+                        <IconChevDown size={14} style={{ color: '#A89B8B', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }} />
+                      </div>
+                    </div>
+
+                    {/* Expanded PO detail */}
+                    {isOpen && (
+                      <div style={{ padding: '18px 24px 22px', background: '#FDFAF5', borderTop: '1px solid #EEE7DA' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+                          {/* Left: order detail */}
+                          <div>
+                            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>Order detail</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                              {[
+                                ['PO Number',   po.po_number],
+                                ['Supplier',    po.supplier_name],
+                                ['Branch',      po.branch_name],
+                                ['Category',    po.category],
+                                ['PO Date',     po.po_date ? new Date(po.po_date).toLocaleDateString('en-GB') : '—'],
+                                ['Expected',    po.expected_delivery ? new Date(po.expected_delivery).toLocaleDateString('en-GB') : '—'],
+                                ['Delivered',   po.delivered_at ? new Date(po.delivered_at).toLocaleDateString('en-GB') : '—'],
+                                ['Value',       po.amount_eur ? fmt(po.amount_eur) : '—'],
+                                ['Requested by',po.submitted_by || '—'],
+                                ['Ticket',      po.ticket_reference || '—'],
+                              ].map(([label, val]) => (
+                                <div key={label} style={{ display: 'flex', gap: 12, fontSize: 12.5 }}>
+                                  <span style={{ minWidth: 100, color: '#75695F', flexShrink: 0 }}>{label}</span>
+                                  <span style={{ color: '#161413', fontWeight: 500 }}>{val}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Right: description + notes + PDF */}
+                          <div>
+                            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>Description</div>
+                            <div style={{ fontSize: 13, color: '#3D3633', lineHeight: 1.6, marginBottom: 16 }}>
+                              {po.description || '—'}
+                            </div>
+                            {po.notes && (
+                              <>
+                                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 8 }}>Notes</div>
+                                <div style={{ fontSize: 12.5, color: '#75695F', lineHeight: 1.5 }}>{po.notes}</div>
+                              </>
+                            )}
+                            {po.pdf_url ? (
+                              <a href={po.pdf_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 14, padding: '8px 14px', borderRadius: 6, background: '#161413', color: '#F7F4ED', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}>
+                                <IconFile size={13}/> Download PO PDF
+                              </a>
+                            ) : (
+                              <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 6, background: '#F5F1EA', border: '1px solid #E5DDD0', fontSize: 12, color: '#A89B8B' }}>
+                                PDF not yet generated — available once PO is sent to supplier.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
+
+      {displayed.length === 0 && (
+        <div style={{ background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 8, padding: '64px 24px', textAlign: 'center' }}>
+          <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 28, color: '#161413', margin: '0 0 8px' }}>No orders yet.</h2>
+          <p style={{ fontSize: 13.5, color: '#75695F' }}>Approved requests generate a PO automatically.</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -1351,6 +1597,7 @@ export default function App() {
   const [reqType,     setReqType]     = useState(null)
   const [success,     setSuccess]     = useState(null)
   const [boardCount,  setBoardCount]  = useState(0)
+  const [ordersCount, setOrdersCount] = useState(0)
   const [sectionJump, setSectionJump] = useState(null)
   const [openByStatus, setOpenByStatus] = useState({})
   const [cart,        setCart]        = useState([])   // [{ item, qty }]
@@ -1409,6 +1656,7 @@ export default function App() {
   const crumbs = (() => {
     if (success)          return ['Submitted']
     if (tab === 'board')  return ['Operations']
+    if (tab === 'orders') return ['Orders']
     if (tab === 'catalog')return ['Catalog']
     if (tab === 'mine')   return ['My requests']
     if (tab === 'home')   return ['New request']
@@ -1416,7 +1664,7 @@ export default function App() {
     return ['Operations']
   })()
 
-  const counts = { open: boardCount }
+  const counts = { open: boardCount, orders: ordersCount }
 
   return (
     <>
@@ -1446,6 +1694,7 @@ export default function App() {
               onCountChange={handleCountChange}
             />
           )}
+          {!success && tab === 'orders'  && <OrdersBoard onCountChange={setOrdersCount} />}
           {!success && tab === 'catalog' && <CatalogScreen cart={cart} onAddToCart={handleAddToCart} onOpenCart={() => setCartOpen(true)} />}
           {!success && tab === 'mine'    && <MyRequestsScreen user={user} />}
           {!success && tab === 'home'    && <HomeScreen user={user} onCatalog={() => navigate('catalog')} onRequestType={startRequest} />}
