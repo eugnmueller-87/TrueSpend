@@ -259,11 +259,11 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
       <div className="sidebar__sectionhead">Reference</div>
       <nav className="sidebar__nav">
         {[
-          { label: 'Suppliers',  Icon: IconBuilding },
-          { label: 'Budgets',    Icon: IconWrench },
-          { label: 'Contracts',  Icon: IconRefresh },
-        ].map(({ label, Icon }) => (
-          <button key={label} className="sidebar__link">
+          { label: 'Suppliers',  Icon: IconBuilding, url: 'https://grafana-production-49fc.up.railway.app/d/3c77930d-33a5-4f55-b104-766e171573bf/suppliers' },
+          { label: 'Budgets',    Icon: IconWrench,   url: 'https://grafana-production-49fc.up.railway.app/d/06389734-1dd7-4bae-89c0-dcce8b1c8d09/budgets' },
+          { label: 'Contracts',  Icon: IconRefresh,  url: 'https://grafana-production-49fc.up.railway.app/d/7731a334-ca87-4301-a364-9b816c58b64c/contracts' },
+        ].map(({ label, Icon, url }) => (
+          <button key={label} className="sidebar__link" onClick={() => window.open(url, '_blank')}>
             <span className="sidebar__link-icon"><Icon size={16} /></span>
             <span>{label}</span>
           </button>
