@@ -9,7 +9,7 @@ export default defineConfig({
       '/api/intake': {
         target: 'https://n8n-n3xl.eugenmueller.tech',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/intake/, '/webhook/truespend-intake'),
+        rewrite: (path) => path.replace(/^\/api\/intake/, '/webhook/intake'),
       },
     },
   },

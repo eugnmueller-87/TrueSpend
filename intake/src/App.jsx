@@ -1,13 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-
 const POSTGREST_URL = import.meta.env.VITE_POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app'
 const POSTGREST_JWT = import.meta.env.VITE_POSTGREST_JWT || ''
-const N8N_WEBHOOK   = import.meta.env.VITE_N8N_WEBHOOK_URL || '/api/intake'
+const N8N_WEBHOOK   = import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://n8n-n3xl.eugenmueller.tech/webhook/intake'
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-
+// ─── Branches ─────────────────────────────────────────────────────────────────
 const BRANCHES = [
   { label: 'Global HQ',    id: 'b1000000-0000-0000-0000-000000000001' },
   { label: 'DACH',         id: 'b1000000-0000-0000-0000-000000000002' },
@@ -18,98 +16,13 @@ const BRANCHES = [
   { label: 'Iberia',       id: 'b1000000-0000-0000-0000-000000000007' },
   { label: 'Italy',        id: 'b1000000-0000-0000-0000-000000000008' },
   { label: 'CEE',          id: 'b1000000-0000-0000-0000-000000000009' },
-  { label: 'Nordics East', id: 'b1000000-0000-0000-0000-000000000010' },
 ]
 
-// Catalog — pre-negotiated items. catalog_item:true triggers fast path (budget check only)
-const CATALOG = [
-  {
-    category: 'Hardware',
-    icon: '💻',
-    items: [
-      { id: 'mac-pro-14', name: 'MacBook Pro 14"', supplier: 'Apple', price: 2199, description: 'M3 Pro, 18 GB RAM, 512 GB SSD — standard dev config', sku: 'APPMBP14M3PRO' },
-      { id: 'mac-pro-16', name: 'MacBook Pro 16"', supplier: 'Apple', price: 2999, description: 'M3 Max, 36 GB RAM, 1 TB SSD — power user config', sku: 'APPMBP16M3MAX' },
-      { id: 'dell-u27',   name: 'Dell UltraSharp 27"', supplier: 'Dell', price: 549, description: '4K USB-C monitor, 90W PD — standard desk monitor', sku: 'DELLU2723QE' },
-      { id: 'dock-uc',    name: 'CalDigit TS4 Dock', supplier: 'CalDigit', price: 299, description: 'Thunderbolt 4 dock, 18 ports — standard docking station', sku: 'CDTS4' },
-      { id: 'iphone-15',  name: 'iPhone 15 Pro', supplier: 'Apple', price: 1199, description: '256 GB, standard corporate mobile', sku: 'APPIPH15P256' },
-    ],
-  },
-  {
-    category: 'Software & Licenses',
-    icon: '📱',
-    items: [
-      { id: 'ms365-e3',   name: 'Microsoft 365 E3', supplier: 'Microsoft', price: 36, description: 'Per user / month — Teams, Outlook, Office, SharePoint', sku: 'MS365E3' },
-      { id: 'github-ent', name: 'GitHub Enterprise', supplier: 'GitHub', price: 21, description: 'Per user / month — Advanced Security + GHAS', sku: 'GHENT' },
-      { id: 'figma-org',  name: 'Figma Organization', supplier: 'Figma', price: 45, description: 'Per editor / month — unlimited projects', sku: 'FIGMAORG' },
-      { id: 'slack-pro',  name: 'Slack Pro', supplier: 'Salesforce', price: 8, description: 'Per user / month — standard workspace', sku: 'SLKPRO' },
-      { id: 'notion-plus',name: 'Notion Plus', supplier: 'Notion', price: 16, description: 'Per user / month — unlimited pages + AI', sku: 'NOTIONPLUS' },
-      { id: '1pw-teams',  name: '1Password Teams', supplier: '1Password', price: 4, description: 'Per user / month — password management', sku: '1PWTEAMS' },
-    ],
-  },
-  {
-    category: 'Cloud',
-    icon: '☁️',
-    items: [
-      { id: 'aws-reserved', name: 'AWS Reserved Instance', supplier: 'Amazon Web Services', price: 0, description: 'Variable — submit for budget allocation. Agent reviews utilization first.', sku: 'AWS-RI', variable: true },
-      { id: 'gcp-commit',   name: 'GCP Committed Use', supplier: 'Google Cloud', price: 0, description: 'Variable — commit discount contract. Agent checks prior spend.', sku: 'GCP-CUD', variable: true },
-      { id: 'az-reserved',  name: 'Azure Reserved VM', supplier: 'Microsoft Azure', price: 0, description: 'Variable — 1 or 3 year reservation. Specify instance type in notes.', sku: 'AZ-RES', variable: true },
-    ],
-  },
-  {
-    category: 'Services',
-    icon: '🔧',
-    items: [
-      { id: 'soc2-audit', name: 'SOC 2 Type II Audit', supplier: 'Deloitte', price: 35000, description: 'Annual audit — fixed price per framework agreement', sku: 'SOC2T2' },
-      { id: 'pen-test',   name: 'Penetration Test', supplier: 'NCC Group', price: 18000, description: 'Annual web + infra pentest — standard scope', sku: 'PENTESTANN' },
-      { id: 'legal-nda',  name: 'NDA Review', supplier: 'Bird & Bird', price: 950, description: 'Per NDA, standard review — 48h turnaround', sku: 'LGNDA48' },
-    ],
-  },
-]
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fmt = (n) => '€' + Number(n).toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 
-const STATUS_CONFIG = {
-  signature_required: { label: 'Signature Required', color: '#ef4444', bg: '#1a0808' },
-  pending_review:     { label: 'Pending Review',      color: '#f59e0b', bg: '#1a1200' },
-  escalated:          { label: 'Escalated',           color: '#a855f7', bg: '#120a1a' },
-  pending_confirm:    { label: 'Quick Confirm',        color: '#6366f1', bg: '#0d0d1a' },
-  approved:           { label: 'Approved',             color: '#22c55e', bg: '#081a0d' },
-  rejected:           { label: 'Rejected',             color: '#6b7280', bg: '#111111' },
-  closed:             { label: 'Done',                 color: '#6b7280', bg: '#111111' },
-  auto_executed:      { label: 'Auto-approved',        color: '#22c55e', bg: '#081a0d' },
-}
-
-const COMPLIANCE_CONFIG = {
-  green:   { label: 'Compliant', color: '#22c55e' },
-  amber:   { label: 'Gaps',      color: '#f59e0b' },
-  red:     { label: 'Blocked',   color: '#ef4444' },
-  pending: { label: 'Pending',   color: '#6b7280' },
-  running: { label: 'Running…',  color: '#6366f1' },
-}
-
-const NAV_ITEMS = [
-  { id: 'home',    label: 'Home',      icon: HomeIcon    },
-  { id: 'catalog', label: 'Catalog',   icon: CatalogIcon },
-  { id: 'mine',    label: 'My Orders', icon: ListIcon    },
-  { id: 'board',   label: 'Ops Board', icon: BoardIcon   },
-]
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function formatEuro(val) {
-  if (!val && val !== 0) return '—'
-  const n = parseFloat(val)
-  if (isNaN(n)) return val
-  return '€' + n.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-}
-
-function formatDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
-function timeAgo(iso) {
-  if (!iso) return ''
-  const diff = Date.now() - new Date(iso).getTime()
-  const m = Math.floor(diff / 60000)
+const timeAgo = (iso) => {
+  const m = Math.floor((Date.now() - new Date(iso)) / 60000)
   if (m < 1)  return 'just now'
   if (m < 60) return `${m}m ago`
   const h = Math.floor(m / 60)
@@ -117,1031 +30,753 @@ function timeAgo(iso) {
   return `${Math.floor(h / 24)}d ago`
 }
 
-function required(val) { return val && val.toString().trim().length > 0 }
-function validEmail(val) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) }
-
-async function pgFetch(path, options = {}) {
-  const headers = {
-    'Authorization': `Bearer ${POSTGREST_JWT}`,
-    'Accept': 'application/json',
-    ...(options.headers || {}),
-  }
-  const res = await fetch(`${POSTGREST_URL}${path}`, { ...options, headers })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`PostgREST ${res.status}: ${text}`)
-  }
-  if (res.status === 204) return null
-  return res.json()
-}
-
-async function submitIntake(payload) {
-  const res = await fetch(N8N_WEBHOOK, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+function useLocalStorage(key, init) {
+  const [v, setV] = useState(() => {
+    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : init } catch { return init }
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(text || `Server error ${res.status}`)
-  }
-  try { return await res.json() } catch { return {} }
+  const set = useCallback((val) => {
+    const next = typeof val === 'function' ? val(v) : val
+    setV(next)
+    try { localStorage.setItem(key, JSON.stringify(next)) } catch {}
+  }, [key, v])
+  return [v, set]
 }
 
-function useLocalStorage(key, initial) {
-  const [value, setValue] = useState(() => {
-    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : initial } catch { return initial }
+async function pgFetch(path) {
+  const r = await fetch(`${POSTGREST_URL}${path}`, {
+    headers: { Authorization: `Bearer ${POSTGREST_JWT}`, Accept: 'application/json' }
   })
-  const set = useCallback((v) => {
-    setValue(v)
-    try { localStorage.setItem(key, JSON.stringify(v)) } catch {}
-  }, [key])
-  return [value, set]
+  if (!r.ok) throw new Error(`PostgREST ${r.status}`)
+  return r.json()
 }
 
-// ─── Icons ────────────────────────────────────────────────────────────────────
+async function pgPatch(path, body) {
+  const r = await fetch(`${POSTGREST_URL}${path}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    body: JSON.stringify(body)
+  })
+  if (!r.ok) throw new Error(`PostgREST PATCH ${r.status}`)
+  return r.json()
+}
 
-function HomeIcon({ size = 20 }) {
+// ─── Icons (Lucide stroke style, 1.5px rounded) ───────────────────────────────
+const Icon = ({ children, size = 18, color, strokeWidth = 1.5, style, ...rest }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke={color || 'currentColor'} strokeWidth={strokeWidth}
+    strokeLinecap="round" strokeLinejoin="round" style={style} {...rest}>
+    {children}
+  </svg>
+)
+
+const IconHome     = (p) => <Icon {...p}><path d="M3 12l9-9 9 9"/><path d="M5 10v11h5v-7h4v7h5V10"/></Icon>
+const IconCatalog  = (p) => <Icon {...p}><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></Icon>
+const IconList     = (p) => <Icon {...p}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></Icon>
+const IconBoard    = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><circle cx="7" cy="14" r="1" fill="currentColor"/><path d="M11 14h7"/></Icon>
+const IconPlus     = (p) => <Icon {...p}><path d="M12 5v14M5 12h14"/></Icon>
+const IconMinus    = (p) => <Icon {...p}><path d="M5 12h14"/></Icon>
+const IconChev     = (p) => <Icon {...p}><path d="M9 6l6 6-6 6"/></Icon>
+const IconChevDown = (p) => <Icon {...p}><path d="M6 9l6 6 6-6"/></Icon>
+const IconArrowL   = (p) => <Icon {...p}><path d="M19 12H5M12 19l-7-7 7-7"/></Icon>
+const IconX        = (p) => <Icon {...p}><path d="M18 6L6 18M6 6l12 12"/></Icon>
+const IconRotateCw = (p) => <Icon {...p}><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></Icon>
+const IconCheck    = (p) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></Icon>
+const IconPenLine  = (p) => <Icon {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></Icon>
+const IconEye      = (p) => <Icon {...p}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></Icon>
+const IconSiren    = (p) => <Icon {...p}><path d="M7 12a5 5 0 0 1 10 0v6H7z"/><path d="M5 20h14"/><path d="M21 12h1M2 12h1M12 2v1M19 5l.7-.7M5 5l-.7-.7"/></Icon>
+const IconZap      = (p) => <Icon {...p}><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></Icon>
+const IconBag      = (p) => <Icon {...p}><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></Icon>
+const IconRefresh  = (p) => <Icon {...p}><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></Icon>
+const IconBuilding = (p) => <Icon {...p}><rect x="4" y="2" width="16" height="20" rx="1.5"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M8 14h.01M16 14h.01M12 6h.01M12 10h.01M12 14h.01"/></Icon>
+const IconLaptop   = (p) => <Icon {...p}><rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M2 20h20"/></Icon>
+const IconApp      = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor"/><circle cx="9" cy="6.5" r="0.6" fill="currentColor"/></Icon>
+const IconCloud    = (p) => <Icon {...p}><path d="M17 18a4 4 0 0 0 0-8 6 6 0 0 0-11.7 1.5A4.5 4.5 0 0 0 6.5 18z"/></Icon>
+const IconWrench   = (p) => <Icon {...p}><path d="M14.7 6.3a4 4 0 0 0 5.7 5.7l-9.4 9.4a2 2 0 0 1-2.8-2.8z"/><path d="M17 7l-2-2"/></Icon>
+const IconPackage  = (p) => <Icon {...p}><path d="M12 3l9 4.5v9L12 21l-9-4.5v-9z"/><path d="M3 7.5l9 4.5 9-4.5"/><path d="M12 12v9"/></Icon>
+
+// ─── Status config ─────────────────────────────────────────────────────────────
+const STATUS = {
+  signature_required: { label: 'Signature required', dot: '#B5462E', bg: '#F6E5DE', fg: '#B5462E' },
+  pending_review:     { label: 'Pending review',     dot: '#C99119', bg: '#FAF1D7', fg: '#8C6510' },
+  escalated:          { label: 'Escalated',          dot: '#2B5F7A', bg: '#E6EEF2', fg: '#2B5F7A' },
+  pending_confirm:    { label: 'Quick confirm',      dot: '#B07219', bg: '#F7EFDE', fg: '#8F5C12' },
+  approved:           { label: 'Approved',           dot: '#3D7A5A', bg: '#EEF3EE', fg: '#3D7A5A' },
+  rejected:           { label: 'Rejected',           dot: '#A89B8B', bg: '#EFEBE1', fg: '#75695F' },
+  closed:             { label: 'Closed',             dot: '#A89B8B', bg: '#EFEBE1', fg: '#75695F' },
+  auto_executed:      { label: 'Auto-executed',      dot: '#3D7A5A', bg: '#EEF3EE', fg: '#3D7A5A' },
+  reasoning:          { label: 'Reviewing',          dot: '#B07219', bg: '#F7EFDE', fg: '#8F5C12' },
+}
+
+const StatusPill = ({ status }) => {
+  const s = STATUS[status] || STATUS.closed
   return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 9.5L10 3l7 6.5" /><path d="M5 8v8h4v-4h2v4h4V8" />
-    </svg>
-  )
-}
-
-function CatalogIcon({ size = 20 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="3" width="7" height="7" rx="1" /><rect x="11" y="3" width="7" height="7" rx="1" />
-      <rect x="2" y="12" width="7" height="7" rx="1" /><rect x="11" y="12" width="7" height="7" rx="1" />
-    </svg>
-  )
-}
-
-function ListIcon({ size = 20 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 6h12M4 10h12M4 14h7" />
-    </svg>
-  )
-}
-
-function BoardIcon({ size = 20 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="3" width="16" height="14" rx="2" />
-      <path d="M2 7h16" /><circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none" />
-      <path d="M10 12h6" />
-    </svg>
-  )
-}
-
-function ChevronRight({ size = 16 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 3l5 5-5 5" />
-    </svg>
-  )
-}
-
-function ChevronBack({ size = 14 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 2L4 7l5 5" />
-    </svg>
-  )
-}
-
-// ─── Base UI components ───────────────────────────────────────────────────────
-
-function StepWrapper({ children }) {
-  const ref = useRef(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.classList.add('step-enter')
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      el.classList.remove('step-enter')
-      el.classList.add('step-visible')
-    }))
-  }, [])
-  return <div ref={ref} className="step-visible w-full">{children}</div>
-}
-
-function Label({ children, req }) {
-  return (
-    <label className="block text-sm font-medium text-white mb-1.5">
-      {children}{req && <span style={{ color: '#6366f1' }} className="ml-0.5">*</span>}
-    </label>
-  )
-}
-
-function Field({ label, error, req, children }) {
-  return (
-    <div className="mb-4">
-      {label && <Label req={req}>{label}</Label>}
-      {children}
-      {error && <p className="mt-1.5 text-xs" style={{ color: '#f87171' }}>{error}</p>}
-    </div>
-  )
-}
-
-function TextInput({ value, onChange, placeholder, error, type = 'text', ...rest }) {
-  return (
-    <input type={type} value={value} onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder} className={error ? 'error' : ''} {...rest} />
-  )
-}
-
-function EuroInput({ value, onChange, placeholder = '0', error }) {
-  return (
-    <div className="relative">
-      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm pointer-events-none" style={{ color: '#666' }}>€</span>
-      <input type="number" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder} className={error ? 'error' : ''} style={{ paddingLeft: '28px' }} min="0" step="any" />
-    </div>
-  )
-}
-
-function TextArea({ value, onChange, placeholder, error, rows = 3 }) {
-  return (
-    <textarea value={value} onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder} rows={rows} className={error ? 'error' : ''} />
-  )
-}
-
-function UrgencyToggle({ value, onChange }) {
-  return (
-    <div className="flex">
-      <button type="button" className={`toggle-btn${value === 'normal' ? ' active' : ''}`} onClick={() => onChange('normal')}>Normal</button>
-      <button type="button" className={`toggle-btn${value === 'urgent' ? ' active' : ''}`} onClick={() => onChange('urgent')}>Urgent</button>
-    </div>
-  )
-}
-
-function PrimaryButton({ loading, disabled, onClick, type = 'submit', children, fullWidth = true }) {
-  return (
-    <button type={type} disabled={loading || disabled} onClick={onClick}
-      className={`${fullWidth ? 'w-full' : ''} flex items-center justify-center gap-2 rounded-xl font-semibold text-white transition-all`}
-      style={{ background: loading || disabled ? '#4f52d9' : '#6366f1', minHeight: '52px', fontSize: '15px', border: 'none', cursor: loading || disabled ? 'not-allowed' : 'pointer', opacity: loading || disabled ? 0.75 : 1 }}>
-      {loading ? (<><span className="spinner" /><span>Submitting…</span></>) : children}
-    </button>
-  )
-}
-
-function BackButton({ onClick }) {
-  return (
-    <button type="button" onClick={onClick}
-      className="flex items-center gap-1.5 text-sm transition-colors"
-      style={{ color: '#666', background: 'none', border: 'none', cursor: 'pointer', padding: '0' }}>
-      <ChevronBack />Back
-    </button>
-  )
-}
-
-function StatusBadge({ status }) {
-  const cfg = STATUS_CONFIG[status] || { label: status, color: '#6b7280', bg: '#111' }
-  return (
-    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium"
-      style={{ color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
-      {cfg.label}
+    <span className="pill" style={{ background: s.bg, color: s.fg }}>
+      <span className="pill__dot" style={{ background: s.dot }} />
+      {s.label}
     </span>
   )
 }
 
-function ComplianceBadge({ status }) {
-  const cfg = COMPLIANCE_CONFIG[status] || { label: status, color: '#6b7280' }
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: cfg.color }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: cfg.color, display: 'inline-block' }} />
-      {cfg.label}
-    </span>
-  )
-}
-
-function ActionButton({ onClick, loading, variant, children }) {
-  const styles = {
-    primary:   { background: '#16a34a22', color: '#22c55e', border: '1px solid #16a34a44' },
-    danger:    { background: '#dc262622', color: '#ef4444', border: '1px solid #dc262644' },
-    secondary: { background: '#1e1e1e',   color: '#888',    border: '1px solid #2a2a2a'   },
-  }
-  const s = styles[variant] || styles.secondary
-  return (
-    <button type="button" onClick={onClick} disabled={loading}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-opacity"
-      style={{ ...s, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
-      {loading ? <span className="spinner" style={{ width: 12, height: 12 }} /> : children}
-    </button>
-  )
-}
-
-function SectionHeader({ icon, title, count, urgent }) {
-  return (
-    <div className="flex items-center gap-2 mb-3">
-      <span>{icon}</span>
-      <span className="text-sm font-semibold" style={{ color: urgent ? '#ef4444' : '#888' }}>{title}</span>
-      <span className="text-xs px-1.5 py-0.5 rounded-full font-mono"
-        style={{ background: urgent ? '#1a0808' : '#1a1a1a', color: urgent ? '#ef4444' : '#555' }}>
-        {count}
-      </span>
-    </div>
-  )
-}
-
-// ─── User session (localStorage) ─────────────────────────────────────────────
-
-function UserSetupModal({ onSave }) {
-  const [name,  setName]   = useState('')
-  const [email, setEmail]  = useState('')
-  const [branch, setBranch] = useState('')
-  const [errors, setErrors] = useState({})
-
-  function save() {
-    const e = {}
-    if (!required(name))         e.name   = 'Required'
-    if (!required(email) || !validEmail(email)) e.email  = 'Valid email required'
-    if (!required(branch))       e.branch = 'Required'
-    if (Object.keys(e).length) { setErrors(e); return }
-    onSave({ name, email, branch_id: branch })
-  }
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div style={{ background: '#111', border: '1px solid #2a2a2a', borderRadius: 16, padding: '32px 24px', width: '100%', maxWidth: 400 }}>
-        <div className="text-center mb-6">
-          <div className="font-bold text-xl mb-1" style={{ color: '#6366f1' }}>TrueSpend</div>
-          <h2 className="text-lg font-semibold text-white mb-1">Welcome</h2>
-          <p className="text-sm" style={{ color: '#666' }}>Tell us who you are — we'll remember you on this device.</p>
-        </div>
-        <Field label="Your name" req error={errors.name}>
-          <TextInput value={name} onChange={setName} placeholder="Jane Smith" error={errors.name} autoComplete="name" />
-        </Field>
-        <Field label="Work email" req error={errors.email}>
-          <TextInput type="email" value={email} onChange={setEmail} placeholder="jane@company.com" error={errors.email} autoComplete="email" />
-        </Field>
-        <Field label="Region / Branch" req error={errors.branch}>
-          <select value={branch} onChange={(e) => setBranch(e.target.value)} className={errors.branch ? 'error' : ''}>
-            <option value="" disabled>Select your region</option>
-            {BRANCHES.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-          </select>
-        </Field>
-        <PrimaryButton type="button" onClick={save}>Get started</PrimaryButton>
-      </div>
-    </div>
-  )
-}
-
-// ─── Home screen ─────────────────────────────────────────────────────────────
-
-const QUICK_TILES = [
-  { id: 'catalog',  label: 'Order from catalog',   sub: 'Pre-negotiated items, fast approval',  icon: '📦', nav: 'catalog'   },
-  { id: 'purchase', label: 'Ad-hoc purchase',       sub: 'New supplier or one-off spend',        icon: '🛒', nav: 'request', type: 'purchase' },
-  { id: 'renew',    label: 'Renew a contract',      sub: 'Extend or renegotiate an agreement',   icon: '🔄', nav: 'request', type: 'renew'    },
-  { id: 'onboard',  label: 'Onboard a supplier',   sub: 'Bring a new vendor into the system',   icon: '🏢', nav: 'request', type: 'onboard'  },
-  { id: 'other',    label: 'Something else',        sub: 'Any other procurement request',        icon: '⚡', nav: 'request', type: 'other'    },
+// ─── Board sections ────────────────────────────────────────────────────────────
+const BOARD_SECTIONS = [
+  { id: 'sig', Icon: IconPenLine, title: 'Signature required', urgent: true,  status: 'signature_required', hint: 'Final human checkpoint — agent has prepared the package.' },
+  { id: 'rev', Icon: IconEye,     title: 'Pending review',     urgent: false, status: 'pending_review',     hint: 'One signal uncertain — agent recommends, you decide.' },
+  { id: 'esc', Icon: IconSiren,   title: 'Escalated',          urgent: false, status: 'escalated',          hint: 'Crosses €100k or hits a compliance blocker.' },
+  { id: 'con', Icon: IconZap,     title: 'Quick confirm',      urgent: false, status: 'pending_confirm',    hint: 'Standard request — one-touch and the agent does the rest.' },
 ]
 
-function HomeScreen({ user, onNavigate, onRequestType }) {
-  const branchLabel = BRANCHES.find(b => b.id === user.branch_id)?.label || 'Unknown'
-
-  return (
-    <div style={{ padding: '0 0 100px' }}>
-      {/* Greeting */}
-      <div style={{ padding: '28px 16px 20px' }}>
-        <p className="text-sm mb-1" style={{ color: '#666' }}>Good day,</p>
-        <h1 className="text-2xl font-bold text-white mb-0.5">{user.name}</h1>
-        <p className="text-sm" style={{ color: '#555' }}>{branchLabel}</p>
-      </div>
-
-      {/* Fast-path catalog banner */}
-      <div style={{ margin: '0 16px 20px', background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)', border: '1px solid #2a2a4e', borderRadius: 14, padding: '20px' }}>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: '#6366f1' }}>Pre-approved catalog</div>
-            <div className="text-white font-semibold mb-1">Standard items, instant approval</div>
-            <div className="text-xs" style={{ color: '#666' }}>Contract in place. Budget check only. No waiting.</div>
-          </div>
-          <button type="button" onClick={() => onNavigate('catalog')}
-            style={{ background: '#6366f1', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 12 }}>
-            Browse
-          </button>
-        </div>
-      </div>
-
-      {/* Request tiles */}
-      <div style={{ padding: '0 16px' }}>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: '#444' }}>What do you need?</p>
-        <div className="grid gap-3">
-          {QUICK_TILES.map((tile) => (
-            <button key={tile.id} type="button"
-              onClick={() => tile.nav === 'catalog' ? onNavigate('catalog') : onRequestType(tile.type)}
-              style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, padding: '16px', textAlign: 'left', cursor: 'pointer', transition: 'border-color 0.15s' }}
-              onMouseEnter={(e) => e.currentTarget.style.borderColor = '#6366f133'}
-              onMouseLeave={(e) => e.currentTarget.style.borderColor = '#1e1e1e'}>
-              <div className="flex items-center gap-3">
-                <span style={{ fontSize: 22, lineHeight: 1 }}>{tile.icon}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-white font-semibold text-sm">{tile.label}</div>
-                  <div className="text-xs mt-0.5" style={{ color: '#555' }}>{tile.sub}</div>
-                </div>
-                <ChevronRight />
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Catalog ─────────────────────────────────────────────────────────────────
-
-function CatalogScreen({ user, onSuccess }) {
-  const [activeCategory, setActiveCategory] = useState(CATALOG[0].category)
-  const [ordering, setOrdering]   = useState(null) // item id being ordered
-  const [modal, setModal]         = useState(null) // item to confirm
-  const [qty, setQty]             = useState(1)
-  const [notes, setNotes]         = useState('')
-  const [amount, setAmount]       = useState('')
-  const [loading, setLoading]     = useState(false)
-
-  const cat = CATALOG.find(c => c.category === activeCategory)
-
-  function openModal(item) {
-    setModal(item)
-    setQty(1)
-    setNotes('')
-    setAmount(item.variable ? '' : String(item.price))
-  }
-
-  async function placeOrder() {
-    if (!modal) return
-    setLoading(true)
-    try {
-      const unitPrice = modal.variable ? parseFloat(amount) || 0 : modal.price
-      const total = unitPrice * qty
-      const payload = {
-        ticket_type: 'purchase',
-        ticket_type_label: 'Catalog Order',
-        catalog_item: true,
-        catalog_sku: modal.sku,
-        title: `${modal.name} × ${qty}`,
-        description: `Catalog order: ${modal.name}. SKU: ${modal.sku}. ${notes}`.trim(),
-        supplier_name: modal.supplier,
-        amount: total,
-        currency: 'EUR',
-        urgency: 'normal',
-        notes: notes || null,
-        submitted_by: user.name,
-        submitted_by_email: user.email,
-        branch_id: user.branch_id,
-        submitted_at: new Date().toISOString(),
-      }
-      const data = await submitIntake(payload)
-      setModal(null)
-      onSuccess({ reference: data?.reference || data?.ticket_id || data?.id || null, email: user.email, item: modal.name })
-    } catch (err) {
-      alert('Order failed: ' + err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div style={{ paddingBottom: 100 }}>
-      {/* Category tabs */}
-      <div style={{ overflowX: 'auto', padding: '16px 16px 0', display: 'flex', gap: 8, borderBottom: '1px solid #1a1a1a' }}>
-        {CATALOG.map(c => (
-          <button key={c.category} type="button" onClick={() => setActiveCategory(c.category)}
-            style={{ whiteSpace: 'nowrap', padding: '8px 14px', borderRadius: '8px 8px 0 0', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer', background: activeCategory === c.category ? '#6366f1' : 'transparent', color: activeCategory === c.category ? '#fff' : '#666', borderBottom: activeCategory === c.category ? 'none' : 'transparent', transition: 'all 0.15s' }}>
-            {c.icon} {c.category}
-          </button>
-        ))}
-      </div>
-
-      {/* Item list */}
-      <div style={{ padding: '16px' }}>
-        <p className="text-xs mb-4" style={{ color: '#555' }}>Pre-negotiated pricing. Contract on file. Budget check only — no full review.</p>
-        <div className="grid gap-3">
-          {cat.items.map(item => (
-            <div key={item.id} style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, padding: '16px' }}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-white font-semibold text-sm mb-0.5">{item.name}</div>
-                  <div className="text-xs mb-2" style={{ color: '#555' }}>{item.description}</div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs" style={{ color: '#444' }}>{item.supplier}</span>
-                    <span className="text-xs font-mono" style={{ color: '#333' }}>{item.sku}</span>
-                  </div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="font-bold text-white mb-2">
-                    {item.variable ? 'Variable' : formatEuro(item.price)}
-                    {!item.variable && <span className="text-xs font-normal ml-1" style={{ color: '#555' }}>{item.price < 100 ? '/mo' : ''}</span>}
-                  </div>
-                  <button type="button" onClick={() => openModal(item)}
-                    style={{ background: '#6366f115', color: '#6366f1', border: '1px solid #6366f133', borderRadius: 8, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                    Order
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Order modal */}
-      {modal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0' }}>
-          <div style={{ background: '#111', border: '1px solid #2a2a2a', borderRadius: '16px 16px 0 0', padding: '24px 20px 40px', width: '100%', maxWidth: 500 }}>
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <div className="text-white font-bold">{modal.name}</div>
-                <div className="text-xs" style={{ color: '#555' }}>{modal.supplier}</div>
-              </div>
-              <button type="button" onClick={() => setModal(null)}
-                style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 20, padding: 4 }}>
-                ✕
-              </button>
-            </div>
-
-            {modal.variable && (
-              <Field label="Amount (€)" req>
-                <EuroInput value={amount} onChange={setAmount} placeholder="Enter total amount" />
-              </Field>
-            )}
-
-            <Field label="Quantity">
-              <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setQty(q => Math.max(1, q - 1))}
-                  style={{ background: '#1e1e1e', border: '1px solid #2a2a2a', color: '#fff', width: 40, height: 40, borderRadius: 8, fontSize: 18, cursor: 'pointer' }}>−</button>
-                <span className="text-white font-bold text-lg" style={{ minWidth: 32, textAlign: 'center' }}>{qty}</span>
-                <button type="button" onClick={() => setQty(q => q + 1)}
-                  style={{ background: '#1e1e1e', border: '1px solid #2a2a2a', color: '#fff', width: 40, height: 40, borderRadius: 8, fontSize: 18, cursor: 'pointer' }}>+</button>
-                {!modal.variable && (
-                  <span className="ml-2 font-semibold text-white">{formatEuro(modal.price * qty)}</span>
-                )}
-              </div>
-            </Field>
-
-            <Field label="Notes (optional)">
-              <TextArea value={notes} onChange={setNotes} placeholder="Any specific requirements, asset tag, etc." rows={2} />
-            </Field>
-
-            <div style={{ background: '#0d0d1a', border: '1px solid #1a1a2e', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
-              <div className="text-xs" style={{ color: '#6366f1' }}>Fast-path order — budget check only. Auto-approved if budget available.</div>
-            </div>
-
-            <PrimaryButton type="button" onClick={placeOrder} loading={loading}>
-              Place Order
-            </PrimaryButton>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── My Requests ─────────────────────────────────────────────────────────────
-
-function MyRequestsScreen({ user }) {
-  const [tickets, setTickets]   = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState(null)
-
-  const fetchMyTickets = useCallback(async () => {
-    setLoading(true)
-    try {
-      const enc = encodeURIComponent(user.email)
-      const data = await pgFetch(`/tickets?submitted_by_email=eq.${enc}&order=created_at.desc&limit=50`)
-      setTickets(data || [])
-      setError(null)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [user.email])
-
-  useEffect(() => { fetchMyTickets() }, [fetchMyTickets])
-
-  return (
-    <div style={{ padding: '20px 16px 100px' }}>
-      <div className="flex items-center justify-between mb-5">
-        <h2 className="text-lg font-bold text-white">My Requests</h2>
-        <button type="button" onClick={fetchMyTickets}
-          style={{ background: '#111', border: '1px solid #1e1e1e', color: '#555', borderRadius: 8, padding: '6px 12px', fontSize: 12, cursor: 'pointer' }}>
-          ↻ Refresh
-        </button>
-      </div>
-
-      {loading && (
-        <div className="flex justify-center py-12"><span className="spinner" /></div>
-      )}
-      {error && (
-        <div className="rounded-xl px-4 py-3 mb-4 text-sm" style={{ background: '#1a0808', border: '1px solid #3f1010', color: '#f87171' }}>
-          {error}
-        </div>
-      )}
-      {!loading && !error && tickets.length === 0 && (
-        <div className="flex flex-col items-center py-16 text-center">
-          <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-          <p className="text-sm" style={{ color: '#555' }}>No requests yet. Use the catalog or submit a request from Home.</p>
-        </div>
-      )}
-
-      <div className="grid gap-3">
-        {tickets.map(t => (
-          <div key={t.id} style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, padding: '16px' }}>
-            <div className="flex items-start justify-between gap-2 mb-2">
-              <div className="text-white text-sm font-semibold flex-1 min-w-0">{t.title}</div>
-              <StatusBadge status={t.status} />
-            </div>
-            <div className="flex items-center gap-3 text-xs flex-wrap" style={{ color: '#555' }}>
-              {t.value_eur && <span className="font-semibold" style={{ color: '#888' }}>{formatEuro(t.value_eur)}</span>}
-              {t.supplier_name && <span>{t.supplier_name}</span>}
-              {t.reference && <span className="font-mono">{t.reference}</span>}
-              <span>{timeAgo(t.created_at)}</span>
-            </div>
-            {t.po_number && (
-              <div className="mt-2 text-xs font-mono" style={{ color: '#6366f1' }}>PO: {t.po_number}</div>
-            )}
-            {t.review_notes && (
-              <div className="mt-2 text-xs p-2 rounded-lg" style={{ background: '#0d0d0d', color: '#777', border: '1px solid #1a1a1a' }}>
-                {t.review_notes}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ─── Request form (ad-hoc, renew, onboard, other) ────────────────────────────
+// ─── Catalog data ──────────────────────────────────────────────────────────────
+const CATALOG = [
+  {
+    category: 'Hardware', Icon: IconLaptop,
+    items: [
+      { id: 'mac-pro-14', name: 'MacBook Pro 14"',     supplier: 'Apple',    price: 2199,  sku: 'APPMBP14M3PRO', desc: 'M3 Pro · 18 GB · 512 GB. Standard dev config.' },
+      { id: 'mac-pro-16', name: 'MacBook Pro 16"',     supplier: 'Apple',    price: 2999,  sku: 'APPMBP16M3MAX', desc: 'M3 Max · 36 GB · 1 TB. Power user config.' },
+      { id: 'dell-u27',   name: 'Dell UltraSharp 27"', supplier: 'Dell',     price: 549,   sku: 'DELLU2723QE',   desc: '4K USB-C monitor, 90 W PD. Standard desk monitor.' },
+      { id: 'dock-uc',    name: 'CalDigit TS4 Dock',   supplier: 'CalDigit', price: 299,   sku: 'CDTS4',         desc: 'Thunderbolt 4, 18 ports. Standard docking station.' },
+      { id: 'iphone-15',  name: 'iPhone 15 Pro',       supplier: 'Apple',    price: 1199,  sku: 'APPIPH15P256',  desc: '256 GB. Standard corporate mobile.' },
+    ],
+  },
+  {
+    category: 'Software', Icon: IconApp,
+    items: [
+      { id: 'ms365-e3',   name: 'Microsoft 365 E3',   supplier: 'Microsoft', price: 36, sku: 'MS365E3',   desc: 'Per user / month. Teams, Outlook, Office, SharePoint.', per: '/mo' },
+      { id: 'github-ent', name: 'GitHub Enterprise',  supplier: 'GitHub',    price: 21, sku: 'GHENT',     desc: 'Per user / month. Advanced Security + GHAS.', per: '/mo' },
+      { id: 'figma-org',  name: 'Figma Organization', supplier: 'Figma',     price: 45, sku: 'FIGMAORG',  desc: 'Per editor / month. Unlimited projects.', per: '/mo' },
+      { id: 'slack-pro',  name: 'Slack Pro',          supplier: 'Salesforce',price: 8,  sku: 'SLKPRO',    desc: 'Per user / month. Standard workspace.', per: '/mo' },
+    ],
+  },
+  {
+    category: 'Cloud', Icon: IconCloud,
+    items: [
+      { id: 'aws-ri', name: 'AWS Reserved Instance', supplier: 'Amazon Web Services', price: 0, sku: 'AWS-RI',  desc: 'Variable — submit for budget allocation. Agent reviews utilisation first.', variable: true },
+      { id: 'gcp-cu', name: 'GCP Committed Use',     supplier: 'Google Cloud',        price: 0, sku: 'GCP-CUD', desc: 'Variable — commit discount contract. Agent checks prior spend.', variable: true },
+    ],
+  },
+  {
+    category: 'Services', Icon: IconWrench,
+    items: [
+      { id: 'soc2', name: 'SOC 2 Type II audit', supplier: 'Deloitte',  price: 35000, sku: 'SOC2T2',     desc: 'Annual audit. Fixed price per framework agreement.' },
+      { id: 'pen',  name: 'Penetration test',    supplier: 'NCC Group', price: 18000, sku: 'PENTESTANN', desc: 'Annual web + infra pentest. Standard scope.' },
+    ],
+  },
+]
 
 const FORM_CONFIG = {
-  purchase: { icon: '🛒', title: 'Purchase Request',   hint: 'New supplier or one-off spend' },
-  renew:    { icon: '🔄', title: 'Contract Renewal',   hint: 'Extend or renegotiate an agreement' },
-  onboard:  { icon: '🏢', title: 'Supplier Onboarding', hint: 'Bring a new vendor into the system' },
-  other:    { icon: '⚡', title: 'Other Request',       hint: 'Anything else' },
+  purchase: { title: 'Purchase request',    hint: 'New supplier or one-off spend.' },
+  renew:    { title: 'Contract renewal',    hint: 'Extend or renegotiate an agreement.' },
+  onboard:  { title: 'Supplier onboarding', hint: 'Bring a new vendor into the system.' },
+  other:    { title: 'Other request',       hint: 'Anything else.' },
 }
 
-const SUPPLIER_CATEGORIES = ['Hardware', 'Cloud', 'SaaS', 'Services', 'Other']
+const QUICK_TILES = [
+  { id: 'purchase', label: 'Ad-hoc purchase',    sub: 'New supplier or one-off spend',      Icon: IconBag },
+  { id: 'renew',    label: 'Renew a contract',   sub: 'Extend or renegotiate an agreement', Icon: IconRefresh },
+  { id: 'onboard',  label: 'Onboard a supplier', sub: 'Bring a new vendor into the system', Icon: IconBuilding },
+  { id: 'other',    label: 'Something else',     sub: 'Any other procurement request',      Icon: IconZap },
+]
 
-function RequestForm({ user, requestType, onBack, onSuccess }) {
-  const cfg = FORM_CONFIG[requestType] || FORM_CONFIG.other
-  const [values, setValues] = useState({ urgency: 'normal' })
-  const [errors, setErrors] = useState({})
-  const [loading, setLoading] = useState(false)
-  const [submitError, setSubmitError] = useState(null)
+// ─── Agent activity feed (static) ─────────────────────────────────────────────
+const AGENT_FEED = [
+  { time: '11:32', title: 'Auto-approved Figma Organization × 6',           branch: 'DACH',    value: 270 },
+  { time: '11:28', title: 'Released Q2 commit on AWS reserved (us-east-1)', branch: 'Global',  value: 9400 },
+  { time: '11:14', title: 'Reordered Dell UltraSharp 27" × 4',              branch: 'Nordics', value: 2196 },
+  { time: '10:51', title: 'Closed Slack Pro renewal — same terms',           branch: 'Iberia',  value: 1248 },
+  { time: '10:39', title: 'Auto-approved MS 365 E3 × 12 onboardings',       branch: 'DACH',    value: 432 },
+  { time: '10:22', title: 'Cleared shelfware: 14 Salesforce seats',          branch: 'Benelux', value: -2380, dim: true },
+  { time: '09:57', title: 'Onboarded NCC Group — DPA + NDA signed',          branch: 'UK & IE', value: 0,    dim: true },
+]
 
-  function change(field, val) {
-    setValues(prev => ({ ...prev, [field]: val }))
-    if (errors[field]) setErrors(prev => ({ ...prev, [field]: null }))
-  }
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+const NAV_PRIMARY = [
+  { id: 'board',   label: 'Operations',  Icon: IconBoard,   countKey: 'open' },
+  { id: 'catalog', label: 'Catalog',     Icon: IconCatalog },
+  { id: 'mine',    label: 'My requests', Icon: IconList },
+  { id: 'home',    label: 'New request', Icon: IconPlus },
+]
 
-  const sharedRules = {
-    submitted_by:       v => required(v) ? null : 'Your name is required',
-    submitted_by_email: v => { if (!required(v)) return 'Email required'; if (!validEmail(v)) return 'Valid email required'; return null },
-    branch_id:          v => required(v) ? null : 'Select your branch',
-  }
-
-  const typeRules = {
-    purchase: { supplier_name: v => required(v) ? null : 'Supplier required', amount: v => required(v) ? null : 'Amount required', description: v => required(v) ? null : 'Description required' },
-    renew:    { supplier_name: v => required(v) ? null : 'Supplier required', amount: v => required(v) ? null : 'Value required' },
-    onboard:  { supplier_name: v => required(v) ? null : 'Company required', country: v => required(v) ? null : 'Country required', category: v => required(v) ? null : 'Category required', description: v => required(v) ? null : 'Justification required' },
-    other:    { title: v => required(v) ? null : 'Title required', description: v => required(v) ? null : 'Description required' },
-  }
-
-  function validate() {
-    const rules = { ...(typeRules[requestType] || {}), ...sharedRules }
-    const errs = {}
-    let hasError = false
-    for (const [field, rule] of Object.entries(rules)) {
-      const msg = rule(values[field] || '')
-      if (msg) { errs[field] = msg; hasError = true }
-    }
-    return { errs, hasError }
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    const { errs, hasError } = validate()
-    if (hasError) { setErrors(errs); return }
-    setLoading(true); setSubmitError(null)
-    try {
-      const title = requestType === 'other'    ? values.title
-        : requestType === 'renew'    ? `Renew — ${values.supplier_name}`
-        : requestType === 'purchase' ? `Purchase — ${values.supplier_name}`
-        : `Onboard — ${values.supplier_name}`
-      const payload = {
-        ticket_type: requestType,
-        ticket_type_label: cfg.title,
-        catalog_item: false,
-        title,
-        description: values.description || null,
-        supplier_name: values.supplier_name || null,
-        amount: values.amount ? parseFloat(values.amount) : null,
-        currency: 'EUR',
-        country: values.country || null,
-        category: values.category || null,
-        notes: values.notes || null,
-        urgency: values.urgency || 'normal',
-        submitted_by: user.name,
-        submitted_by_email: user.email,
-        branch_id: user.branch_id,
-        submitted_at: new Date().toISOString(),
-      }
-      const data = await submitIntake(payload)
-      onSuccess({ reference: data?.reference || data?.ticket_id || data?.id || null, email: user.email })
-    } catch (err) {
-      setSubmitError(err.message?.includes('Failed to fetch')
-        ? 'Could not reach the server. Check your connection.'
-        : err.message || 'Something went wrong. Try again.')
-    } finally { setLoading(false) }
-  }
+const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwitchUser }) => {
+  const sidebarTab = tab === 'request' ? 'home' : tab
+  const initials = user ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '?'
+  const branch = user ? (BRANCHES.find(b => b.id === user.branchId)?.label || '') : ''
 
   return (
-    <div style={{ padding: '20px 16px 100px' }}>
-      <div className="flex items-center gap-3 mb-6">
-        <BackButton onClick={onBack} />
-        <div className="flex items-center gap-2">
-          <span style={{ fontSize: 20 }}>{cfg.icon}</span>
-          <div>
-            <div className="text-white font-semibold">{cfg.title}</div>
-            <div className="text-xs" style={{ color: '#555' }}>{cfg.hint}</div>
-          </div>
+    <aside className="sidebar">
+      <div className="sidebar__brand">
+        <div className="sidebar__brand-mark">
+          <svg width="16" height="16" viewBox="0 0 64 64" fill="none">
+            <path d="M16 18 H48 V25 H37 V48 H29 V25 H16 Z" fill="#B07219"/>
+            <path d="M22 18 L42 18 L42 25 L33 25 L33 32 L25 32 L25 25 L22 25 Z" fill="#D89E40" opacity="0.85"/>
+          </svg>
         </div>
+        <span className="sidebar__brand-word">TrueSpend</span>
       </div>
 
-      <form onSubmit={handleSubmit} noValidate>
-        {/* Purchase-specific */}
-        {requestType === 'purchase' && (
-          <>
-            <Field label="Supplier" req error={errors.supplier_name}>
-              <TextInput value={values.supplier_name || ''} onChange={v => change('supplier_name', v)} placeholder="Supplier or vendor name" error={errors.supplier_name} />
-            </Field>
-            <Field label="Amount" req error={errors.amount}>
-              <EuroInput value={values.amount || ''} onChange={v => change('amount', v)} error={errors.amount} />
-            </Field>
-            <Field label="What's it for?" req error={errors.description}>
-              <TextInput value={values.description || ''} onChange={v => change('description', v)} placeholder="Brief description" error={errors.description} />
-            </Field>
-            <Field label="Business justification" error={errors.notes}>
-              <TextArea value={values.notes || ''} onChange={v => change('notes', v)} placeholder="Why is this needed? What does it replace or enable?" rows={3} />
-            </Field>
-            <Field label="Urgency">
-              <UrgencyToggle value={values.urgency || 'normal'} onChange={v => change('urgency', v)} />
-            </Field>
-          </>
-        )}
+      <div className="sidebar__sectionhead">Workspace</div>
+      <nav className="sidebar__nav">
+        {NAV_PRIMARY.map(({ id, label, Icon, countKey }) => {
+          const active = sidebarTab === id
+          const count = countKey ? counts[countKey] : null
+          return (
+            <button
+              key={id}
+              className={'sidebar__link' + (active ? ' sidebar__link--active' : '')}
+              onClick={() => onNav(id)}
+            >
+              <span className="sidebar__link-icon"><Icon size={16} /></span>
+              <span>{label}</span>
+              {count != null && count > 0 && (
+                <span className={'sidebar__count' + (countKey === 'open' ? ' sidebar__count--urgent' : '')}>
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
 
-        {/* Renew-specific */}
-        {requestType === 'renew' && (
-          <>
-            <Field label="Supplier name" req error={errors.supplier_name}>
-              <TextInput value={values.supplier_name || ''} onChange={v => change('supplier_name', v)} placeholder="Acme Corp" error={errors.supplier_name} />
-            </Field>
-            <Field label="Contract value" req error={errors.amount}>
-              <EuroInput value={values.amount || ''} onChange={v => change('amount', v)} error={errors.amount} />
-            </Field>
-            <Field label="Notes" error={errors.notes}>
-              <TextArea value={values.notes || ''} onChange={v => change('notes', v)} placeholder="Expiry date, key terms, requested changes…" rows={3} />
-            </Field>
-          </>
-        )}
-
-        {/* Onboard-specific */}
-        {requestType === 'onboard' && (
-          <>
-            <Field label="Company name" req error={errors.supplier_name}>
-              <TextInput value={values.supplier_name || ''} onChange={v => change('supplier_name', v)} placeholder="New Vendor Ltd" error={errors.supplier_name} />
-            </Field>
-            <Field label="Country" req error={errors.country}>
-              <TextInput value={values.country || ''} onChange={v => change('country', v)} placeholder="e.g. Germany" error={errors.country} />
-            </Field>
-            <Field label="Category" req error={errors.category}>
-              <select value={values.category || ''} onChange={e => change('category', e.target.value)} className={errors.category ? 'error' : ''}>
-                <option value="" disabled>Select category</option>
-                {SUPPLIER_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </Field>
-            <Field label="Business justification" req error={errors.description}>
-              <TextArea value={values.description || ''} onChange={v => change('description', v)} placeholder="Why do we need this vendor?" rows={3} />
-            </Field>
-          </>
-        )}
-
-        {/* Other */}
-        {requestType === 'other' && (
-          <>
-            <Field label="Title" req error={errors.title}>
-              <TextInput value={values.title || ''} onChange={v => change('title', v)} placeholder="Short summary" error={errors.title} />
-            </Field>
-            <Field label="Description" req error={errors.description}>
-              <TextArea value={values.description || ''} onChange={v => change('description', v)} placeholder="What do you need and why?" rows={4} />
-            </Field>
-            <Field label="Amount (if applicable)" error={errors.amount}>
-              <EuroInput value={values.amount || ''} onChange={v => change('amount', v)} placeholder="Optional" error={errors.amount} />
-            </Field>
-          </>
-        )}
-
-        {/* Note about full workflow */}
-        <div style={{ background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 10, padding: '12px 14px', marginBottom: 20 }}>
-          <div className="text-xs" style={{ color: '#555' }}>This request runs a full compliance and budget review. The agent will process it and notify you at <span style={{ color: '#aaa' }}>{user.email}</span>.</div>
+      {sidebarTab === 'board' && openByStatus && Object.keys(openByStatus).length > 0 && (
+        <div style={{ padding: '6px 12px 0', marginTop: 8 }}>
+          {[
+            { status: 'signature_required', label: 'Signature required', dot: '#B5462E' },
+            { status: 'pending_review',     label: 'Pending review',     dot: '#C99119' },
+            { status: 'escalated',          label: 'Escalated',          dot: '#2B5F7A' },
+            { status: 'pending_confirm',    label: 'Quick confirm',      dot: '#B07219' },
+          ].map(s => {
+            const c = openByStatus[s.status] || 0
+            if (!c) return null
+            return (
+              <button key={s.status} className="sidebar__sub" onClick={() => onJumpSection(s.status)}>
+                <span className="sidebar__sub-dot" style={{ background: s.dot }} />
+                <span>{s.label}</span>
+                <span className="sidebar__sub-count">{c}</span>
+              </button>
+            )
+          })}
         </div>
+      )}
 
-        {submitError && (
-          <div className="rounded-xl px-4 py-3 mb-4 text-sm" style={{ background: '#1a0808', border: '1px solid #3f1010', color: '#f87171' }}>{submitError}</div>
-        )}
+      <div className="sidebar__sectionhead">Reference</div>
+      <nav className="sidebar__nav">
+        {[
+          { label: 'Suppliers',  Icon: IconBuilding },
+          { label: 'Budgets',    Icon: IconWrench },
+          { label: 'Contracts',  Icon: IconRefresh },
+        ].map(({ label, Icon }) => (
+          <button key={label} className="sidebar__link">
+            <span className="sidebar__link-icon"><Icon size={16} /></span>
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
 
-        <PrimaryButton loading={loading}>Submit request</PrimaryButton>
-      </form>
+      <div className="sidebar__user">
+        <div className="sidebar__avatar">{initials}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="sidebar__user-name">{user?.name || 'Guest'}</div>
+          <div className="sidebar__user-sub">{branch}</div>
+        </div>
+        <button className="iconbtn" title="Switch user" style={{ width: 26, height: 26 }} onClick={onSwitchUser}>
+          <IconChevDown size={14} />
+        </button>
+      </div>
+    </aside>
+  )
+}
+
+// ─── TopBar ───────────────────────────────────────────────────────────────────
+const TopBar = ({ crumbs, cartCount = 0, onOpenCart }) => (
+  <div className="topbar">
+    <div className="topbar__crumbs">
+      {crumbs.map((c, i) => (
+        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          {i > 0 && <IconChev size={12} style={{ color: '#A89B8B' }} />}
+          {i === crumbs.length - 1 ? <strong>{c}</strong> : <span>{c}</span>}
+        </span>
+      ))}
+    </div>
+    <div className="topbar__right">
+      <div className="searchbar">
+        <span className="searchbar__icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
+          </svg>
+        </span>
+        <input placeholder="Search requests, suppliers, refs…" />
+        <span className="searchbar__kbd">⌘ K</span>
+      </div>
+      {cartCount > 0 && (
+        <button className="btn btn--ink btn--sm" onClick={onOpenCart} style={{ position: 'relative', gap: 8 }}>
+          <IconBag size={14} />
+          Cart
+          <span style={{
+            background: '#B07219', color: '#fff',
+            fontSize: 10, fontWeight: 700, lineHeight: 1,
+            padding: '2px 5px', borderRadius: 99,
+            fontVariantNumeric: 'tabular-nums',
+          }}>{cartCount}</span>
+        </button>
+      )}
+      <button className="iconbtn" title="Notifications">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.7 21a2 2 0 0 1-3.4 0"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+)
+
+// ─── Agent Rail ────────────────────────────────────────────────────────────────
+const AgentRail = () => (
+  <aside className="rail">
+    <div className="rail__head">
+      <span className="rail__head-dot" />
+      Agent · today
+    </div>
+    <div className="rail__feed">
+      {AGENT_FEED.map((e, i) => (
+        <div key={i} className="rail__entry">
+          <div className="rail__entry-time">{e.time}</div>
+          <div className="rail__entry-title">{e.title}</div>
+          <div className="rail__entry-meta">
+            <span>{e.branch}</span>
+            {e.value !== 0 && (
+              <>
+                <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#C9BFAE', display: 'inline-block' }} />
+                <span className="money" style={{ fontSize: 12, color: e.value < 0 ? '#3D7A5A' : (e.dim ? '#75695F' : '#3D3633') }}>
+                  {e.value < 0 ? '−' : ''}{fmt(Math.abs(e.value))}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  </aside>
+)
+
+// ─── Stats Strip ──────────────────────────────────────────────────────────────
+const StatsStrip = ({ tickets }) => {
+  const totalValue = tickets.reduce((s, t) => s + (t.value_eur || 0), 0)
+  return (
+    <div className="stats">
+      <div className="stat">
+        <div className="stat__label">Need you</div>
+        <div className="stat__val">{tickets.length}</div>
+        <div className="stat__hint">Across {BOARD_SECTIONS.filter(s => tickets.some(t => t.status === s.status)).length} sections</div>
+      </div>
+      <div className="stat">
+        <div className="stat__label">Value at decision</div>
+        <div className="stat__val">{fmt(totalValue)}</div>
+        <div className="stat__hint">Total notional in your queue</div>
+      </div>
+      <div className="stat">
+        <div className="stat__label">Closed today by agent</div>
+        <div className="stat__val">47 <em>auto</em></div>
+        <div className="stat__hint">€248.500 · 0 errors</div>
+      </div>
+      <div className="stat">
+        <div className="stat__label">Confidence floor</div>
+        <div className="stat__val stat__val--gold">92%</div>
+        <div className="stat__hint">Below floor → routed here</div>
+      </div>
     </div>
   )
 }
 
-// ─── Success screen ───────────────────────────────────────────────────────────
-
-function SuccessScreen({ result, onDone }) {
+// ─── Ticket Row ───────────────────────────────────────────────────────────────
+const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
   return (
-    <StepWrapper>
-      <div className="flex flex-col items-center text-center" style={{ padding: '60px 24px 40px' }}>
-        <svg width="88" height="88" viewBox="0 0 88 88" fill="none" style={{ marginBottom: 28 }}>
-          <circle className="check-circle" cx="44" cy="44" r="40" fill="#16a34a" fillOpacity="0.15" stroke="#22c55e" strokeWidth="2" />
-          <path className="check-mark" d="M27 45l12 12 22-22" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        <h1 className="text-2xl font-bold text-white mb-2">{result.item ? 'Order placed' : 'Submitted'}</h1>
-        {result.reference && (
-          <div className="inline-flex items-center gap-2 rounded-lg px-4 py-2 mb-4" style={{ background: '#141414', border: '1px solid #2a2a2a' }}>
-            <span className="text-xs font-medium uppercase tracking-wider" style={{ color: '#888' }}>Ref</span>
-            <span className="font-mono font-semibold text-white text-sm">{result.reference}</span>
+    <>
+      <div className={'trow' + (isOpen ? ' trow--open' : '')} onClick={() => onToggle(ticket.id)}>
+        <div className="trow__status">
+          <StatusPill status={ticket.status} />
+        </div>
+        <div className="trow__main">
+          <div className="trow__title">{ticket.title}</div>
+          <div className="trow__meta">
+            <span className="ref">{ticket.reference}</span>
+            <span className="dot" />
+            <span>{timeAgo(ticket.created_at)}</span>
+            {ticket.category && <><span className="dot" /><span>{ticket.category}</span></>}
           </div>
-        )}
-        <p className="text-sm mb-6" style={{ color: '#888', maxWidth: 280 }}>
-          {result.item
-            ? `${result.item} — budget check running. You'll hear back at `
-            : 'The agent is on it. You\'ll hear back at '}
-          <span style={{ color: '#ccc' }}>{result.email}</span>.
-        </p>
-        <button type="button" onClick={onDone}
-          style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#888', borderRadius: 10, padding: '12px 24px', fontSize: 14, cursor: 'pointer' }}>
-          Back to Home
-        </button>
+        </div>
+        <div>
+          <div className="trow__supplier">{ticket.supplier_name || '—'}</div>
+          <div className="trow__supplier-meta">{ticket.submitted_by || ''}</div>
+        </div>
+        <div>
+          <div className="trow__value">{ticket.value_eur ? fmt(ticket.value_eur) : '—'}</div>
+          {ticket.confidence_score && (
+            <div className="trow__conf">conf. {Math.round(ticket.confidence_score * 100)}%</div>
+          )}
+        </div>
+        <div className="trow__actions" onClick={e => e.stopPropagation()}>
+          {ticket.status === 'signature_required' && (<>
+            <button className="btn btn--ink btn--sm" onClick={() => onAction(ticket.id, 'sign')}>Sign &amp; send</button>
+            <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'decline')}>Decline</button>
+          </>)}
+          {ticket.status === 'pending_review' && (<>
+            <button className="btn btn--success btn--sm" onClick={() => onAction(ticket.id, 'approve')}>Approve</button>
+            <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'reject')}>Reject</button>
+          </>)}
+          {ticket.status === 'escalated' && (
+            <button className="btn btn--secondary btn--sm" onClick={() => onAction(ticket.id, 'ack')}>Acknowledge</button>
+          )}
+          {ticket.status === 'pending_confirm' && (
+            <button className="btn btn--primary btn--sm" onClick={() => onAction(ticket.id, 'confirm')}>Confirm</button>
+          )}
+        </div>
       </div>
-    </StepWrapper>
+
+      {isOpen && (
+        <div className="tbrief">
+          <div>
+            <div className="tbrief__h">Description</div>
+            <div className="tbrief__body">{ticket.description || ticket.title}</div>
+          </div>
+          {ticket.reasoning && (
+            <div>
+              <div className="tbrief__h">Agent reasoning</div>
+              <div className="tbrief__body">{ticket.reasoning}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </>
   )
 }
 
 // ─── Operations Board ─────────────────────────────────────────────────────────
+const OperationsBoard = ({ sectionJump, onCountChange }) => {
+  const [tickets, setTickets] = useState(null)
+  const [openId, setOpenId]   = useState(null)
 
-function TicketCard({ ticket, onAction, actionLoading }) {
-  const [expanded, setExpanded] = useState(false)
+  const load = useCallback(async () => {
+    try {
+      const data = await pgFetch('/open_tickets_board?order=created_at.asc')
+      setTickets(data)
+      onCountChange(data.length)
+    } catch {
+      setTickets([])
+    }
+  }, [onCountChange])
+
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [load])
+
+  useEffect(() => {
+    if (sectionJump) {
+      const el = document.getElementById('sec-' + sectionJump)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [sectionJump])
+
+  const handleAction = async (id, action) => {
+    const statusMap = { approve: 'approved', reject: 'rejected', sign: 'approved', decline: 'rejected', confirm: 'approved', ack: 'pending_review' }
+    try {
+      await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
+      load()
+    } catch {}
+  }
+
+  const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+
+  if (tickets === null) {
+    return (
+      <div className="content content--with-rail step-in">
+        <div style={{ padding: '80px 0', textAlign: 'center', color: '#75695F' }}>Loading…</div>
+        <AgentRail />
+      </div>
+    )
+  }
+
+  if (tickets.length === 0) {
+    return (
+      <div className="content content--with-rail step-in">
+        <div>
+          <div className="pagehead">
+            <div>
+              <div className="pagehead__eyebrow">Operations · {today}</div>
+              <h1 className="pagehead__title">All clear.</h1>
+              <div className="pagehead__sub">Nothing needs you right now. The agent is handling everything in the queue.</div>
+            </div>
+            <div className="pagehead__actions">
+              <button className="btn btn--tertiary" onClick={load}><IconRotateCw size={14}/> Refresh</button>
+            </div>
+          </div>
+          <div style={{ background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 8, padding: '80px 24px', textAlign: 'center' }}>
+            <IconCheck size={44} color="#3D7A5A" strokeWidth={1.25} />
+            <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 32, letterSpacing: '-0.025em', color: '#161413', margin: '18px 0 6px' }}>
+              Nothing <em style={{ fontStyle: 'normal', color: '#8F5C12' }}>needs you</em>.
+            </h2>
+            <p style={{ fontSize: 13.5, color: '#75695F', maxWidth: 360, margin: '0 auto', lineHeight: 1.6 }}>
+              Come back when there's something worth your attention.
+            </p>
+          </div>
+        </div>
+        <AgentRail />
+      </div>
+    )
+  }
+
+  const openByStatus = tickets.reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc }, {})
 
   return (
-    <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, overflow: 'hidden', marginBottom: 12 }}>
-      <div style={{ padding: '16px 20px' }}>
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-              <StatusBadge status={ticket.status} />
-              {ticket.supplier_compliance && <ComplianceBadge status={ticket.supplier_compliance} />}
-            </div>
-            <h3 className="text-white font-semibold text-[15px] leading-snug">{ticket.title}</h3>
+    <div className="content content--with-rail step-in">
+      <div>
+        <div className="pagehead">
+          <div>
+            <div className="pagehead__eyebrow">Operations · {today}</div>
+            <h1 className="pagehead__title">
+              {tickets.length} {tickets.length === 1 ? 'thing' : 'things'} <em>need you</em>.
+            </h1>
+            <div className="pagehead__sub">Everything else, the agent closed. Expand any row for the brief.</div>
           </div>
-          {ticket.value_eur && (
-            <div className="text-right flex-shrink-0">
-              <div className="text-white font-bold text-lg">{formatEuro(ticket.value_eur)}</div>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-4 text-xs flex-wrap" style={{ color: '#555' }}>
-          {ticket.supplier_name && <span>{ticket.supplier_name}</span>}
-          {ticket.branch_name   && <span>{ticket.branch_name}</span>}
-          {ticket.reference     && <span className="font-mono">{ticket.reference}</span>}
-          {ticket.po_number     && <span className="font-mono" style={{ color: '#6366f1' }}>PO: {ticket.po_number}</span>}
-          <span>{timeAgo(ticket.created_at)}</span>
-        </div>
-        {ticket.review_notes && (
-          <div className="mt-3 text-xs p-3 rounded-lg" style={{ background: '#0d0d0d', color: '#888', border: '1px solid #1a1a1a' }}>
-            {ticket.review_notes}
+          <div className="pagehead__actions">
+            <button className="btn btn--tertiary" onClick={load}><IconRotateCw size={14}/> Refresh</button>
+            <button className="btn btn--secondary">Export</button>
           </div>
-        )}
+        </div>
+
+        <StatsStrip tickets={tickets} />
+
+        {BOARD_SECTIONS.map(sec => {
+          const inSec = tickets.filter(t => t.status === sec.status)
+          if (!inSec.length) return null
+          return (
+            <section key={sec.id} id={'sec-' + sec.status} className={'section' + (sec.urgent ? ' section--urgent' : '')}>
+              <div className="section__head">
+                <span className="section__icon"><sec.Icon size={16}/></span>
+                <span className="section__title">{sec.title}</span>
+                <span className="section__count">{inSec.length}</span>
+                <span className="section__hint">{sec.hint}</span>
+              </div>
+              <div className="tlist">
+                {inSec.map(t => (
+                  <TicketRow
+                    key={t.id}
+                    ticket={t}
+                    isOpen={openId === t.id}
+                    onToggle={(id) => setOpenId(openId === id ? null : id)}
+                    onAction={handleAction}
+                  />
+                ))}
+              </div>
+            </section>
+          )
+        })}
+      </div>
+      <AgentRail />
+    </div>
+  )
+}
+
+// ─── Home ──────────────────────────────────────────────────────────────────────
+const HomeScreen = ({ user, onCatalog, onRequestType }) => {
+  const firstName = user?.name?.split(' ')[0] || 'there'
+  return (
+    <div className="content step-in" style={{ maxWidth: 980 }}>
+      <div className="pagehead">
+        <div>
+          <div className="pagehead__eyebrow">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
+          <h1 className="greeting__hello">Hi, <em>{firstName}.</em></h1>
+          <div className="greeting__sub">What do you need to get done?</div>
+        </div>
       </div>
 
-      {expanded && (
-        <div style={{ borderTop: '1px solid #1a1a1a', padding: '16px 20px', background: '#0d0d0d' }}>
-          {ticket.recommendation && (
-            <div className="mb-3">
-              <div className="text-xs font-medium uppercase tracking-wider mb-1" style={{ color: '#444' }}>Agent Recommendation</div>
-              <p className="text-sm" style={{ color: '#aaa' }}>{ticket.recommendation}</p>
-            </div>
-          )}
-          {ticket.brief && (
-            <div className="mb-3">
-              <div className="text-xs font-medium uppercase tracking-wider mb-1" style={{ color: '#444' }}>Brief</div>
-              <p className="text-sm" style={{ color: '#888', whiteSpace: 'pre-wrap' }}>{ticket.brief}</p>
-            </div>
-          )}
-          {ticket.confidence && (
-            <div className="text-xs" style={{ color: '#555' }}>
-              Agent confidence: {Math.round(parseFloat(ticket.confidence) * 100)}%
-            </div>
-          )}
+      <div style={{
+        background: '#161413', borderRadius: 10, padding: '28px 32px',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 24,
+        marginBottom: 32,
+      }}>
+        <div>
+          <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#B07219', marginBottom: 10, fontWeight: 500 }}>
+            Catalog
+          </div>
+          <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 32, letterSpacing: '-0.025em', color: '#F7F4ED', margin: 0, lineHeight: 1.1, maxWidth: 480 }}>
+            Standard items. <span style={{ color: '#B07219' }}>Instant approval.</span>
+          </h2>
+          <div style={{ fontSize: 13, color: 'rgba(247,244,237,0.6)', marginTop: 10 }}>
+            Contract on file. Budget check only. No waiting.
+          </div>
         </div>
-      )}
+        <button className="btn btn--primary btn--lg" onClick={onCatalog}>
+          Browse catalog <IconChev size={14}/>
+        </button>
+      </div>
 
-      <div style={{ padding: '12px 20px', borderTop: '1px solid #1a1a1a', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        {(ticket.status === 'pending_review' || ticket.status === 'pending_confirm') && (
-          <>
-            <ActionButton onClick={() => onAction(ticket.id, 'approve')} loading={actionLoading === `${ticket.id}-approve`} variant="primary">Approve</ActionButton>
-            <ActionButton onClick={() => onAction(ticket.id, 'reject')}  loading={actionLoading === `${ticket.id}-reject`}  variant="danger">Reject</ActionButton>
-          </>
+      <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 14 }}>
+        Or submit a request
+      </div>
+      <div className="tile-grid">
+        {QUICK_TILES.map(({ id, label, sub, Icon }) => (
+          <button key={id} className="tile" onClick={() => onRequestType(id)}>
+            <div className="tile__icon"><Icon size={18} /></div>
+            <div className="tile__body">
+              <div className="tile__title">{label}</div>
+              <div className="tile__sub">{sub}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Cart Modal ───────────────────────────────────────────────────────────────
+const CartModal = ({ cart, onClose, onUpdateQty, onRemove, onPlace }) => {
+  const [notes, setNotes] = useState('')
+  if (!cart.length) return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+          <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 24, color: '#161413', letterSpacing: '-0.025em' }}>Cart</div>
+          <button onClick={onClose} className="iconbtn"><IconX size={16} /></button>
+        </div>
+        <div style={{ textAlign: 'center', padding: '40px 0', color: '#75695F', fontSize: 14 }}>Your cart is empty.</div>
+      </div>
+    </div>
+  )
+
+  const total = cart.reduce((s, l) => s + (l.item.variable ? 0 : l.item.price * l.qty), 0)
+  const itemCount = cart.reduce((s, l) => s + l.qty, 0)
+
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 4 }}>Order</div>
+            <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 24, color: '#161413', letterSpacing: '-0.025em' }}>
+              {itemCount} item{itemCount !== 1 ? 's' : ''}
+            </div>
+          </div>
+          <button onClick={onClose} className="iconbtn"><IconX size={16} /></button>
+        </div>
+
+        <div style={{ borderTop: '1px solid #E5DDD0', borderBottom: '1px solid #E5DDD0', marginBottom: 18 }}>
+          {cart.map((line, i) => (
+            <div key={line.item.id} style={{
+              display: 'grid', gridTemplateColumns: '1fr auto auto auto',
+              alignItems: 'center', gap: 12, padding: '14px 0',
+              borderBottom: i < cart.length - 1 ? '1px solid #EEE7DA' : 'none',
+            }}>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: '#161413', letterSpacing: '-0.005em' }}>{line.item.name}</div>
+                <div style={{ fontSize: 12, color: '#75695F', marginTop: 2 }}>{line.item.supplier}</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button className="btn btn--secondary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onUpdateQty(line.item.id, line.qty - 1)}>
+                  <IconMinus size={12} />
+                </button>
+                <span style={{ minWidth: 20, textAlign: 'center', fontSize: 14, fontWeight: 600, color: '#161413', fontVariantNumeric: 'tabular-nums' }}>{line.qty}</span>
+                <button className="btn btn--secondary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onUpdateQty(line.item.id, line.qty + 1)}>
+                  <IconPlus size={12} />
+                </button>
+              </div>
+              <div className="money" style={{ fontSize: 14, minWidth: 72, textAlign: 'right' }}>
+                {line.item.variable ? 'Variable' : fmt(line.item.price * line.qty)}
+              </div>
+              <button className="iconbtn" style={{ width: 24, height: 24 }} onClick={() => onRemove(line.item.id)}>
+                <IconX size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {total > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 18 }}>
+            <span style={{ fontSize: 13, color: '#75695F' }}>Total</span>
+            <span className="money" style={{ fontSize: 20 }}>{fmt(total)}</span>
+          </div>
         )}
-        {ticket.status === 'signature_required' && (
-          <>
-            <ActionButton onClick={() => onAction(ticket.id, 'sign')}   loading={actionLoading === `${ticket.id}-sign`}   variant="primary">Sign & Send</ActionButton>
-            <ActionButton onClick={() => onAction(ticket.id, 'reject')} loading={actionLoading === `${ticket.id}-reject`} variant="danger">Decline</ActionButton>
-          </>
-        )}
-        {ticket.status === 'escalated' && (
-          <ActionButton onClick={() => onAction(ticket.id, 'acknowledge')} loading={actionLoading === `${ticket.id}-acknowledge`} variant="secondary">Acknowledge</ActionButton>
-        )}
-        {ticket.status === 'approved' && ticket.po_id && (
-          <ActionButton onClick={() => onAction(ticket.id, 'confirm_delivery', { po_id: ticket.po_id })} loading={actionLoading === `${ticket.id}-confirm_delivery`} variant="primary">Confirm Delivery</ActionButton>
-        )}
-        {ticket.pdf_url && (
-          <a href={ticket.pdf_url} target="_blank" rel="noopener noreferrer"
-            className="text-xs px-3 py-1.5 rounded-md"
-            style={{ color: '#6366f1', background: '#0d0d1a', border: '1px solid #1a1a2e', textDecoration: 'none' }}>
-            View PDF
-          </a>
-        )}
-        <button type="button" onClick={() => setExpanded(!expanded)} className="ml-auto text-xs"
-          style={{ color: '#444', background: 'none', border: 'none', cursor: 'pointer' }}>
-          {expanded ? 'Less ↑' : 'Detail ↓'}
+
+        <div className="field">
+          <label className="field__label">Notes <span style={{ color: '#75695F', fontWeight: 400 }}>(optional)</span></label>
+          <input className="input" placeholder="Asset tags, delivery notes, etc." value={notes} onChange={e => setNotes(e.target.value)} />
+        </div>
+
+        <div style={{ background: '#F7EFDE', border: '1px solid #E9DAB5', borderRadius: 4, padding: '10px 12px', fontSize: 12.5, color: '#8F5C12', marginBottom: 18 }}>
+          Fast-path order. Budget check only — auto-approved if budget available.
+        </div>
+
+        <button className="btn btn--primary btn--block btn--lg" onClick={() => onPlace(cart, notes, total)}>
+          Place order{total > 0 ? ` — ${fmt(total)}` : ''}
         </button>
       </div>
     </div>
   )
 }
 
-function OperationsBoard() {
-  const [tickets, setTickets]         = useState([])
-  const [loading, setLoading]         = useState(true)
-  const [error, setError]             = useState(null)
-  const [actionLoading, setActionLoading] = useState(null)
-  const [lastRefresh, setLastRefresh] = useState(null)
-
-  const fetchTickets = useCallback(async () => {
-    try {
-      const data = await pgFetch('/open_tickets_board')
-      setTickets(data || [])
-      setLastRefresh(new Date())
-      setError(null)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchTickets()
-    const interval = setInterval(fetchTickets, 30000)
-    return () => clearInterval(interval)
-  }, [fetchTickets])
-
-  async function handleAction(ticketId, action, extra = {}) {
-    setActionLoading(`${ticketId}-${action}`)
-    try {
-      if (action === 'confirm_delivery') {
-        await pgFetch('/rpc/confirm_delivery', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify({ p_po_id: extra.po_id, p_confirmed_by: 'ops_board' }),
-        })
-        await pgFetch(`/tickets?id=eq.${ticketId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify({ status: 'closed', closed_at: new Date().toISOString() }),
-        })
-      } else {
-        const statusMap = { approve: 'approved', reject: 'rejected', sign: 'closed', acknowledge: 'approved' }
-        const newStatus = statusMap[action] || 'closed'
-        await pgFetch(`/tickets?id=eq.${ticketId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify({
-            status: newStatus,
-            ...(newStatus === 'closed' || newStatus === 'approved' ? { closed_at: new Date().toISOString() } : {}),
-          }),
-        })
-      }
-      await fetchTickets()
-    } catch (err) {
-      alert('Action failed: ' + err.message)
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const signatureTickets = tickets.filter(t => t.status === 'signature_required')
-  const reviewTickets    = tickets.filter(t => t.status === 'pending_review')
-  const escalatedTickets = tickets.filter(t => t.status === 'escalated')
-  const confirmTickets   = tickets.filter(t => t.status === 'pending_confirm')
-  const deliveryTickets  = tickets.filter(t => t.status === 'approved' && t.po_id)
+// ─── Catalog ──────────────────────────────────────────────────────────────────
+const CatalogScreen = ({ cart, onAddToCart, onOpenCart }) => {
+  const [activeCat, setActiveCat] = useState(CATALOG[0].category)
+  const cat = CATALOG.find(c => c.category === activeCat)
+  const cartCount = cart.reduce((s, l) => s + l.qty, 0)
 
   return (
-    <div style={{ padding: '20px 16px 100px' }}>
-      <div className="flex items-center justify-between mb-6">
+    <div className="content step-in" style={{ maxWidth: 1180 }}>
+      <div className="pagehead">
         <div>
-          <h2 className="text-lg font-bold text-white mb-0.5">Operations Board</h2>
-          <p className="text-sm" style={{ color: '#555' }}>
-            {tickets.length === 0 ? 'All clear.' : `${tickets.length} item${tickets.length !== 1 ? 's' : ''} need attention`}
-          </p>
+          <div className="pagehead__eyebrow">Catalog</div>
+          <h1 className="pagehead__title">Pre-negotiated.</h1>
+          <div className="pagehead__sub">Contract on file. Budget check only. Order completes the same day.</div>
         </div>
-        <div className="text-right">
-          <button type="button" onClick={fetchTickets}
-            style={{ background: '#111', border: '1px solid #1e1e1e', color: '#555', borderRadius: 8, padding: '6px 12px', fontSize: 12, cursor: 'pointer' }}>
-            ↻ Refresh
-          </button>
-          {lastRefresh && <div className="text-xs mt-1" style={{ color: '#333' }}>{timeAgo(lastRefresh)}</div>}
+        <div className="pagehead__actions">
+          {cartCount > 0 && (
+            <button className="btn btn--ink btn--lg" onClick={onOpenCart}>
+              <IconBag size={15} />
+              Review order — {cartCount} item{cartCount !== 1 ? 's' : ''}
+            </button>
+          )}
         </div>
       </div>
 
-      {loading && <div className="flex justify-center py-12"><span className="spinner" /></div>}
-      {error && (
-        <div className="rounded-xl px-4 py-3 mb-6 text-sm" style={{ background: '#1a0808', border: '1px solid #3f1010', color: '#f87171' }}>
-          Failed to load: {error}
-        </div>
-      )}
+      <div className="tabs">
+        {CATALOG.map(c => (
+          <button key={c.category} className={'tab' + (activeCat === c.category ? ' tab--active' : '')} onClick={() => setActiveCat(c.category)}>
+            {c.category}
+          </button>
+        ))}
+      </div>
 
-      {!loading && !error && tickets.length === 0 && (
-        <div className="flex flex-col items-center py-16 text-center">
-          <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
-          <h2 className="text-lg font-semibold text-white mb-2">Nothing needs you right now</h2>
-          <p className="text-sm" style={{ color: '#555' }}>The agent is handling everything.</p>
-        </div>
-      )}
-
-      {signatureTickets.length > 0 && (
-        <section className="mb-8">
-          <SectionHeader icon="✍️" title="Signature Required" count={signatureTickets.length} urgent />
-          {signatureTickets.map(t => <TicketCard key={t.id} ticket={t} onAction={handleAction} actionLoading={actionLoading} />)}
-        </section>
-      )}
-      {reviewTickets.length > 0 && (
-        <section className="mb-8">
-          <SectionHeader icon="👁" title="Pending Review" count={reviewTickets.length} />
-          {reviewTickets.map(t => <TicketCard key={t.id} ticket={t} onAction={handleAction} actionLoading={actionLoading} />)}
-        </section>
-      )}
-      {escalatedTickets.length > 0 && (
-        <section className="mb-8">
-          <SectionHeader icon="🚨" title="Escalated" count={escalatedTickets.length} />
-          {escalatedTickets.map(t => <TicketCard key={t.id} ticket={t} onAction={handleAction} actionLoading={actionLoading} />)}
-        </section>
-      )}
-      {confirmTickets.length > 0 && (
-        <section className="mb-8">
-          <SectionHeader icon="⚡" title="Quick Confirm" count={confirmTickets.length} />
-          {confirmTickets.map(t => <TicketCard key={t.id} ticket={t} onAction={handleAction} actionLoading={actionLoading} />)}
-        </section>
-      )}
-      {deliveryTickets.length > 0 && (
-        <section className="mb-8">
-          <SectionHeader icon="📦" title="Awaiting Delivery" count={deliveryTickets.length} />
-          <p className="text-xs mb-3" style={{ color: '#555' }}>PO sent. Confirm once goods or services received — triggers invoice matching.</p>
-          {deliveryTickets.map(t => <TicketCard key={t.id} ticket={t} onAction={handleAction} actionLoading={actionLoading} />)}
-        </section>
-      )}
-    </div>
-  )
-}
-
-// ─── Bottom nav ───────────────────────────────────────────────────────────────
-
-function BottomNav({ activeTab, onNavigate, boardCount }) {
-  return (
-    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#0a0a0a', borderTop: '1px solid #1a1a1a', zIndex: 20, paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex' }}>
-        {NAV_ITEMS.map(item => {
-          const active = activeTab === item.id
-          const Icon = item.icon
+      <div className="cat-grid">
+        {cat.items.map(item => {
+          const inCart = cart.find(l => l.item.id === item.id)
           return (
-            <button key={item.id} type="button" onClick={() => onNavigate(item.id)}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '10px 4px 8px', background: 'none', border: 'none', cursor: 'pointer', color: active ? '#6366f1' : '#3a3a3a', transition: 'color 0.15s', position: 'relative' }}>
-              <Icon size={20} />
-              <span style={{ fontSize: 10, fontWeight: 500 }}>{item.label}</span>
-              {item.id === 'board' && boardCount > 0 && (
-                <span style={{ position: 'absolute', top: 8, right: '50%', marginRight: -18, background: '#ef4444', color: '#fff', fontSize: 9, fontWeight: 700, borderRadius: 99, padding: '1px 5px', lineHeight: '14px' }}>
-                  {boardCount}
+            <div key={item.id} className="cat-item" style={inCart ? { borderColor: '#B07219', boxShadow: '0 0 0 1px #B07219' } : {}}>
+              <div className="cat-item__name">{item.name}</div>
+              <div className="cat-item__desc">{item.desc}</div>
+              <div className="cat-item__meta">
+                <span>{item.supplier}</span>
+                <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#C9BFAE', display: 'inline-block' }} />
+                <span className="ref" style={{ color: '#A89B8B' }}>{item.sku}</span>
+              </div>
+              <div className="cat-item__foot">
+                <span className="cat-item__price">
+                  {item.variable ? 'Variable' : fmt(item.price)}
+                  {item.per && !item.variable && <span className="cat-item__price-mo">{item.per}</span>}
                 </span>
-              )}
-            </button>
+                {inCart ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button className="btn btn--secondary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onAddToCart(item, -1)}>
+                      <IconMinus size={12} />
+                    </button>
+                    <span style={{ minWidth: 20, textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#161413', fontVariantNumeric: 'tabular-nums' }}>{inCart.qty}</span>
+                    <button className="btn btn--primary btn--sm" style={{ width: 28, height: 28, padding: 0 }} onClick={() => onAddToCart(item, 1)}>
+                      <IconPlus size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <button className="btn btn--secondary btn--sm" onClick={() => onAddToCart(item, 1)}>Add</button>
+                )}
+              </div>
+            </div>
           )
         })}
       </div>
@@ -1149,88 +784,410 @@ function BottomNav({ activeTab, onNavigate, boardCount }) {
   )
 }
 
-// ─── App shell ────────────────────────────────────────────────────────────────
+// ─── My Requests ──────────────────────────────────────────────────────────────
+const MyRequestsScreen = ({ user }) => {
+  const [tickets, setTickets] = useState(null)
 
-export default function App() {
-  const [user, setUser]     = useLocalStorage('truespend_user', null)
-  const [tab, setTab]       = useState(() => window.location.hash === '#board' ? 'board' : 'home')
-  const [requestType, setRequestType] = useState(null) // when showing request form
-  const [successResult, setSuccessResult] = useState(null) // after submit
-  const [boardCount, setBoardCount] = useState(0)
-
-  // Poll board count for the badge
   useEffect(() => {
-    if (!POSTGREST_JWT) return
-    async function fetchCount() {
-      try {
-        const data = await pgFetch('/open_tickets_board')
-        setBoardCount((data || []).length)
-      } catch {}
-    }
-    fetchCount()
-    const t = setInterval(fetchCount, 60000)
-    return () => clearInterval(t)
-  }, [])
-
-  function navigate(newTab) {
-    setTab(newTab)
-    setRequestType(null)
-    setSuccessResult(null)
-    window.location.hash = newTab === 'board' ? '#board' : ''
-  }
-
-  function startRequest(type) {
-    setRequestType(type)
-    setSuccessResult(null)
-    setTab('request')
-  }
-
-  function handleSuccess(result) {
-    setSuccessResult(result)
-    setRequestType(null)
-  }
-
-  if (!user) {
-    return <UserSetupModal onSave={setUser} />
-  }
+    if (!user?.email) { setTickets([]); return }
+    pgFetch(`/tickets?submitted_by_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=50`)
+      .then(setTickets)
+      .catch(() => setTickets([]))
+  }, [user?.email])
 
   return (
-    <div style={{ background: '#0a0a0a', minHeight: '100vh' }}>
-      {/* Top bar */}
-      <div style={{ borderBottom: '1px solid #1a1a1a', background: '#0a0a0a', position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ maxWidth: 480, margin: '0 auto', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span className="font-bold tracking-tight" style={{ color: '#6366f1', fontSize: 17 }}>TrueSpend</span>
-          <button type="button" onClick={() => setUser(null)}
-            style={{ background: 'none', border: 'none', color: '#333', cursor: 'pointer', fontSize: 12, padding: 4 }}
-            title="Switch user">
-            {user.name.split(' ')[0]} ↙
-          </button>
+    <div className="content step-in" style={{ maxWidth: 1180 }}>
+      <div className="pagehead">
+        <div>
+          <div className="pagehead__eyebrow">My requests</div>
+          <h1 className="pagehead__title">{tickets ? `${tickets.length} total.` : 'Loading…'}</h1>
+          <div className="pagehead__sub">Everything you've submitted, with where the agent took it.</div>
+        </div>
+        <div className="pagehead__actions">
+          <button className="btn btn--tertiary" onClick={() => {
+            setTickets(null)
+            pgFetch(`/tickets?submitted_by_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=50`).then(setTickets).catch(() => setTickets([]))
+          }}><IconRotateCw size={14}/> Refresh</button>
         </div>
       </div>
 
-      {/* Content */}
-      <div style={{ maxWidth: 480, margin: '0 auto' }}>
-        {successResult && (
-          <SuccessScreen result={successResult} onDone={() => { setSuccessResult(null); navigate('home') }} />
-        )}
-        {!successResult && tab === 'home' && (
-          <HomeScreen user={user} onNavigate={navigate} onRequestType={startRequest} />
-        )}
-        {!successResult && tab === 'catalog' && (
-          <CatalogScreen user={user} onSuccess={handleSuccess} />
-        )}
-        {!successResult && tab === 'mine' && (
-          <MyRequestsScreen user={user} />
-        )}
-        {!successResult && tab === 'request' && requestType && (
-          <RequestForm user={user} requestType={requestType} onBack={() => navigate('home')} onSuccess={handleSuccess} />
-        )}
-        {!successResult && tab === 'board' && (
-          <OperationsBoard />
-        )}
+      {tickets && tickets.length > 0 && (
+        <div className="tlist" style={{ marginTop: 0 }}>
+          <div className="trow" style={{ background: '#EFEBE1', borderBottom: '1px solid #E5DDD0', cursor: 'default' }}>
+            <div className="eyebrow">Status</div>
+            <div className="eyebrow">Request</div>
+            <div className="eyebrow">Supplier</div>
+            <div className="eyebrow" style={{ textAlign: 'right' }}>Value</div>
+            <div className="eyebrow" style={{ textAlign: 'right' }}>Ref</div>
+          </div>
+          {tickets.map(t => (
+            <div key={t.id} className="trow" style={{ cursor: 'default' }}>
+              <div><StatusPill status={t.status} /></div>
+              <div className="trow__main">
+                <div className="trow__title">{t.title}</div>
+                <div className="trow__meta">
+                  <span className="ref">{t.reference}</span>
+                  <span className="dot" />
+                  <span>{timeAgo(t.created_at)}</span>
+                </div>
+              </div>
+              <div><div className="trow__supplier">{t.supplier_name || '—'}</div></div>
+              <div><div className="trow__value">{t.value_eur ? fmt(t.value_eur) : '—'}</div></div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#8F5C12' }}>{t.reference}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tickets && tickets.length === 0 && (
+        <div style={{ background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 8, padding: '64px 24px', textAlign: 'center' }}>
+          <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 28, letterSpacing: '-0.025em', color: '#161413', margin: '0 0 8px' }}>No requests yet.</h2>
+          <p style={{ fontSize: 13.5, color: '#75695F' }}>Everything you submit will appear here.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Request Form ──────────────────────────────────────────────────────────────
+const RequestForm = ({ type, user, onBack, onSuccess }) => {
+  const cfg = FORM_CONFIG[type] || FORM_CONFIG.other
+  const [loading, setLoading] = useState(false)
+  const [supplier, setSupplier] = useState('')
+  const [amount,   setAmount]   = useState('')
+  const [desc,     setDesc]     = useState('')
+  const [notes,    setNotes]    = useState('')
+  const [category, setCategory] = useState('hardware')
+
+  const submit = async () => {
+    if (loading) return
+    setLoading(true)
+    const ref = 'TS-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9000) + 1000)
+    try {
+      await fetch(N8N_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: supplier ? `${type === 'purchase' ? 'Purchase' : type === 'renew' ? 'Renew' : type === 'onboard' ? 'Onboard' : 'Request'} — ${supplier}` : desc || 'New request',
+          description: desc || notes || '',
+          ticket_type: type,
+          submitted_by: user?.name || '',
+          submitted_by_email: user?.email || '',
+          supplier_name: supplier,
+          value_eur: parseFloat(amount) || 0,
+          category,
+          branch_id: user?.branchId || null,
+        })
+      })
+      onSuccess(ref)
+    } catch {
+      onSuccess(ref)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="content step-in" style={{ maxWidth: 680 }}>
+      <button onClick={onBack} className="btn btn--tertiary btn--sm" style={{ marginBottom: 14, padding: '4px 8px' }}>
+        <IconArrowL size={14} /> Back
+      </button>
+      <div className="pagehead">
+        <div>
+          <div className="pagehead__eyebrow">New request</div>
+          <h1 className="pagehead__title">{cfg.title}.</h1>
+          <div className="pagehead__sub">{cfg.hint} The agent runs five signals — most close without you.</div>
+        </div>
       </div>
 
-      <BottomNav activeTab={successResult ? null : tab} onNavigate={navigate} boardCount={boardCount} />
+      <div className="card" style={{ padding: 28 }}>
+        {type === 'purchase' && <>
+          <div className="field">
+            <label className="field__label">Supplier <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <input className="input" value={supplier} onChange={e => setSupplier(e.target.value)} placeholder="Supplier or vendor name" />
+          </div>
+          <div className="field">
+            <label className="field__label">Amount <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <div style={{ position: 'relative' }}>
+              <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#75695F', fontSize: 14 }}>€</span>
+              <input className="input" style={{ paddingLeft: 28 }} value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="0" />
+            </div>
+          </div>
+          <div className="field">
+            <label className="field__label">Category</label>
+            <select className="select" value={category} onChange={e => setCategory(e.target.value)}>
+              <option value="hardware">Hardware</option>
+              <option value="saas_license">Software / SaaS</option>
+              <option value="cloud_compute">Cloud</option>
+              <option value="professional_services">Services</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div className="field">
+            <label className="field__label">What's it for? <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <input className="input" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Brief description" />
+          </div>
+          <div className="field">
+            <label className="field__label">Business justification</label>
+            <textarea className="textarea" rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Why is this needed? What does it replace or enable?" />
+          </div>
+        </>}
+
+        {type === 'renew' && <>
+          <div className="field">
+            <label className="field__label">Supplier <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <input className="input" value={supplier} onChange={e => setSupplier(e.target.value)} placeholder="Acme Corp" />
+          </div>
+          <div className="field">
+            <label className="field__label">Contract value <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <div style={{ position: 'relative' }}>
+              <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#75695F', fontSize: 14 }}>€</span>
+              <input className="input" style={{ paddingLeft: 28 }} value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="0" />
+            </div>
+          </div>
+          <div className="field">
+            <label className="field__label">Notes</label>
+            <textarea className="textarea" rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Expiry, key terms, requested changes…" />
+          </div>
+        </>}
+
+        {type === 'onboard' && <>
+          <div className="field">
+            <label className="field__label">Company name <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <input className="input" value={supplier} onChange={e => setSupplier(e.target.value)} placeholder="New Vendor Ltd" />
+          </div>
+          <div className="field">
+            <label className="field__label">Country <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <input className="input" value={desc} onChange={e => setDesc(e.target.value)} placeholder="e.g. Germany" />
+          </div>
+          <div className="field">
+            <label className="field__label">Category <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <select className="select" value={category} onChange={e => setCategory(e.target.value)}>
+              <option value="hardware">Hardware</option>
+              <option value="saas_license">SaaS</option>
+              <option value="cloud_compute">Cloud</option>
+              <option value="professional_services">Services</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div className="field">
+            <label className="field__label">Justification <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <textarea className="textarea" rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Why do we need this vendor?" />
+          </div>
+        </>}
+
+        {type === 'other' && <>
+          <div className="field">
+            <label className="field__label">Title <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <input className="input" value={supplier} onChange={e => setSupplier(e.target.value)} placeholder="Short summary" />
+          </div>
+          <div className="field">
+            <label className="field__label">Description <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
+            <textarea className="textarea" rows={4} value={desc} onChange={e => setDesc(e.target.value)} placeholder="What do you need and why?" />
+          </div>
+        </>}
+
+        <div style={{ background: '#EFEBE1', border: '1px solid #E5DDD0', borderRadius: 4, padding: '10px 12px', fontSize: 12.5, color: '#75695F', marginBottom: 18, lineHeight: 1.5 }}>
+          Full review — five signals, then auto-execute or one-touch decision. Median time to resolution: 4 minutes.
+        </div>
+
+        <button className="btn btn--primary btn--block btn--lg" onClick={submit} disabled={loading}>
+          {loading ? 'Submitting…' : 'Submit request'}
+        </button>
+      </div>
     </div>
+  )
+}
+
+// ─── Success ──────────────────────────────────────────────────────────────────
+const SuccessScreen = ({ result, onDone }) => (
+  <div className="content step-in" style={{ maxWidth: 680 }}>
+    <div className="success">
+      <svg width="88" height="88" viewBox="0 0 88 88" fill="none">
+        <circle cx="44" cy="44" r="40" stroke="#3D7A5A" strokeWidth="1.5" className="success__circle" />
+        <path d="M28 45 l11 11 21-22" stroke="#3D7A5A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="success__mark" />
+      </svg>
+      <h1 className="success__h">
+        {result.isOrder ? <>Order placed. <em>That's it.</em></> : <>Submitted. <em>The agent's on it.</em></>}
+      </h1>
+      <div className="success__ref">
+        <span className="success__ref-label">Ref</span>
+        <span className="success__ref-val">{result.ref}</span>
+      </div>
+      <p className="success__msg">
+        {result.isOrder
+          ? <>Budget check running. You'll hear back at <b>{result.email}</b>.</>
+          : <>Five signals running. You'll hear back at <b>{result.email}</b>.</>
+        }
+      </p>
+      <div style={{ marginTop: 32, display: 'flex', gap: 10 }}>
+        <button className="btn btn--secondary" onClick={onDone}>Back to operations</button>
+      </div>
+    </div>
+  </div>
+)
+
+// ─── User Setup Modal ──────────────────────────────────────────────────────────
+const UserSetupModal = ({ onSave }) => {
+  const [name,     setName]     = useState('')
+  const [email,    setEmail]    = useState('')
+  const [branchId, setBranchId] = useState(BRANCHES[0].id)
+  const save = () => {
+    if (!name.trim() || !email.trim()) return
+    onSave({ name: name.trim(), email: email.trim(), branchId })
+  }
+  return (
+    <div className="modal-scrim">
+      <div className="modal">
+        <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 28, letterSpacing: '-0.025em', color: '#161413', marginBottom: 6 }}>Welcome.</div>
+        <div style={{ fontSize: 13, color: '#75695F', marginBottom: 24 }}>Tell us who you are — stored locally, never sent anywhere.</div>
+        <div className="field">
+          <label className="field__label">Your name</label>
+          <input className="input" placeholder="Eva Müller" value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label className="field__label">Work email</label>
+          <input className="input" type="email" placeholder="eva@company.com" value={email} onChange={e => setEmail(e.target.value)} />
+        </div>
+        <div className="field">
+          <label className="field__label">Branch</label>
+          <select className="select" value={branchId} onChange={e => setBranchId(e.target.value)}>
+            {BRANCHES.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
+          </select>
+        </div>
+        <button className="btn btn--primary btn--block btn--lg" onClick={save}>Get started</button>
+      </div>
+    </div>
+  )
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [user,        setUser]        = useLocalStorage('truespend_user', null)
+  const [tab,         setTab]         = useState('board')
+  const [reqType,     setReqType]     = useState(null)
+  const [success,     setSuccess]     = useState(null)
+  const [boardCount,  setBoardCount]  = useState(0)
+  const [sectionJump, setSectionJump] = useState(null)
+  const [openByStatus, setOpenByStatus] = useState({})
+  const [cart,        setCart]        = useState([])   // [{ item, qty }]
+  const [cartOpen,    setCartOpen]    = useState(false)
+
+  const navigate = (t) => { setTab(t); setReqType(null); setSuccess(null); setSectionJump(null) }
+  const startRequest = (type) => { setReqType(type); setTab('request') }
+
+  const handleAddToCart = (item, delta) => {
+    setCart(prev => {
+      const existing = prev.find(l => l.item.id === item.id)
+      if (!existing) return delta > 0 ? [...prev, { item, qty: 1 }] : prev
+      const newQty = existing.qty + delta
+      if (newQty <= 0) return prev.filter(l => l.item.id !== item.id)
+      return prev.map(l => l.item.id === item.id ? { ...l, qty: newQty } : l)
+    })
+  }
+
+  const handleUpdateCartQty = (itemId, qty) => {
+    if (qty <= 0) setCart(prev => prev.filter(l => l.item.id !== itemId))
+    else setCart(prev => prev.map(l => l.item.id === itemId ? { ...l, qty } : l))
+  }
+
+  const placeOrder = async (cartLines, notes, total) => {
+    setCartOpen(false)
+    const ref = 'TS-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9000) + 1000)
+    const title = cartLines.length === 1
+      ? `Purchase — ${cartLines[0].item.name}${cartLines[0].qty > 1 ? ` × ${cartLines[0].qty}` : ''}`
+      : `Purchase — ${cartLines.length} catalog items`
+    const desc = cartLines.map(l => `${l.item.name} × ${l.qty} (${l.item.sku})`).join(', ') + (notes ? `. Notes: ${notes}` : '')
+    try {
+      await fetch(N8N_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          description: desc,
+          ticket_type: 'purchase',
+          submitted_by: user?.name || '',
+          submitted_by_email: user?.email || '',
+          supplier_name: cartLines.length === 1 ? cartLines[0].item.supplier : 'Multiple',
+          value_eur: total,
+          category: 'hardware',
+          branch_id: user?.branchId || null,
+        })
+      })
+    } catch {}
+    setCart([])
+    setSuccess({ ref, email: user?.email, isOrder: true })
+  }
+
+  const handleCountChange = useCallback((count) => {
+    setBoardCount(count)
+  }, [])
+
+  const crumbs = (() => {
+    if (success)          return ['Submitted']
+    if (tab === 'board')  return ['Operations']
+    if (tab === 'catalog')return ['Catalog']
+    if (tab === 'mine')   return ['My requests']
+    if (tab === 'home')   return ['New request']
+    if (tab === 'request')return ['New request', FORM_CONFIG[reqType]?.title || 'Request']
+    return ['Operations']
+  })()
+
+  const counts = { open: boardCount }
+
+  return (
+    <>
+      {!user && <UserSetupModal onSave={setUser} />}
+
+      <div className="app">
+        <Sidebar
+          tab={tab}
+          onNav={navigate}
+          counts={counts}
+          openByStatus={openByStatus}
+          onJumpSection={(st) => { setTab('board'); setSectionJump(st) }}
+          user={user}
+          onSwitchUser={() => setUser(null)}
+        />
+
+        <main className="main">
+          <TopBar crumbs={crumbs} cartCount={cart.reduce((s, l) => s + l.qty, 0)} onOpenCart={() => setCartOpen(true)} />
+
+          {success && (
+            <SuccessScreen result={success} onDone={() => { setSuccess(null); navigate('board') }} />
+          )}
+
+          {!success && tab === 'board' && (
+            <OperationsBoard
+              sectionJump={sectionJump}
+              onCountChange={handleCountChange}
+            />
+          )}
+          {!success && tab === 'catalog' && <CatalogScreen cart={cart} onAddToCart={handleAddToCart} onOpenCart={() => setCartOpen(true)} />}
+          {!success && tab === 'mine'    && <MyRequestsScreen user={user} />}
+          {!success && tab === 'home'    && <HomeScreen user={user} onCatalog={() => navigate('catalog')} onRequestType={startRequest} />}
+          {!success && tab === 'request' && reqType && (
+            <RequestForm
+              type={reqType}
+              user={user}
+              onBack={() => navigate('home')}
+              onSuccess={(ref) => setSuccess({ ref, email: user?.email, isOrder: false })}
+            />
+          )}
+        </main>
+      </div>
+
+      {cartOpen && (
+        <CartModal
+          cart={cart}
+          onClose={() => setCartOpen(false)}
+          onUpdateQty={handleUpdateCartQty}
+          onRemove={(id) => setCart(prev => prev.filter(l => l.item.id !== id))}
+          onPlace={placeOrder}
+        />
+      )}
+    </>
   )
 }
