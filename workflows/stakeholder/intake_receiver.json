@@ -11,7 +11,10 @@
       "name": "Intake Form Submitted",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
@@ -21,7 +24,10 @@
       "name": "Create Ticket in PostgREST",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -32,7 +38,10 @@
       "name": "Respond to UI — Received",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [440, 100]
+      "position": [
+        440,
+        100
+      ]
     },
     {
       "parameters": {
@@ -41,8 +50,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "Bearer REDACTED_POSTGREST_JWT" },
-            { "name": "Accept", "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "Bearer REDACTED_POSTGREST_JWT"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
           ]
         },
         "options": {}
@@ -51,7 +66,10 @@
       "name": "Fetch Supplier Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
@@ -60,8 +78,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "Bearer REDACTED_POSTGREST_JWT" },
-            { "name": "Accept", "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "Bearer REDACTED_POSTGREST_JWT"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
           ]
         },
         "options": {}
@@ -70,7 +94,10 @@
       "name": "Fetch Contract Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [660, 300]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
@@ -79,8 +106,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "Bearer REDACTED_POSTGREST_JWT" },
-            { "name": "Accept", "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "Bearer REDACTED_POSTGREST_JWT"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
           ]
         },
         "options": {}
@@ -89,17 +122,26 @@
       "name": "Fetch Budget Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [880, 300]
+      "position": [
+        880,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/users?branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}&role=in.(head_of_procurement,category_manager,ops_manager)&order=spend_authority.desc&limit=1",
+        "url": "=https://postgrest-production-7960.up.railway.app/managers?branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}&order=spend_authority.desc&limit=1",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "Bearer REDACTED_POSTGREST_JWT" },
-            { "name": "Accept", "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "Bearer REDACTED_POSTGREST_JWT"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
           ]
         },
         "options": {}
@@ -108,17 +150,23 @@
       "name": "Fetch Responsible Manager",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [880, 480]
+      "position": [
+        880,
+        480
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst contract = $node['Fetch Contract Context'].json;\nconst budget = $node['Fetch Budget Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\n\nconst ANTHROPIC_KEY = $env.ANTHROPIC_API_KEY;\n\nconst prompt = `Reason on this procurement intake request and return a disposition.\n\nREQUEST:\n${JSON.stringify(intake)}\n\nSIGNAL 1 - CONTRACT:\n${JSON.stringify(contract)}\n\nSIGNAL 2 - BUDGET:\n${JSON.stringify(budget)}\n\nSIGNAL 3 - SUPPLIER:\n${JSON.stringify(supplier)}\n\nSIGNAL 4 - REQUEST: ${intake.ticket_type || 'purchase'} for EUR ${intake.value_eur || intake.amount || 0} by ${intake.submitted_by || 'unknown'}\n\nSIGNAL 5 - POLICY: Auto-execute if confident and within authority. One-touch if uncertain. Escalate if over EUR 100000 or compliance blocker.\n\nReturn ONLY valid JSON (no markdown):\n{\n  \"disposition\": \"auto_execute\" or \"one_touch\" or \"escalate\",\n  \"confidence\": 0.0 to 1.0,\n  \"reasoning\": \"string\",\n  \"recommendation\": \"string\",\n  \"brief\": \"string\",\n  \"action_taken\": \"string\",\n  \"supplier_email_subject\": \"string or null\",\n  \"supplier_email_body\": \"string or null\",\n  \"requires_order\": true or false\n}`;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.anthropic.com/v1/messages',\n  headers: {\n    'x-api-key': ANTHROPIC_KEY,\n    'anthropic-version': '2023-06-01',\n    'content-type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'claude-sonnet-4-6',\n    max_tokens: 1024,\n    messages: [{ role: 'user', content: prompt }]\n  })\n});\n\nconst text = response.content[0].text;\nconst result = JSON.parse(text);\n\nreturn [{ json: result }];"
+        "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst contract = $node['Fetch Contract Context'].json;\nconst budget = $node['Fetch Budget Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\n\nconst ANTHROPIC_KEY = $env.ANTHROPIC_API_KEY;\n\nconst prompt = `Reason on this procurement intake request and return a disposition.\n\nREQUEST:\n${JSON.stringify(intake)}\n\nSIGNAL 1 - CONTRACT:\n${JSON.stringify(contract)}\n\nSIGNAL 2 - BUDGET:\n${JSON.stringify(budget)}\n\nSIGNAL 3 - SUPPLIER:\n${JSON.stringify(supplier)}\n\nSIGNAL 4 - REQUEST: ${intake.ticket_type || 'purchase'} for EUR ${intake.value_eur || intake.amount || 0} by ${intake.submitted_by || 'unknown'}\n\nSIGNAL 5 - POLICY:\n- CATALOG ITEMS (description contains SKU codes like APPMBP14M3PRO, GHENT, MS365E3 etc): These are pre-approved catalog items with contracts already on file. If budget is available, ALWAYS return auto_execute with confidence >= 0.95. Do not route catalog items to one_touch under any circumstance unless the budget bucket is completely exhausted.\n- Auto-execute if all 5 signals green and confidence >= 0.85.\n- One-touch if any signal uncertain or confidence < 0.85.\n- Escalate if amount > EUR 100000 OR compliance blocker detected.\n\nReturn ONLY valid JSON (no markdown, no explanation outside JSON):\n{\n  \"disposition\": \"auto_execute\" or \"one_touch\" or \"escalate\",\n  \"confidence\": 0.0 to 1.0,\n  \"reasoning\": \"string — explain each of the 5 signals\",\n  \"recommendation\": \"string — one sentence action\",\n  \"brief\": \"string — one sentence for the submitter\",\n  \"action_taken\": \"string\",\n  \"supplier_email_subject\": \"string or null\",\n  \"supplier_email_body\": \"string or null\",\n  \"requires_order\": true or false,\n  \"signals\": [\n    { \"signal\": \"contract\",    \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"policy\",      \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"supplier\",    \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"request\",     \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"consumption\", \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" }\n  ]\n}`;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.anthropic.com/v1/messages',\n  headers: {\n    'x-api-key': ANTHROPIC_KEY,\n    'anthropic-version': '2023-06-01',\n    'content-type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'claude-sonnet-4-6',\n    max_tokens: 1500,\n    messages: [{ role: 'user', content: prompt }]\n  })\n});\n\nconst text = response.content[0].text;\n// Strip markdown fences if Claude wraps in them\nconst clean = text.replace(/^```json\n?/,'').replace(/\n?```$/,'').trim();\nconst result = JSON.parse(clean);\n\nreturn [{ json: result }];"
       },
       "id": "call_claude",
       "name": "Claude — Reason on Intake",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 300]
+      "position": [
+        1100,
+        300
+      ]
     },
     {
       "parameters": {
@@ -128,7 +176,10 @@
       "name": "Write Decision to PostgREST",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 300]
+      "position": [
+        1320,
+        300
+      ]
     },
     {
       "parameters": {
@@ -136,9 +187,18 @@
         "value1": "={{ $json.disposition }}",
         "rules": {
           "rules": [
-            { "value2": "auto_execute", "outputIndex": 0 },
-            { "value2": "one_touch", "outputIndex": 1 },
-            { "value2": "escalate", "outputIndex": 2 }
+            {
+              "value2": "auto_execute",
+              "outputIndex": 0
+            },
+            {
+              "value2": "one_touch",
+              "outputIndex": 1
+            },
+            {
+              "value2": "escalate",
+              "outputIndex": 2
+            }
           ]
         }
       },
@@ -146,7 +206,10 @@
       "name": "Route by Disposition",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
-      "position": [1540, 300]
+      "position": [
+        1540,
+        300
+      ]
     },
     {
       "parameters": {
@@ -156,7 +219,10 @@
       "name": "RPC — Approve & Create PO",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 100]
+      "position": [
+        1760,
+        100
+      ]
     },
     {
       "parameters": {
@@ -166,7 +232,10 @@
       "name": "Update Ticket — Pending Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 300]
+      "position": [
+        1760,
+        300
+      ]
     },
     {
       "parameters": {
@@ -176,7 +245,10 @@
       "name": "Update Ticket — Escalated",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 500]
+      "position": [
+        1760,
+        500
+      ]
     },
     {
       "parameters": {
@@ -186,7 +258,10 @@
       "name": "Close Ticket & Fetch Branch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1980, 100]
+      "position": [
+        1980,
+        100
+      ]
     },
     {
       "parameters": {
@@ -199,7 +274,10 @@
       "name": "Send PO to Supplier",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2,
-      "position": [2200, 100]
+      "position": [
+        2200,
+        100
+      ]
     },
     {
       "parameters": {
@@ -212,69 +290,186 @@
       "name": "Notify Submitter — Done",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2,
-      "position": [2200, 280]
+      "position": [
+        2200,
+        280
+      ]
+    },
+    {
+      "id": "write-trace-signals-001",
+      "name": "Write Trace Signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1430,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst decisionId = result.decision_id;\n\nconst JWT = 'REDACTED_POSTGREST_JWT';\nconst POSTGREST = 'https://postgrest-production-7960.up.railway.app';\n\nif (!decisionId) {\n  console.log('No decision_id — skipping trace write');\n  return [{ json: result }];\n}\n\n// Parse the signals from Claude's output\nconst signals = result.signals || [];\n\nif (signals.length === 0) {\n  // Build signals from Claude result fields if not structured\n  const fallback = [\n    { signal: 'contract',    value: result.contract_signal    || 'checked', weight: result.contract_weight    || 0.8,  green: result.contract_green    ?? true,  notes: result.contract_notes    || '' },\n    { signal: 'policy',      value: result.budget_signal      || 'checked', weight: result.budget_weight      || 0.8,  green: result.budget_green      ?? true,  notes: result.budget_notes      || '' },\n    { signal: 'supplier',    value: result.supplier_signal    || 'checked', weight: result.supplier_weight    || 0.8,  green: result.supplier_green    ?? true,  notes: result.supplier_notes    || '' },\n    { signal: 'request',     value: result.request_signal     || 'checked', weight: result.request_weight     || 0.8,  green: result.request_green     ?? true,  notes: result.request_notes     || '' },\n    { signal: 'consumption', value: result.consumption_signal || 'checked', weight: result.consumption_weight || 0.8,  green: result.consumption_green ?? true,  notes: result.consumption_notes || '' },\n  ];\n  signals.push(...fallback);\n}\n\nconst rows = signals.slice(0, 5).map(s => ({\n  decision_id: decisionId,\n  signal:      s.signal,\n  value:       typeof s.value === 'object' ? JSON.stringify(s.value) : String(s.value || ''),\n  weight:      Math.min(Math.max(parseFloat(s.weight) || 0.8, 0), 0.9999),\n  green:       s.green === true || s.green === 'true',\n  notes:       s.notes || ''\n}));\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: POSTGREST + '/trace_log',\n    headers: {\n      'Authorization': 'Bearer ' + JWT,\n      'Content-Type': 'application/json',\n      'Prefer': 'return=minimal'\n    },\n    body: JSON.stringify(rows)\n  });\n} catch(e) {\n  // Non-fatal — trace failure must not block routing\n  console.error('Trace write failed (non-fatal):', e.message);\n}\n\nreturn [{ json: result }];"
+      }
     }
   ],
   "connections": {
     "Intake Form Submitted": {
-      "main": [[
-        { "node": "Create Ticket in PostgREST", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Create Ticket in PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Create Ticket in PostgREST": {
-      "main": [[
-        { "node": "Respond to UI — Received", "type": "main", "index": 0 },
-        { "node": "Fetch Supplier Context", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Respond to UI — Received",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Supplier Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Supplier Context": {
-      "main": [[
-        { "node": "Fetch Contract Context", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Fetch Contract Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Contract Context": {
-      "main": [[
-        { "node": "Fetch Budget Context", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Fetch Budget Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Budget Context": {
-      "main": [[
-        { "node": "Fetch Responsible Manager", "type": "main", "index": 0 },
-        { "node": "Claude — Reason on Intake", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Fetch Responsible Manager",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Claude — Reason on Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Responsible Manager": {
-      "main": [[
-        { "node": "Claude — Reason on Intake", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Claude — Reason on Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Claude — Reason on Intake": {
-      "main": [[
-        { "node": "Write Decision to PostgREST", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Write Decision to PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Write Decision to PostgREST": {
-      "main": [[
-        { "node": "Route by Disposition", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Write Trace Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Route by Disposition": {
       "main": [
-        [{ "node": "RPC — Approve & Create PO", "type": "main", "index": 0 }],
-        [{ "node": "Update Ticket — Pending Review", "type": "main", "index": 0 }],
-        [{ "node": "Update Ticket — Escalated", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "RPC — Approve & Create PO",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Ticket — Pending Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Ticket — Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "RPC — Approve & Create PO": {
-      "main": [[
-        { "node": "Close Ticket & Fetch Branch", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Close Ticket & Fetch Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Close Ticket & Fetch Branch": {
-      "main": [[
-        { "node": "Send PO to Supplier", "type": "main", "index": 0 },
-        { "node": "Notify Submitter — Done", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Send PO to Supplier",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Submitter — Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Trace Signals": {
+      "main": [
+        [
+          {
+            "node": "Route by Disposition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {

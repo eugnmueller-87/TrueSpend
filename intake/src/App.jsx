@@ -479,7 +479,7 @@ const OperationsBoard = ({ sectionJump, onCountChange }) => {
   }, [sectionJump])
 
   const handleAction = async (id, action) => {
-    const statusMap = { approve: 'approved', reject: 'rejected', sign: 'approved', decline: 'rejected', confirm: 'approved', ack: 'pending_review' }
+    const statusMap = { approve: 'approved', reject: 'rejected', sign: 'approved', decline: 'rejected', confirm: 'approved', ack: 'closed' }
     try {
       await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
       load()
