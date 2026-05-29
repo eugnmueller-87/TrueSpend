@@ -1027,22 +1027,44 @@ const OrdersBoard = ({ onCountChange }) => {
                             <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>Order detail</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                               {[
-                                ['PO Number',   po.po_number],
-                                ['Supplier',    po.supplier_name],
-                                ['Branch',      po.branch_name],
-                                ['Category',    po.category],
-                                ['PO Date',     po.po_date ? new Date(po.po_date).toLocaleDateString('en-GB') : '—'],
-                                ['Expected',    po.expected_delivery ? new Date(po.expected_delivery).toLocaleDateString('en-GB') : '—'],
-                                ['Delivered',   po.delivered_at ? new Date(po.delivered_at).toLocaleDateString('en-GB') : '—'],
-                                ['Value',       po.amount_eur ? fmt(po.amount_eur) : '—'],
-                                ['Requested by',po.submitted_by || '—'],
-                                ['Ticket',      po.ticket_reference || '—'],
+                                ['PO Number',    po.po_number],
+                                ['Supplier',     po.supplier_name],
+                                ['Branch',       po.branch_name],
+                                ['Category',     po.category],
+                                ['PO Date',      po.po_date ? new Date(po.po_date).toLocaleDateString('en-GB') : '—'],
+                                ['Expected',     po.expected_delivery ? new Date(po.expected_delivery).toLocaleDateString('en-GB') : '—'],
+                                ['Delivered',    po.delivered_at ? new Date(po.delivered_at).toLocaleDateString('en-GB') : '—'],
+                                ['Value',        po.amount_eur ? fmt(po.amount_eur) : '—'],
+                                ['Requested by', po.submitted_by || '—'],
                               ].map(([label, val]) => (
                                 <div key={label} style={{ display: 'flex', gap: 12, fontSize: 12.5 }}>
                                   <span style={{ minWidth: 100, color: '#75695F', flexShrink: 0 }}>{label}</span>
                                   <span style={{ color: '#161413', fontWeight: 500 }}>{val}</span>
                                 </div>
                               ))}
+                              {/* Ticket row — clickable ref */}
+                              <div style={{ display: 'flex', gap: 12, fontSize: 12.5, alignItems: 'center' }}>
+                                <span style={{ minWidth: 100, color: '#75695F', flexShrink: 0 }}>Ticket</span>
+                                {po.ticket_reference ? (
+                                  <span className="ref" style={{ color: '#8F5C12', fontWeight: 600 }}>{po.ticket_reference}</span>
+                                ) : <span style={{ color: '#161413', fontWeight: 500 }}>—</span>}
+                              </div>
+                              {/* Jira row — only when present */}
+                              {po.jira_key && (
+                                <div style={{ display: 'flex', gap: 12, fontSize: 12.5, alignItems: 'center' }}>
+                                  <span style={{ minWidth: 100, color: '#75695F', flexShrink: 0 }}>Jira</span>
+                                  <a
+                                    href={po.jira_url || ('https://truespend.atlassian.net/browse/' + po.jira_key)}
+                                    target="_blank" rel="noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 4, background: '#E8F0FE', border: '1px solid #BFCFE8', color: '#1747A6', fontSize: 12, fontWeight: 700, textDecoration: 'none', letterSpacing: '0.01em' }}
+                                  >
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm5.5 17.5l-5.5-5.5-5.5 5.5-1.5-1.5 5.5-5.5-5.5-5.5 1.5-1.5 5.5 5.5 5.5-5.5 1.5 1.5-5.5 5.5 5.5 5.5-1.5 1.5z"/></svg>
+                                    {po.jira_key}
+                                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                  </a>
+                                </div>
+                              )}
                             </div>
                           </div>
                           {/* Right: description + notes + PDF */}
