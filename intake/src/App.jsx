@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const POSTGREST_URL = import.meta.env.VITE_POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app'
@@ -16,6 +16,7 @@ const BRANCHES = [
   { label: 'Iberia',       id: 'b1000000-0000-0000-0000-000000000007' },
   { label: 'Italy',        id: 'b1000000-0000-0000-0000-000000000008' },
   { label: 'CEE',          id: 'b1000000-0000-0000-0000-000000000009' },
+  { label: 'Nordics East', id: 'b1000000-0000-0000-0000-000000000010' },
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

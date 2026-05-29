@@ -41,3 +41,6 @@ infra/grafana-data/
 *.pem
 *.key
 *.cert
+
+# Local vendor cache
+../SpendLens_App/vendor_cache.json
