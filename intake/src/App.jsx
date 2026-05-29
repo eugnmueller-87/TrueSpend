@@ -350,15 +350,263 @@ const AgentRail = () => (
   </aside>
 )
 
+// ─── Signal badge ─────────────────────────────────────────────────────────────
+const SIGNAL_LABEL = { policy: 'Policy', supplier: 'Supplier', contract: 'Contract', request: 'Request', consumption: 'Budget' }
+
+const SignalBadge = ({ signal, green, weight, notes }) => (
+  <div style={{
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    padding: '10px 14px', borderRadius: 6,
+    background: green ? '#EEF3EE' : '#F6E5DE',
+    border: `1px solid ${green ? '#C5D9C8' : '#E8C3B5'}`,
+    fontSize: 12.5,
+  }}>
+    <span style={{
+      flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
+      background: green ? '#3D7A5A' : '#B5462E',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      marginTop: 1,
+    }}>
+      {green
+        ? <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+        : <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      }
+    </span>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: notes ? 2 : 0 }}>
+        <span style={{ fontWeight: 600, color: '#161413', letterSpacing: '-0.01em' }}>
+          {SIGNAL_LABEL[signal] || signal}
+        </span>
+        <span style={{ fontSize: 11, color: '#A89B8B', fontVariantNumeric: 'tabular-nums' }}>
+          {Math.round(parseFloat(weight) * 100)}%
+        </span>
+      </div>
+      {notes && <div style={{ color: '#4A4340', lineHeight: 1.45 }}>{notes}</div>}
+    </div>
+  </div>
+)
+
+// ─── Request detail panel ──────────────────────────────────────────────────────
+const RequestDetail = ({ ticket }) => {
+  const [detail, setDetail] = useState(null)  // { decision, signals }
+
+  useEffect(() => {
+    pgFetch(`/decisions?ticket_id=eq.${ticket.id}&order=created_at.desc&limit=1`)
+      .then(async (decisions) => {
+        if (!decisions.length) { setDetail({}); return }
+        const dec = decisions[0]
+        const signals = await pgFetch(`/trace_log?decision_id=eq.${dec.id}&order=created_at.asc`)
+        setDetail({ decision: dec, signals })
+      })
+      .catch(() => setDetail({}))
+  }, [ticket.id])
+
+  // Parse description into line items (format: "Name × qty (SKU), ...")
+  const parseItems = (desc) => {
+    if (!desc) return null
+    const parts = desc.split(/,\s*(?=[A-Z])/)
+    if (parts.length > 1 && parts[0].includes('×')) return parts
+    return null
+  }
+
+  const items = parseItems(ticket.description)
+  const DISP_LABEL = { auto_execute: 'Auto-executed', one_touch: 'One-touch', escalate: 'Escalated', auto_approved: 'Auto-approved' }
+  const DISP_COLOR = { auto_execute: '#3D7A5A', one_touch: '#B07219', escalate: '#2B5F7A' }
+
+  return (
+    <div style={{ padding: '20px 24px 24px', background: '#FDFAF5', borderTop: '1px solid #EEE7DA' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+
+        {/* Left: What was ordered */}
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>
+            Request
+          </div>
+          {items ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {items.map((line, i) => {
+                const m = line.match(/^(.+?)\s*×\s*(\d+)\s*(?:\(([^)]+)\))?/)
+                if (!m) return <div key={i} style={{ fontSize: 13, color: '#3D3633' }}>{line}</div>
+                const [, name, qty, sku] = m
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '9px 12px', background: '#FFFEFB',
+                    border: '1px solid #E5DDD0', borderRadius: 6,
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#161413', letterSpacing: '-0.005em' }}>{name.trim()}</div>
+                      {sku && <div style={{ fontSize: 11, color: '#A89B8B', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{sku}</div>}
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#3D3633', letterSpacing: '-0.01em' }}>× {qty}</div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13.5, color: '#3D3633', lineHeight: 1.6, padding: '10px 0' }}>
+              {ticket.description || ticket.title}
+            </div>
+          )}
+
+          {(ticket.category || ticket.submitted_by || ticket.branch_name) && (
+            <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {ticket.category && (
+                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#EFEBE1', color: '#75695F', fontWeight: 500 }}>
+                  {ticket.category}
+                </span>
+              )}
+              {ticket.branch_name && (
+                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#EFEBE1', color: '#75695F' }}>
+                  {ticket.branch_name}
+                </span>
+              )}
+              {ticket.submitted_by && (
+                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#EFEBE1', color: '#75695F' }}>
+                  by {ticket.submitted_by}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Jira badge if escalated */}
+          {ticket.jira_key && (
+            <div style={{ marginTop: 12 }}>
+              <a href={ticket.jira_url || ('https://truespend.atlassian.net/browse/' + ticket.jira_key)}
+                target="_blank" rel="noreferrer"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 4, background: '#E8F0FE', border: '1px solid #BFCFE8', color: '#1747A6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm5.5 17.5l-5.5-5.5-5.5 5.5-1.5-1.5 5.5-5.5-5.5-5.5 1.5-1.5 5.5 5.5 5.5-5.5 1.5 1.5-5.5 5.5 5.5 5.5-1.5 1.5z"/></svg>
+                {ticket.jira_key}
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              </a>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Agent decision */}
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>
+            Agent decision
+          </div>
+
+          {detail === null && (
+            <div style={{ fontSize: 12.5, color: '#A89B8B', padding: '10px 0' }}>Loading…</div>
+          )}
+
+          {detail !== null && !detail.decision && (() => {
+            const STEPS = [
+              { key: 'received',  label: 'Received',         sub: 'Ticket created in DB' },
+              { key: 'reasoning', label: 'Agent reasoning',  sub: 'Running 5 signals via Claude' },
+              { key: 'decision',  label: 'Decision written', sub: 'Disposition + confidence scored' },
+              { key: 'routed',    label: 'Routed',           sub: 'Board updated or auto-executed' },
+              { key: 'done',      label: 'Closed',           sub: 'Approved, rejected, or executed' },
+            ]
+            const STATUS_STEP = {
+              reasoning: 1,
+              pending_review: 3, pending_confirm: 3, signature_required: 3, escalated: 3,
+              approved: 4, rejected: 4, auto_executed: 4, closed: 4,
+            }
+            const currentStep = STATUS_STEP[ticket.status] ?? 1
+            const isStuck = ticket.status === 'reasoning'
+            const stuckMin = Math.round((Date.now() - new Date(ticket.created_at)) / 60000)
+
+            return (
+              <div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {STEPS.map((step, i) => {
+                    const done    = i < currentStep
+                    const active  = i === currentStep
+                    const pending = i > currentStep
+                    return (
+                      <div key={step.key} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 20, flexShrink: 0 }}>
+                          <div style={{
+                            width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                            background: done ? '#3D7A5A' : active ? (isStuck ? '#B07219' : '#2B5F7A') : '#E5DDD0',
+                            border: `2px solid ${done ? '#3D7A5A' : active ? (isStuck ? '#B07219' : '#2B5F7A') : '#D4C9B8'}`,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1,
+                          }}>
+                            {done && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>}
+                            {active && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'white' }} />}
+                          </div>
+                          {i < STEPS.length - 1 && (
+                            <div style={{ width: 2, flex: 1, minHeight: 16, background: done ? '#3D7A5A' : '#E5DDD0', margin: '2px 0' }} />
+                          )}
+                        </div>
+                        <div style={{ paddingBottom: i < STEPS.length - 1 ? 14 : 0, flex: 1 }}>
+                          <div style={{
+                            fontSize: 12.5, fontWeight: active ? 700 : done ? 600 : 400,
+                            color: done ? '#3D7A5A' : active ? (isStuck ? '#8F5C12' : '#161413') : '#A89B8B',
+                            letterSpacing: '-0.005em', display: 'flex', alignItems: 'center', gap: 6,
+                          }}>
+                            {step.label}
+                            {active && isStuck && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: '#F7EFDE', color: '#8F5C12', border: '1px solid #E9DAB5', fontWeight: 600 }}>STUCK {stuckMin}m</span>}
+                            {active && !isStuck && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: '#E6EEF2', color: '#2B5F7A', border: '1px solid #C5D5DE', fontWeight: 600 }}>NOW</span>}
+                          </div>
+                          <div style={{ fontSize: 11.5, color: pending ? '#C9BFAE' : '#75695F', marginTop: 1 }}>{step.sub}</div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                {isStuck && (
+                  <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 6, background: '#F7EFDE', border: '1px solid #E9DAB5', fontSize: 12, color: '#8F5C12', lineHeight: 1.5 }}>
+                    The agent received the request but hasn't written a decision yet. Check the n8n workflow status.
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
+          {detail?.decision && (
+            <>
+              <div style={{ padding: '12px 14px', borderRadius: 6, marginBottom: 10, background: '#FFFEFB', border: '1px solid #E5DDD0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.005em', color: DISP_COLOR[detail.decision.disposition] || '#3D3633' }}>
+                    {DISP_LABEL[detail.decision.disposition] || detail.decision.disposition}
+                  </span>
+                  <span style={{ fontSize: 12, color: '#75695F', fontVariantNumeric: 'tabular-nums' }}>
+                    {Math.round(parseFloat(detail.decision.confidence) * 100)}% confidence
+                  </span>
+                </div>
+                {detail.decision.recommendation && (
+                  <div style={{ fontSize: 12.5, color: '#3D3633', lineHeight: 1.45 }}>
+                    {detail.decision.recommendation}
+                  </div>
+                )}
+                {detail.decision.reasoning && (
+                  <div style={{ fontSize: 12, color: '#75695F', lineHeight: 1.45, marginTop: 6, borderTop: '1px solid #EEE7DA', paddingTop: 6 }}>
+                    {detail.decision.reasoning}
+                  </div>
+                )}
+              </div>
+              {detail.signals?.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {detail.signals.map((s, i) => (
+                    <SignalBadge key={i} signal={s.signal} green={s.green} weight={s.weight} notes={s.notes} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Stats Strip ──────────────────────────────────────────────────────────────
 const StatsStrip = ({ tickets }) => {
   const totalValue = tickets.reduce((s, t) => s + (t.value_eur || 0), 0)
+  const scores = tickets.map(t => t.confidence_score).filter(Boolean).map(Number)
+  const minConf = scores.length ? Math.min(...scores) : null
+  const sections = BOARD_SECTIONS.filter(s => tickets.some(t => t.status === s.status)).length
   return (
     <div className="stats">
       <div className="stat">
         <div className="stat__label">Need you</div>
         <div className="stat__val">{tickets.length}</div>
-        <div className="stat__hint">Across {BOARD_SECTIONS.filter(s => tickets.some(t => t.status === s.status)).length} sections</div>
+        <div className="stat__hint">Across {sections} section{sections !== 1 ? 's' : ''}</div>
       </div>
       <div className="stat">
         <div className="stat__label">Value at decision</div>
@@ -366,20 +614,33 @@ const StatsStrip = ({ tickets }) => {
         <div className="stat__hint">Total notional in your queue</div>
       </div>
       <div className="stat">
-        <div className="stat__label">Closed today by agent</div>
-        <div className="stat__val">47 <em>auto</em></div>
-        <div className="stat__hint">€248.500 · 0 errors</div>
+        <div className="stat__label">Escalated</div>
+        <div className="stat__val">{tickets.filter(t => t.status === 'escalated').length}</div>
+        <div className="stat__hint">Require CFO or Legal sign-off</div>
       </div>
       <div className="stat">
         <div className="stat__label">Confidence floor</div>
-        <div className="stat__val stat__val--gold">92%</div>
-        <div className="stat__hint">Below floor → routed here</div>
+        <div className="stat__val stat__val--gold">{minConf != null ? Math.round(minConf * 100) + '%' : '—'}</div>
+        <div className="stat__hint">Lowest in your queue</div>
       </div>
     </div>
   )
 }
 
 // ─── Ticket Row ───────────────────────────────────────────────────────────────
+const ConfBar = ({ score }) => {
+  const pct = Math.round((score || 0) * 100)
+  const color = pct >= 90 ? '#3D7A5A' : pct >= 75 ? '#B07219' : '#B5462E'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+      <div style={{ flex: 1, height: 3, borderRadius: 2, background: '#E5DDD0', maxWidth: 48 }}>
+        <div style={{ height: '100%', borderRadius: 2, background: color, width: `${pct}%`, transition: 'width 0.3s' }} />
+      </div>
+      <span style={{ fontSize: 10.5, color, fontWeight: 700, fontVariantNumeric: 'tabular-nums', letterSpacing: '0.01em' }}>{pct}%</span>
+    </div>
+  )
+}
+
 const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
   return (
     <>
@@ -393,6 +654,7 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
             <span className="ref">{ticket.reference}</span>
             <span className="dot" />
             <span>{timeAgo(ticket.created_at)}</span>
+            {ticket.branch_name && <><span className="dot" /><span style={{ color: '#A89B8B' }}>{ticket.branch_name}</span></>}
             {ticket.category && <><span className="dot" /><span>{ticket.category}</span></>}
           </div>
         </div>
@@ -402,9 +664,7 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
         </div>
         <div>
           <div className="trow__value">{ticket.value_eur ? fmt(ticket.value_eur) : '—'}</div>
-          {ticket.confidence_score && (
-            <div className="trow__conf">conf. {Math.round(ticket.confidence_score * 100)}%</div>
-          )}
+          {ticket.confidence_score && <ConfBar score={ticket.confidence_score} />}
         </div>
         <div className="trow__actions" onClick={e => e.stopPropagation()}>
           {ticket.status === 'signature_required' && (<>
@@ -424,20 +684,7 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
         </div>
       </div>
 
-      {isOpen && (
-        <div className="tbrief">
-          <div>
-            <div className="tbrief__h">Description</div>
-            <div className="tbrief__body">{ticket.description || ticket.title}</div>
-          </div>
-          {ticket.reasoning && (
-            <div>
-              <div className="tbrief__h">Agent reasoning</div>
-              <div className="tbrief__body">{ticket.reasoning}</div>
-            </div>
-          )}
-        </div>
-      )}
+      {isOpen && <RequestDetail ticket={ticket} />}
     </>
   )
 }
@@ -1522,274 +1769,8 @@ const SuppliersScreen = () => {
   )
 }
 
-// ─── Signal badge ──────────────────────────────────────────────────────────────
-const SIGNAL_LABEL = { policy: 'Policy', supplier: 'Supplier', contract: 'Contract', request: 'Request', consumption: 'Budget' }
+// ─── (Signal badge and RequestDetail moved above TicketRow) ──────────────────
 
-const SignalBadge = ({ signal, green, weight, notes }) => (
-  <div style={{
-    display: 'flex', alignItems: 'flex-start', gap: 10,
-    padding: '10px 14px', borderRadius: 6,
-    background: green ? '#EEF3EE' : '#F6E5DE',
-    border: `1px solid ${green ? '#C5D9C8' : '#E8C3B5'}`,
-    fontSize: 12.5,
-  }}>
-    <span style={{
-      flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
-      background: green ? '#3D7A5A' : '#B5462E',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      marginTop: 1,
-    }}>
-      {green
-        ? <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>
-        : <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      }
-    </span>
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: notes ? 2 : 0 }}>
-        <span style={{ fontWeight: 600, color: '#161413', letterSpacing: '-0.01em' }}>
-          {SIGNAL_LABEL[signal] || signal}
-        </span>
-        <span style={{ fontSize: 11, color: '#A89B8B', fontVariantNumeric: 'tabular-nums' }}>
-          {Math.round(parseFloat(weight) * 100)}%
-        </span>
-      </div>
-      {notes && <div style={{ color: '#4A4340', lineHeight: 1.45 }}>{notes}</div>}
-    </div>
-  </div>
-)
-
-// ─── Request detail panel ──────────────────────────────────────────────────────
-const RequestDetail = ({ ticket }) => {
-  const [detail, setDetail] = useState(null)  // { decision, signals }
-
-  useEffect(() => {
-    pgFetch(`/decisions?ticket_id=eq.${ticket.id}&order=created_at.desc&limit=1`)
-      .then(async (decisions) => {
-        if (!decisions.length) { setDetail({}); return }
-        const dec = decisions[0]
-        const signals = await pgFetch(`/trace_log?decision_id=eq.${dec.id}&order=created_at.asc`)
-        setDetail({ decision: dec, signals })
-      })
-      .catch(() => setDetail({}))
-  }, [ticket.id])
-
-  // Parse description into line items (format: "Name × qty (SKU), ...")
-  const parseItems = (desc) => {
-    if (!desc) return null
-    // Try to detect catalog item format: "Name × N (SKU)"
-    const parts = desc.split(/,\s*(?=[A-Z])/)
-    if (parts.length > 1 && parts[0].includes('×')) return parts
-    return null
-  }
-
-  const items = parseItems(ticket.description)
-  const DISP_LABEL = { auto_execute: 'Auto-executed', one_touch: 'One-touch', escalate: 'Escalated', auto_approved: 'Auto-approved' }
-  const DISP_COLOR = { auto_execute: '#3D7A5A', one_touch: '#B07219', escalate: '#2B5F7A' }
-
-  return (
-    <div style={{ padding: '20px 24px 24px', background: '#FDFAF5', borderTop: '1px solid #EEE7DA' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
-
-        {/* Left: What was ordered */}
-        <div>
-          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>
-            What was ordered
-          </div>
-          {items ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {items.map((line, i) => {
-                const m = line.match(/^(.+?)\s*×\s*(\d+)\s*(?:\(([^)]+)\))?/)
-                if (!m) return <div key={i} style={{ fontSize: 13, color: '#3D3633' }}>{line}</div>
-                const [, name, qty, sku] = m
-                return (
-                  <div key={i} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '9px 12px', background: '#FFFEFB',
-                    border: '1px solid #E5DDD0', borderRadius: 6,
-                  }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#161413', letterSpacing: '-0.005em' }}>{name.trim()}</div>
-                      {sku && <div style={{ fontSize: 11, color: '#A89B8B', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{sku}</div>}
-                    </div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#3D3633', letterSpacing: '-0.01em' }}>× {qty}</div>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13.5, color: '#3D3633', lineHeight: 1.6, padding: '10px 0' }}>
-              {ticket.description || ticket.title}
-            </div>
-          )}
-
-          {ticket.category && (
-            <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#EFEBE1', color: '#75695F', fontWeight: 500 }}>
-                {ticket.category}
-              </span>
-              {ticket.submitted_by && (
-                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#EFEBE1', color: '#75695F' }}>
-                  {ticket.submitted_by}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Right: Approval trail */}
-        <div>
-          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 12 }}>
-            Approval trail
-          </div>
-
-          {detail === null && (
-            <div style={{ fontSize: 12.5, color: '#A89B8B', padding: '10px 0' }}>Loading…</div>
-          )}
-
-          {detail !== null && !detail.decision && (() => {
-            // Map status → step index (0-based) in the pipeline
-            const STEPS = [
-              { key: 'received',  label: 'Received',         sub: 'Ticket created in DB' },
-              { key: 'reasoning', label: 'Agent reasoning',  sub: 'Running 5 signals via Claude' },
-              { key: 'decision',  label: 'Decision written', sub: 'Disposition + confidence scored' },
-              { key: 'routed',    label: 'Routed',           sub: 'Board updated or auto-executed' },
-              { key: 'done',      label: 'Closed',           sub: 'Approved, rejected, or executed' },
-            ]
-            const STATUS_STEP = {
-              reasoning:         1,
-              pending_review:    3, pending_confirm: 3, signature_required: 3, escalated: 3,
-              approved:          4, rejected: 4, auto_executed: 4, closed: 4,
-            }
-            const currentStep = STATUS_STEP[ticket.status] ?? 1
-            const isStuck = ticket.status === 'reasoning'
-            const stuckMin = Math.round((Date.now() - new Date(ticket.created_at)) / 60000)
-
-            return (
-              <div>
-                {/* Pipeline steps */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                  {STEPS.map((step, i) => {
-                    const done    = i < currentStep
-                    const active  = i === currentStep
-                    const pending = i > currentStep
-                    return (
-                      <div key={step.key} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
-                        {/* Timeline spine */}
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 20, flexShrink: 0 }}>
-                          <div style={{
-                            width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
-                            background: done ? '#3D7A5A' : active ? (isStuck ? '#B07219' : '#2B5F7A') : '#E5DDD0',
-                            border: `2px solid ${done ? '#3D7A5A' : active ? (isStuck ? '#B07219' : '#2B5F7A') : '#D4C9B8'}`,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            zIndex: 1,
-                          }}>
-                            {done && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>}
-                            {active && !isStuck && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'white' }} />}
-                            {active && isStuck && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'white' }} />}
-                          </div>
-                          {i < STEPS.length - 1 && (
-                            <div style={{
-                              width: 2, flex: 1, minHeight: 16,
-                              background: done ? '#3D7A5A' : '#E5DDD0',
-                              margin: '2px 0',
-                            }} />
-                          )}
-                        </div>
-
-                        {/* Step label */}
-                        <div style={{ paddingBottom: i < STEPS.length - 1 ? 14 : 0, paddingTop: 0, flex: 1 }}>
-                          <div style={{
-                            fontSize: 12.5, fontWeight: active ? 700 : done ? 600 : 400,
-                            color: done ? '#3D7A5A' : active ? (isStuck ? '#8F5C12' : '#161413') : '#A89B8B',
-                            letterSpacing: '-0.005em',
-                            display: 'flex', alignItems: 'center', gap: 6,
-                          }}>
-                            {step.label}
-                            {active && isStuck && (
-                              <span style={{
-                                fontSize: 10, padding: '1px 6px', borderRadius: 3,
-                                background: '#F7EFDE', color: '#8F5C12', border: '1px solid #E9DAB5',
-                                fontWeight: 600, letterSpacing: '0.04em',
-                              }}>
-                                STUCK {stuckMin}m
-                              </span>
-                            )}
-                            {active && !isStuck && (
-                              <span style={{
-                                fontSize: 10, padding: '1px 6px', borderRadius: 3,
-                                background: '#E6EEF2', color: '#2B5F7A', border: '1px solid #C5D5DE',
-                                fontWeight: 600, letterSpacing: '0.04em',
-                              }}>
-                                NOW
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: 11.5, color: pending ? '#C9BFAE' : '#75695F', marginTop: 1 }}>{step.sub}</div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-
-                {/* Stuck explanation */}
-                {isStuck && (
-                  <div style={{
-                    marginTop: 14, padding: '10px 12px', borderRadius: 6,
-                    background: '#F7EFDE', border: '1px solid #E9DAB5',
-                    fontSize: 12, color: '#8F5C12', lineHeight: 1.5,
-                  }}>
-                    The agent received the request but hasn't written a decision yet. This usually means the n8n workflow is still running or hit an error. The Operations Board will update automatically once it completes.
-                  </div>
-                )}
-              </div>
-            )
-          })()}
-
-          {detail?.decision && (
-            <>
-              {/* Decision summary */}
-              <div style={{
-                padding: '12px 14px', borderRadius: 6, marginBottom: 12,
-                background: '#FFFEFB', border: '1px solid #E5DDD0',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <span style={{
-                    fontSize: 12, fontWeight: 700, letterSpacing: '-0.005em',
-                    color: DISP_COLOR[detail.decision.disposition] || '#3D3633',
-                  }}>
-                    {DISP_LABEL[detail.decision.disposition] || detail.decision.disposition}
-                  </span>
-                  <span style={{ fontSize: 12, color: '#75695F', fontVariantNumeric: 'tabular-nums' }}>
-                    {Math.round(parseFloat(detail.decision.confidence) * 100)}% confidence
-                  </span>
-                </div>
-                {detail.decision.recommendation && (
-                  <div style={{ fontSize: 12.5, color: '#3D3633', lineHeight: 1.45 }}>
-                    {detail.decision.recommendation}
-                  </div>
-                )}
-                {detail.decision.reasoning && (
-                  <div style={{ fontSize: 12, color: '#75695F', lineHeight: 1.45, marginTop: 6, borderTop: '1px solid #EEE7DA', paddingTop: 6 }}>
-                    {detail.decision.reasoning}
-                  </div>
-                )}
-              </div>
-
-              {/* Signal cards */}
-              {detail.signals?.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {detail.signals.map((s, i) => (
-                    <SignalBadge key={i} signal={s.signal} green={s.green} weight={s.weight} notes={s.notes} />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ─── My Requests ──────────────────────────────────────────────────────────────
 const MyRequestsScreen = ({ user }) => {
