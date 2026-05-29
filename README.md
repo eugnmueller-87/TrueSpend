@@ -1,12 +1,13 @@
 # TrueSpend
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-pre--production-orange?style=flat-square" alt="Status" />
+  <img src="https://img.shields.io/badge/status-live-brightgreen?style=flat-square" alt="Status" />
   <img src="https://img.shields.io/badge/AI-Claude%20Sonnet%204.6-5A67D8?style=flat-square&logo=anthropic&logoColor=white" alt="Claude" />
   <img src="https://img.shields.io/badge/orchestration-n8n-EA4B71?style=flat-square&logo=n8n&logoColor=white" alt="n8n" />
   <img src="https://img.shields.io/badge/database-PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL" />
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
+  <img src="https://img.shields.io/badge/observability-Grafana-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana" />
 </p>
 
 <p align="center">
@@ -128,7 +129,7 @@ No Slack. One clean Operations Board. The agent is silent on everything it handl
 
 ---
 
-## Workflows
+## Workflows (7)
 
 | File | Trigger | Function |
 |------|---------|----------|
@@ -138,6 +139,9 @@ No Slack. One clean Operations Board. The agent is silent on everything it handl
 | `reorder_trigger.json` | Daily | Reorder candidates → place order or escalate |
 | `hyperscaler_monitor.json` | Daily 06:00 | Cloud positions → anomaly detection |
 | `supplier_onboarding.json` | Webhook | 4 parallel compliance agents → docs + ticket |
+| `invoice_processor.json` | IMAP | Parse invoice → 3-way match → payment instruction → ERP queue |
+
+All workflows: 120s timeout, 3× retry, full trace_log per signal.
 
 ---
 
@@ -160,26 +164,25 @@ Operations      tickets · decisions · trace_log · supplier_emails
 Intelligence    vendor_pricing_benchmarks · trust_settings
 ```
 
-**7 views:**
-`contracts_expiring` · `open_tickets_board` · `budget_command_center` · `commitment_register` · `license_waste_report` · `llm_spend_summary` · `agent_performance` · `supplier_compliance_summary`
+**Views (live in production):**
+`open_tickets_board` · `purchase_orders_board` · `catalog_by_supplier` · `contracts_expiring` · `license_waste_report` · `agent_performance` · `weekly_digest` · `workflow_runs`
 
 ---
 
-## Operations Board
+## Operations Board — 6 screens
 
-The single human interface. No Slack. No email notifications. No dashboards to check.
+The single human interface. No Slack. No email. No dashboards to check unless you want to.
 
-**Tab 1 — Submit Request**
-Form → POST to n8n webhook → agent reasons → closes or surfaces on the board.
+| Screen | What it does |
+|--------|-------------|
+| **Operations** | Live approval queue — `signature_required` → `pending_review` → `escalated` → `pending_confirm`. Auto-refresh 30s. Approve / Reject / Sign / Acknowledge. |
+| **Orders** | Every purchase order. In flight (sent/acknowledged), Pending invoice (delivered), Closed. Click to expand: requester, ticket ref, Jira badge for ≥€100k. |
+| **Suppliers** | 17 vendors with health signal, compliance status, onboarding stats. "Onboard supplier" triggers 4-agent parallel assessment (Lawyer · GDPR · InfoSec · LkSG/Ethics) with live progress. |
+| **Catalogues** | Pre-negotiated items per supplier (Apple, Dell, Lenovo, Microsoft 365, Salesforce, AWS, Google Cloud). Live from DB. Add to cart → single order ticket. |
+| **My Requests** | Personal request history. Click to expand: what was ordered, approval trail, pipeline step tracker showing exactly where a request is stuck. |
+| **New Request** | Ad-hoc purchase · Contract renewal · Supplier onboarding · Other. Routes to n8n intake webhook → agent reasoning. |
 
-**Tab 2 — Operations Board**
-Fetches `open_tickets_board` view directly from PostgREST. Auto-refreshes every 30 seconds. Tickets grouped by priority: `signature_required` first, then `pending_confirm`, then `pending_review`, then `escalated`.
-
-Each ticket shows:
-- Agent reasoning and recommendation
-- Budget position at time of decision (available, % consumed)
-- Supplier health and compliance status
-- Action buttons: Approve / Reject / Sign / Acknowledge
+**Analytics sidebar:** Grafana dashboards for Vendor Intel · Budgets · Contracts · Expiring · PO Status — all tagged and live.
 
 Buttons PATCH PostgREST directly. No backend API needed.
 
