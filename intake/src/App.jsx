@@ -157,11 +157,12 @@ const AGENT_FEED = [
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 const NAV_PRIMARY = [
-  { id: 'board',   label: 'Operations',  Icon: IconBoard,   countKey: 'open' },
-  { id: 'orders',  label: 'Orders',      Icon: IconTruck,   countKey: 'orders' },
-  { id: 'catalog', label: 'Catalog',     Icon: IconCatalog },
-  { id: 'mine',    label: 'My requests', Icon: IconList },
-  { id: 'home',    label: 'New request', Icon: IconPlus },
+  { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
+  { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
+  { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
+  { id: 'catalog',   label: 'Catalogue',   Icon: IconCatalog },
+  { id: 'mine',      label: 'My requests', Icon: IconList },
+  { id: 'home',      label: 'New request', Icon: IconPlus },
 ]
 
 // ─── PO Status config ──────────────────────────────────────────────────────────
@@ -1087,6 +1088,417 @@ const OrdersBoard = ({ onCountChange }) => {
   )
 }
 
+// ─── Suppliers Screen ─────────────────────────────────────────────────────────
+const COMPLIANCE_DOT = { green: '#3D7A5A', watch: '#B07219', red: '#B5462E', pending: '#C9BFAE', running: '#2B5F7A' }
+const COMPLIANCE_LABEL = { green: 'Approved', watch: 'Conditional', red: 'Blocked', pending: 'Not assessed', running: 'Assessment running…' }
+
+const ONBOARD_STEPS = [
+  { key: 'lawyer',  label: 'Legal & NDA',         agent: 'Lawyer Agent',   desc: 'NDA generation, legal risk, blockers' },
+  { key: 'gdpr',    label: 'GDPR & Privacy',       agent: 'GDPR Agent',     desc: 'DPA, data residency, SCC requirement' },
+  { key: 'infosec', label: 'InfoSec',              agent: 'InfoSec Agent',  desc: 'ISO 27001 gap, TOMs, infosec score 0–100' },
+  { key: 'lksg',    label: 'LkSG / Ethics',        agent: 'LkSG Agent',     desc: 'Supply chain risk, sanctions, COC' },
+]
+
+const OnboardModal = ({ onClose, onDone }) => {
+  const [step, setStep] = useState('form')   // form | running | done | error
+  const [form, setForm] = useState({ name: '', country: 'Germany', category: 'saas_license', website: '', contact_email: '' })
+  const [progress, setProgress] = useState({})   // { lawyer: 'done'|'running'|'pending', ... }
+  const [result, setResult] = useState(null)
+  const [errMsg, setErrMsg] = useState('')
+
+  const submit = async () => {
+    if (!form.name.trim()) return
+    setStep('running')
+    // Animate steps sequentially (each ~15s in real workflow)
+    const keys = ONBOARD_STEPS.map(s => s.key)
+    setProgress({ lawyer: 'running', gdpr: 'pending', infosec: 'pending', lksg: 'pending' })
+
+    try {
+      // POST to n8n supplier onboarding webhook
+      // n8n first needs a supplier_id — we'll create the supplier row first via PostgREST
+      const newSupplier = await fetch(`${POSTGREST_URL}/suppliers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          category: form.category,
+          health: 'watch',
+          compliance_status: 'running',
+          contact_email: form.contact_email || null,
+          website: form.website || null,
+          country: form.country,
+        })
+      }).then(r => r.json())
+      const supplierId = newSupplier[0]?.id
+      if (!supplierId) throw new Error('Failed to create supplier record')
+
+      // Animate progress while n8n runs (it takes ~60s for 4 agents)
+      const animInterval = setInterval(() => {
+        setProgress(prev => {
+          const order = ['lawyer','gdpr','infosec','lksg']
+          const doneCount = order.filter(k => prev[k] === 'done').length
+          if (doneCount >= 4) { clearInterval(animInterval); return prev }
+          const next = { ...prev }
+          const runningIdx = order.findIndex(k => prev[k] === 'running')
+          if (runningIdx >= 0 && Math.random() > 0.4) {
+            next[order[runningIdx]] = 'done'
+            if (runningIdx + 1 < order.length) next[order[runningIdx + 1]] = 'running'
+          }
+          return next
+        })
+      }, 8000)
+
+      // Fire n8n webhook (async — it runs in background)
+      fetch(`${N8N_WEBHOOK.replace('/intake', '/supplier-onboarding')}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supplier_id: supplierId, company: form.name, country: form.country, category: form.category })
+      }).catch(() => {})
+
+      // Poll for completion (up to 90s)
+      let attempts = 0
+      const poll = async () => {
+        if (attempts++ > 18) {
+          clearInterval(animInterval)
+          setProgress({ lawyer: 'done', gdpr: 'done', infosec: 'done', lksg: 'done' })
+          setStep('done')
+          setResult({ supplier_id: supplierId, name: form.name, status: 'review_required', message: 'Assessment complete. Check Operations Board for the review ticket.' })
+          return
+        }
+        const checks = await pgFetch(`/compliance_checks?supplier_id=eq.${supplierId}&order=created_at.asc`).catch(() => [])
+        if (checks.length >= 4) {
+          clearInterval(animInterval)
+          setProgress({ lawyer: 'done', gdpr: 'done', infosec: 'done', lksg: 'done' })
+          const allPass = checks.every(c => c.status === 'passed')
+          const blocked = checks.some(c => c.status === 'failed')
+          setStep('done')
+          setResult({ supplier_id: supplierId, name: form.name, checks, status: blocked ? 'blocked' : allPass ? 'approved' : 'conditional' })
+        } else {
+          // Update progress based on how many checks are written
+          const doneKeys = ['lawyer','gdpr','infosec','lksg'].slice(0, checks.length)
+          const runningKey = ['lawyer','gdpr','infosec','lksg'][checks.length]
+          setProgress(prev => {
+            const n = { ...prev }
+            doneKeys.forEach(k => n[k] = 'done')
+            if (runningKey) n[runningKey] = 'running'
+            return n
+          })
+          setTimeout(poll, 5000)
+        }
+      }
+      setTimeout(poll, 15000)
+
+    } catch(e) {
+      setStep('error')
+      setErrMsg(e.message)
+    }
+  }
+
+  const STATUS_COLOR = { approved: '#3D7A5A', conditional: '#B07219', blocked: '#B5462E', review_required: '#2B5F7A' }
+  const STATUS_LABEL = { approved: 'Approved', conditional: 'Conditional approval', blocked: 'Blocked — compliance issues', review_required: 'Under review' }
+
+  return (
+    <div className="modal-scrim" onClick={step === 'form' ? onClose : undefined}>
+      <div className="modal" style={{ maxWidth: 540 }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 4 }}>Supplier onboarding</div>
+            <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 24, color: '#161413', letterSpacing: '-0.025em' }}>
+              {step === 'form' ? 'New supplier' : step === 'running' ? 'Assessing…' : step === 'done' ? 'Assessment complete.' : 'Error'}
+            </div>
+          </div>
+          {step === 'form' && <button className="iconbtn" onClick={onClose}><IconX size={16}/></button>}
+        </div>
+
+        {/* FORM */}
+        {step === 'form' && (
+          <>
+            <div className="field">
+              <label className="field__label">Company name <span style={{ color: '#B07219' }}>*</span></label>
+              <input className="input" value={form.name} onChange={e => setForm(f=>({...f,name:e.target.value}))} placeholder="Acme Corp GmbH" />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div className="field">
+                <label className="field__label">Country <span style={{ color: '#B07219' }}>*</span></label>
+                <input className="input" value={form.country} onChange={e => setForm(f=>({...f,country:e.target.value}))} placeholder="Germany" />
+              </div>
+              <div className="field">
+                <label className="field__label">Category</label>
+                <select className="select" value={form.category} onChange={e => setForm(f=>({...f,category:e.target.value}))}>
+                  <option value="hardware">Hardware</option>
+                  <option value="saas_license">SaaS / Software</option>
+                  <option value="cloud_compute">Cloud</option>
+                  <option value="professional_services">Services</option>
+                  <option value="telecoms">Telecoms</option>
+                  <option value="facilities">Facilities</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div className="field">
+                <label className="field__label">Website</label>
+                <input className="input" value={form.website} onChange={e => setForm(f=>({...f,website:e.target.value}))} placeholder="https://acme.com" />
+              </div>
+              <div className="field">
+                <label className="field__label">Contact email</label>
+                <input className="input" type="email" value={form.contact_email} onChange={e => setForm(f=>({...f,contact_email:e.target.value}))} placeholder="legal@acme.com" />
+              </div>
+            </div>
+
+            <div style={{ background: '#EFEBE1', border: '1px solid #E5DDD0', borderRadius: 6, padding: '10px 14px', fontSize: 12.5, color: '#75695F', marginBottom: 18, lineHeight: 1.5 }}>
+              Four Claude agents run in parallel: <strong>Legal & NDA</strong> · <strong>GDPR</strong> · <strong>InfoSec</strong> · <strong>LkSG/Ethics</strong>. Takes ~60 seconds.
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn btn--tertiary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+              <button className="btn btn--primary" style={{ flex: 2 }} onClick={submit} disabled={!form.name.trim()}>
+                Run assessment
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* RUNNING */}
+        {step === 'running' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ fontSize: 12.5, color: '#75695F', marginBottom: 6 }}>
+              Running 4 compliance agents on <strong>{form.name}</strong>…
+            </div>
+            {ONBOARD_STEPS.map(s => {
+              const state = progress[s.key] || 'pending'
+              return (
+                <div key={s.key} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '12px 14px', borderRadius: 6,
+                  background: state === 'done' ? '#EEF3EE' : state === 'running' ? '#E6EEF2' : '#F5F1EA',
+                  border: `1px solid ${state === 'done' ? '#C5D9C8' : state === 'running' ? '#C5D5DE' : '#E5DDD0'}`,
+                  transition: 'all 0.3s',
+                }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: state === 'done' ? '#3D7A5A' : state === 'running' ? '#2B5F7A' : '#E5DDD0' }}>
+                    {state === 'done' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>}
+                    {state === 'running' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'white', animation: 'pulse 1s infinite' }} />}
+                    {state === 'pending' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#C9BFAE' }} />}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: state === 'pending' ? '#A89B8B' : '#161413', letterSpacing: '-0.005em' }}>{s.label}</div>
+                    <div style={{ fontSize: 11.5, color: '#75695F', marginTop: 1 }}>{s.desc}</div>
+                  </div>
+                  <div style={{ fontSize: 11, color: state === 'done' ? '#3D7A5A' : state === 'running' ? '#2B5F7A' : '#C9BFAE', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {state === 'done' ? 'Done' : state === 'running' ? 'Running' : '—'}
+                  </div>
+                </div>
+              )
+            })}
+            <div style={{ fontSize: 12, color: '#A89B8B', textAlign: 'center', marginTop: 8 }}>
+              This takes ~60 seconds. The page will update automatically.
+            </div>
+          </div>
+        )}
+
+        {/* DONE */}
+        {step === 'done' && result && (
+          <div>
+            <div style={{
+              padding: '16px 18px', borderRadius: 8, marginBottom: 16,
+              background: result.status === 'blocked' ? '#F6E5DE' : result.status === 'approved' ? '#EEF3EE' : '#F7EFDE',
+              border: `1px solid ${result.status === 'blocked' ? '#E8C3B5' : result.status === 'approved' ? '#C5D9C8' : '#E9DAB5'}`,
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: STATUS_COLOR[result.status] || '#161413', marginBottom: 4 }}>
+                {STATUS_LABEL[result.status] || result.status}
+              </div>
+              <div style={{ fontSize: 12.5, color: '#3D3633', lineHeight: 1.5 }}>
+                {result.message || `${result.name} has been assessed. Check the Operations Board for the review ticket and any required documents.`}
+              </div>
+            </div>
+
+            {result.checks?.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+                {result.checks.map((chk, i) => (
+                  <div key={i} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '8px 12px', borderRadius: 5,
+                    background: chk.status === 'passed' ? '#EEF3EE' : '#F6E5DE',
+                    border: `1px solid ${chk.status === 'passed' ? '#C5D9C8' : '#E8C3B5'}`,
+                  }}>
+                    <span style={{ fontSize: 12.5, color: '#161413' }}>{chk.check_type}</span>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: chk.status === 'passed' ? '#3D7A5A' : '#B5462E', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {chk.status} {chk.score != null ? `· ${chk.score}/100` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn btn--secondary" style={{ flex: 1 }} onClick={onClose}>Close</button>
+              <button className="btn btn--primary" style={{ flex: 1 }} onClick={onDone}>View suppliers</button>
+            </div>
+          </div>
+        )}
+
+        {/* ERROR */}
+        {step === 'error' && (
+          <div>
+            <div style={{ padding: '14px', borderRadius: 6, background: '#F6E5DE', border: '1px solid #E8C3B5', fontSize: 13, color: '#B5462E', marginBottom: 16 }}>
+              {errMsg || 'Something went wrong. The supplier record may have been created — check the Suppliers list.'}
+            </div>
+            <button className="btn btn--secondary btn--block" onClick={onClose}>Close</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const SuppliersScreen = () => {
+  const [suppliers, setSuppliers] = useState(null)
+  const [onboarding, setOnboarding] = useState(false)
+  const [search, setSearch] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const data = await pgFetch('/suppliers?order=name.asc&limit=100')
+      setSuppliers(data)
+    } catch { setSuppliers([]) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = (suppliers || []).filter(s =>
+    !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.category?.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const HEALTH_CONFIG = {
+    green: { label: 'Approved',    bg: '#EEF3EE', fg: '#3D7A5A', dot: '#3D7A5A' },
+    watch: { label: 'Watch',       bg: '#F7EFDE', fg: '#8F5C12', dot: '#B07219' },
+    red:   { label: 'Blocked',     bg: '#F6E5DE', fg: '#B5462E', dot: '#B5462E' },
+  }
+
+  const suppliersByHealth = {
+    green: filtered.filter(s => s.health === 'green'),
+    watch: filtered.filter(s => s.health === 'watch'),
+    red:   filtered.filter(s => s.health === 'red'),
+    other: filtered.filter(s => !['green','watch','red'].includes(s.health)),
+  }
+
+  return (
+    <div className="content step-in" style={{ maxWidth: 1180 }}>
+      <div className="pagehead">
+        <div>
+          <div className="pagehead__eyebrow">Suppliers</div>
+          <h1 className="pagehead__title">{suppliers ? `${suppliers.length} vendors.` : 'Loading…'}</h1>
+          <div className="pagehead__sub">Every vendor. Click onboard to run a full 4-agent compliance assessment.</div>
+        </div>
+        <div className="pagehead__actions">
+          <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
+          <button className="btn btn--primary" onClick={() => setOnboarding(true)}>
+            <IconPlus size={14}/> Onboard supplier
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      {suppliers && (
+        <div className="stats" style={{ marginBottom: 24 }}>
+          <div className="stat">
+            <div className="stat__label">Approved</div>
+            <div className="stat__val" style={{ color: '#3D7A5A' }}>{suppliers.filter(s=>s.health==='green').length}</div>
+            <div className="stat__hint">All checks passed</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Conditional</div>
+            <div className="stat__val stat__val--gold">{suppliers.filter(s=>s.health==='watch').length}</div>
+            <div className="stat__hint">Action items open</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Blocked</div>
+            <div className="stat__val" style={{ color: '#B5462E' }}>{suppliers.filter(s=>s.health==='red').length}</div>
+            <div className="stat__hint">Compliance blockers</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Not assessed</div>
+            <div className="stat__val">{suppliers.filter(s=>!['green','watch','red'].includes(s.health)).length}</div>
+            <div className="stat__hint">Run assessment to classify</div>
+          </div>
+        </div>
+      )}
+
+      {/* Search */}
+      <div style={{ marginBottom: 18 }}>
+        <input className="input" placeholder="Search suppliers…" value={search} onChange={e => setSearch(e.target.value)} style={{ maxWidth: 340 }} />
+      </div>
+
+      {/* Table */}
+      {suppliers && (
+        <div className="tlist">
+          <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#75695F' }}>
+            <div>Status</div>
+            <div>Supplier</div>
+            <div>Category</div>
+            <div>Compliance</div>
+            <div style={{ textAlign: 'right' }}>Actions</div>
+          </div>
+          {filtered.length === 0 && (
+            <div style={{ padding: '40px 24px', textAlign: 'center', color: '#75695F', fontSize: 13.5 }}>
+              {search ? 'No suppliers match.' : 'No suppliers yet.'}
+            </div>
+          )}
+          {filtered.map(s => {
+            const hc = HEALTH_CONFIG[s.health] || { label: s.health || 'Unknown', bg: '#F5F1EA', fg: '#A89B8B', dot: '#C9BFAE' }
+            return (
+              <div key={s.id} className="trow" style={{ cursor: 'default' }}>
+                <div>
+                  <span className="pill" style={{ background: hc.bg, color: hc.fg }}>
+                    <span className="pill__dot" style={{ background: hc.dot }}/>
+                    {hc.label}
+                  </span>
+                </div>
+                <div className="trow__main">
+                  <div className="trow__title">{s.name}</div>
+                  <div className="trow__meta">
+                    {s.country && <span>{s.country}</span>}
+                    {s.website && <><span className="dot"/><a href={s.website} target="_blank" rel="noreferrer" style={{ color: '#8F5C12', textDecoration: 'none', fontSize: 12 }}>{s.website.replace('https://','')}</a></>}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12.5, color: '#75695F' }}>{s.category || '—'}</div>
+                <div>
+                  {s.compliance_status === 'running' ? (
+                    <span style={{ fontSize: 12, color: '#2B5F7A', fontWeight: 600 }}>⟳ Assessment running</span>
+                  ) : s.compliance_status === 'blocked' ? (
+                    <span style={{ fontSize: 12, color: '#B5462E', fontWeight: 600 }}>Blocked</span>
+                  ) : s.compliance_status === 'approved' ? (
+                    <span style={{ fontSize: 12, color: '#3D7A5A', fontWeight: 600 }}>All checks passed</span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: '#A89B8B' }}>—</span>
+                  )}
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  {!['approved','blocked'].includes(s.compliance_status) && s.health !== 'green' && (
+                    <button className="btn btn--secondary btn--sm" onClick={() => setOnboarding(true)}>
+                      Assess
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {onboarding && (
+        <OnboardModal
+          onClose={() => setOnboarding(false)}
+          onDone={() => { setOnboarding(false); load() }}
+        />
+      )}
+    </div>
+  )
+}
+
 // ─── Signal badge ──────────────────────────────────────────────────────────────
 const SIGNAL_LABEL = { policy: 'Policy', supplier: 'Supplier', contract: 'Contract', request: 'Request', consumption: 'Budget' }
 
@@ -1710,10 +2122,11 @@ export default function App() {
 
   const crumbs = (() => {
     if (success)          return ['Submitted']
-    if (tab === 'board')  return ['Operations']
-    if (tab === 'orders') return ['Orders']
-    if (tab === 'catalog')return ['Catalog']
-    if (tab === 'mine')   return ['My requests']
+    if (tab === 'board')     return ['Operations']
+    if (tab === 'orders')    return ['Orders']
+    if (tab === 'suppliers') return ['Suppliers']
+    if (tab === 'catalog')   return ['Catalogue']
+    if (tab === 'mine')      return ['My requests']
     if (tab === 'home')   return ['New request']
     if (tab === 'request')return ['New request', FORM_CONFIG[reqType]?.title || 'Request']
     return ['Operations']
@@ -1749,8 +2162,9 @@ export default function App() {
               onCountChange={handleCountChange}
             />
           )}
-          {!success && tab === 'orders'  && <OrdersBoard onCountChange={setOrdersCount} />}
-          {!success && tab === 'catalog' && <CatalogScreen cart={cart} onAddToCart={handleAddToCart} onOpenCart={() => setCartOpen(true)} />}
+          {!success && tab === 'orders'    && <OrdersBoard onCountChange={setOrdersCount} />}
+          {!success && tab === 'suppliers' && <SuppliersScreen />}
+          {!success && tab === 'catalog'   && <CatalogScreen cart={cart} onAddToCart={handleAddToCart} onOpenCart={() => setCartOpen(true)} />}
           {!success && tab === 'mine'    && <MyRequestsScreen user={user} />}
           {!success && tab === 'home'    && <HomeScreen user={user} onCatalog={() => navigate('catalog')} onRequestType={startRequest} />}
           {!success && tab === 'request' && reqType && (
