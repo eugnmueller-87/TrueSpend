@@ -1692,15 +1692,410 @@ const OnboardModal = ({ onClose, onDone }) => {
   )
 }
 
+// ─── Supplier helpers ─────────────────────────────────────────────────────────
+
+// Tier thresholds (annual EUR spend)
+const TIER_CONFIG = [
+  { label: 'Platinum', min: 1_000_000, bg: '#1C1A19', fg: '#F0E6C8' },
+  { label: 'Gold',     min:   250_000, bg: '#7A5C12', fg: '#FDF3DC' },
+  { label: 'Silver',   min:    50_000, bg: '#E8EDF3', fg: '#2B4A6A' },
+  { label: 'Bronze',   min:         0, bg: '#EFEBE1', fg: '#75695F' },
+]
+const tierFor = (spend) => {
+  const n = Number(spend || 0)
+  return TIER_CONFIG.find(t => n >= t.min) || TIER_CONFIG[TIER_CONFIG.length - 1]
+}
+
+// Contract RAG — days remaining
+const contractRag = (endDate) => {
+  if (!endDate) return null
+  const days = Math.round((new Date(endDate) - Date.now()) / 86400000)
+  if (days < 0)   return { days, label: `Expired ${Math.abs(days)}d ago`,      color: '#B5462E', bg: '#F6E5DE', dot: '#B5462E' }
+  if (days <= 30)  return { days, label: `Expires in ${days}d`,                 color: '#B5462E', bg: '#F6E5DE', dot: '#B5462E' }
+  if (days <= 180) return { days, label: `${days}d left`,                       color: '#8F5C12', bg: '#F7EFDE', dot: '#B07219' }
+  return                  { days, label: `${Math.round(days/30)}mo left`,       color: '#3D7A5A', bg: '#EEF3EE', dot: '#3D7A5A' }
+}
+
+const DOC_LABEL = {
+  nda:              'NDA',
+  dpa:              'DPA',
+  contract:         'Contract',
+  msa:              'MSA',
+  sow:              'SoW',
+  order_form:       'Order Form',
+  mutual_nda:       'Mutual NDA',
+  data_processing:  'DPA',
+  other:            'Document',
+}
+
+// ─── Supplier Detail Drawer ───────────────────────────────────────────────────
+const SupplierDrawer = ({ supplier, spendMap, onClose, onAssess }) => {
+  const [contracts,  setContracts]  = useState(null)
+  const [documents,  setDocuments]  = useState(null)
+  const [compliance, setCompliance] = useState(null)
+  const [pos,        setPos]        = useState(null)
+
+  useEffect(() => {
+    if (!supplier) return
+    const sid = supplier.id
+    Promise.all([
+      pgFetch(`/contracts?supplier_id=eq.${sid}&order=expiry_date.asc&limit=20`).catch(() => []),
+      pgFetch(`/legal_documents?supplier_id=eq.${sid}&order=created_at.desc&limit=20`).catch(() => []),
+      pgFetch(`/compliance_checks?supplier_id=eq.${sid}&order=checked_at.desc&limit=5`).catch(() => []),
+      pgFetch(`/purchase_orders?supplier_id=eq.${sid}&order=created_at.desc&limit=10`).catch(() => []),
+    ]).then(([c, d, cc, p]) => {
+      setContracts(c); setDocuments(d); setCompliance(cc); setPos(p)
+    })
+  }, [supplier])
+
+  if (!supplier) return null
+
+  const HEALTH_CONFIG = {
+    green: { label: 'Approved', bg: '#EEF3EE', fg: '#3D7A5A', dot: '#3D7A5A' },
+    watch: { label: 'Watch',    bg: '#F7EFDE', fg: '#8F5C12', dot: '#B07219' },
+    red:   { label: 'Blocked',  bg: '#F6E5DE', fg: '#B5462E', dot: '#B5462E' },
+  }
+  const hc = HEALTH_CONFIG[supplier.health] || { label: supplier.health || 'Unknown', bg: '#F5F1EA', fg: '#A89B8B', dot: '#C9BFAE' }
+  const spend = spendMap ? (spendMap[supplier.id] || 0) : null
+  const tier  = spend !== null ? tierFor(spend) : null
+  const loading = contracts === null || documents === null
+
+  const Section = ({ title, children }) => (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid #EFEBE1' }}>{title}</div>
+      {children}
+    </div>
+  )
+
+  return (
+    <div className="modal-scrim" onClick={onClose} style={{ justifyContent: 'flex-end', alignItems: 'stretch' }}>
+      <div
+        className="modal"
+        style={{ width: 560, maxWidth: '96vw', height: '100vh', borderRadius: '16px 0 0 16px', overflowY: 'auto', padding: 0, display: 'flex', flexDirection: 'column' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ padding: '28px 28px 20px', borderBottom: '1px solid #E5DDD0', flexShrink: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                <span className="pill" style={{ background: hc.bg, color: hc.fg }}>
+                  <span className="pill__dot" style={{ background: hc.dot }}/>{hc.label}
+                </span>
+                {tier && (
+                  <span style={{ padding: '2px 8px', borderRadius: 4, background: tier.bg, color: tier.fg, fontSize: 11, fontWeight: 700, letterSpacing: '0.06em' }}>
+                    {tier.label}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 24, color: '#161413', letterSpacing: '-0.02em', lineHeight: 1.1 }}>{supplier.name}</div>
+              <div style={{ fontSize: 12.5, color: '#75695F', marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {supplier.country && <span>{supplier.country}</span>}
+                {supplier.category && <><span style={{ color: '#C9BFAE' }}>·</span><span style={{ textTransform: 'capitalize' }}>{supplier.category.replace(/_/g,' ')}</span></>}
+                {spend !== null && <><span style={{ color: '#C9BFAE' }}>·</span><span style={{ fontWeight: 600, color: '#8F5C12' }}>{fmt(spend)} spend</span></>}
+              </div>
+            </div>
+            <button className="iconbtn" onClick={onClose}><IconX size={16}/></button>
+          </div>
+          {supplier.website && (
+            <a href={supplier.website} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#8F5C12', textDecoration: 'none', display: 'inline-block', marginTop: 8 }}>
+              {supplier.website} ↗
+            </a>
+          )}
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '24px 28px', overflowY: 'auto', flex: 1 }}>
+          {loading && <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>Loading supplier data…</div>}
+
+          {!loading && (
+            <>
+              {/* Contracts */}
+              <Section title="Contracts">
+                {contracts.length === 0 ? (
+                  <div style={{ fontSize: 13, color: '#A89B8B' }}>No contracts on file.</div>
+                ) : contracts.map((c, i) => {
+                  const rag = contractRag(c.expiry_date)
+                  return (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: i < contracts.length-1 ? '1px solid #F5F1EA' : 'none' }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#161413' }}>{c.name || c.contract_number || `Contract #${i+1}`}</div>
+                        <div style={{ fontSize: 11.5, color: '#75695F', marginTop: 2 }}>
+                          {c.start_date && <span>From {c.start_date?.slice(0,10)}</span>}
+                          {c.value_eur && <><span style={{ color: '#C9BFAE', margin: '0 6px' }}>·</span><span>{fmt(c.value_eur)}</span></>}
+                          {c.auto_renew && <><span style={{ color: '#C9BFAE', margin: '0 6px' }}>·</span><span style={{ color: '#3D7A5A' }}>Auto-renews</span></>}
+                        </div>
+                      </div>
+                      {rag ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '3px 9px', borderRadius: 5, background: rag.bg }}>
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: rag.dot }} />
+                          <span style={{ color: rag.color, fontWeight: rag.days <= 30 ? 700 : 500 }}>{rag.label}</span>
+                        </span>
+                      ) : <span style={{ fontSize: 12, color: '#A89B8B' }}>No end date</span>}
+                    </div>
+                  )
+                })}
+              </Section>
+
+              {/* Legal documents */}
+              <Section title="Legal Documents">
+                {documents.length === 0 ? (
+                  <div style={{ fontSize: 13, color: '#A89B8B' }}>No documents on file. Run compliance assessment to generate NDA and DPA.</div>
+                ) : documents.map((d, i) => {
+                  const typeLabel = DOC_LABEL[d.doc_type] || (d.doc_type||'').toUpperCase() || 'Document'
+                  const isOk      = d.status === 'signed'
+                  const isDraft   = d.status === 'draft'
+                  const isExpired = d.content?.includes('❌') || d.content?.includes('RENEWAL REQUIRED')
+                  const isExpiring = d.content?.includes('⚠')
+                  const statusColor = isExpired ? '#B5462E' : isExpiring ? '#B07219' : isDraft ? '#2B5F7A' : isOk ? '#3D7A5A' : '#75695F'
+                  const statusBg    = isExpired ? '#F6E5DE' : isExpiring ? '#F7EFDE' : isDraft ? '#E8EDF3' : isOk ? '#EEF3EE' : '#F5F1EA'
+                  const iconColor   = d.doc_type === 'nda' ? '#2B5F7A' : d.doc_type === 'dpa' ? '#3D7A5A' : '#75695F'
+                  const iconBg      = d.doc_type === 'nda' ? '#E8EDF3' : d.doc_type === 'dpa' ? '#EEF3EE' : '#F5F1EA'
+                  return (
+                    <div key={i} style={{ padding: '12px 0', borderBottom: i < documents.length-1 ? '1px solid #F5F1EA' : 'none' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 30, height: 30, borderRadius: 6, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <span style={{ fontSize: 7.5, fontWeight: 800, color: iconColor, letterSpacing: '0.04em' }}>{typeLabel}</span>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#161413' }}>{typeLabel}</div>
+                            <div style={{ fontSize: 11.5, color: '#75695F', marginTop: 1 }}>{d.created_at?.slice(0,10)}</div>
+                          </div>
+                        </div>
+                        <span style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4, background: statusBg, color: statusColor, fontWeight: 600, flexShrink: 0 }}>
+                          {isExpired ? 'Expired ❌' : isExpiring ? 'Expiring ⚠' : d.status || 'unknown'}
+                        </span>
+                      </div>
+                      {d.content && (
+                        <div style={{ fontSize: 12, color: '#75695F', lineHeight: 1.55, paddingLeft: 40 }}>{d.content}</div>
+                      )}
+                    </div>
+                  )
+                })}
+              </Section>
+
+              {/* Compliance */}
+              <Section title="Compliance checks">
+                {compliance.length === 0 ? (
+                  <div style={{ fontSize: 13, color: '#A89B8B', marginBottom: 10 }}>No compliance assessment run yet.</div>
+                ) : compliance.map((cc, i) => (
+                  <div key={i} style={{ padding: '10px 0', borderBottom: i < compliance.length-1 ? '1px solid #F5F1EA' : 'none' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#161413', textTransform: 'capitalize' }}>{(cc.check_type || 'check').replace(/_/g,' ')}</div>
+                        {cc.score != null && <div style={{ fontSize: 11.5, color: '#75695F', marginTop: 1 }}>Score: {cc.score}/100</div>}
+                        {cc.findings?.length > 0 && <div style={{ fontSize: 12, color: '#75695F', marginTop: 4, lineHeight: 1.5 }}>{cc.findings.slice(0,2).join(' · ')}</div>}
+                      </div>
+                      <span style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4, marginLeft: 10, flexShrink: 0, background: cc.passed === true ? '#EEF3EE' : cc.passed === false ? '#F6E5DE' : '#F5F1EA', color: cc.passed === true ? '#3D7A5A' : cc.passed === false ? '#B5462E' : '#75695F', fontWeight: 600 }}>
+                        {cc.passed === true ? 'Passed' : cc.passed === false ? 'Failed' : (cc.status || 'pending')}
+                      </span>
+                    </div>
+                    {cc.checked_at && <div style={{ fontSize: 11, color: '#A89B8B', marginTop: 3 }}>{cc.checked_at?.slice(0,10)}</div>}
+                  </div>
+                ))}
+                {!['approved','blocked'].includes(supplier.compliance_status) && supplier.health !== 'green' && (
+                  <button className="btn btn--secondary btn--sm" style={{ marginTop: 10 }} onClick={onAssess}>Run assessment</button>
+                )}
+              </Section>
+
+              {/* Recent POs */}
+              <Section title="Recent purchase orders">
+                {pos.length === 0 ? (
+                  <div style={{ fontSize: 13, color: '#A89B8B' }}>No purchase orders yet.</div>
+                ) : pos.slice(0,5).map((p, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < Math.min(pos.length,5)-1 ? '1px solid #F5F1EA' : 'none' }}>
+                    <div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: '#161413' }}>{p.po_number || `PO #${i+1}`}</div>
+                      <div style={{ fontSize: 11.5, color: '#75695F' }}>{p.created_at?.slice(0,10)} · {p.status}</div>
+                    </div>
+                    <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#161413' }}>{fmt(p.value_eur)}</div>
+                  </div>
+                ))}
+              </Section>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Spend Analytics Drawer ───────────────────────────────────────────────────
+const AnalyticsDrawer = ({ onClose }) => {
+  const [data, setData] = useState(null)
+
+  useEffect(() => {
+    Promise.all([
+      pgFetch('/purchase_orders?select=supplier_id,value_eur,status,category&limit=500').catch(() => []),
+      pgFetch('/suppliers?select=id,name,category&limit=100').catch(() => []),
+      pgFetch('/budget_positions?select=category,period,planned,committed,spent&limit=200').catch(() => []),
+    ]).then(([pos, sups, budgets]) => setData({ pos, sups, budgets }))
+  }, [])
+
+  if (!data) return (
+    <div className="modal-scrim" onClick={onClose} style={{ justifyContent: 'flex-end' }}>
+      <div className="modal" style={{ width: 520, maxWidth: '95vw', height: '100vh', borderRadius: '16px 0 0 16px', overflowY: 'auto', padding: 32 }} onClick={e => e.stopPropagation()}>
+        <div style={{ padding: '80px 0', textAlign: 'center', color: '#A89B8B' }}>Loading analytics…</div>
+      </div>
+    </div>
+  )
+
+  const nameMap = {}
+  for (const s of data.sups) nameMap[s.id] = s.name
+
+  const bySupplier = {}
+  for (const po of data.pos) {
+    if (!po.supplier_id) continue
+    const n = nameMap[po.supplier_id] || 'Unknown'
+    bySupplier[n] = (bySupplier[n] || 0) + Number(po.value_eur || 0)
+  }
+  const top10 = Object.entries(bySupplier).sort((a,b) => b[1]-a[1]).slice(0,10)
+  const maxSpend = top10[0]?.[1] || 1
+
+  const byCategory = {}
+  for (const po of data.pos) {
+    const c = po.category || 'other'
+    byCategory[c] = (byCategory[c] || 0) + Number(po.value_eur || 0)
+  }
+  const catEntries = Object.entries(byCategory).sort((a,b) => b[1]-a[1])
+
+  const totalPlanned = data.budgets.reduce((s, b) => s + Number(b.planned  || 0), 0)
+  const totalCommit  = data.budgets.reduce((s, b) => s + Number(b.committed|| 0), 0)
+  const totalSpent   = data.budgets.reduce((s, b) => s + Number(b.spent    || 0), 0)
+  const totalPOs     = data.pos.reduce((s, p) => s + Number(p.value_eur    || 0), 0)
+
+  const CAT_COLOR = {
+    hardware: '#2B5F7A', saas_license: '#5A3E7A', hyperscaler: '#3D7A5A',
+    services: '#B07219', telecoms: '#7A3E3E', facilities: '#4A6741', ai_consumption: '#6B4F8A', other: '#A89B8B',
+  }
+
+  return (
+    <div className="modal-scrim" onClick={onClose} style={{ justifyContent: 'flex-end', alignItems: 'stretch' }}>
+      <div className="modal" style={{ width: 520, maxWidth: '95vw', height: '100vh', borderRadius: '16px 0 0 16px', overflowY: 'auto', padding: 0, display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+        <div style={{ padding: '28px 28px 20px', borderBottom: '1px solid #E5DDD0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 4 }}>Spend Intelligence</div>
+            <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 26, color: '#161413', letterSpacing: '-0.025em', lineHeight: 1.1 }}>Analytics</div>
+            <div style={{ fontSize: 12.5, color: '#75695F', marginTop: 4 }}>{data.pos.length} purchase orders loaded</div>
+          </div>
+          <button className="iconbtn" onClick={onClose}><IconX size={16}/></button>
+        </div>
+
+        <div style={{ padding: '24px 28px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 32 }}>
+          {/* KPI strip */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {[
+              { label: 'Total PO volume',  val: fmt(totalPOs),    hint: 'All purchase orders' },
+              { label: 'Budget planned',   val: fmt(totalPlanned),hint: 'Across all buckets' },
+              { label: 'Committed',        val: fmt(totalCommit), hint: 'Approved, not invoiced', color: '#B07219' },
+              { label: 'Spent',            val: fmt(totalSpent),  hint: 'Invoices approved',      color: '#3D7A5A' },
+            ].map(k => (
+              <div key={k.label} style={{ background: '#F5F1EA', border: '1px solid #E5DDD0', borderRadius: 8, padding: '12px 14px' }}>
+                <div style={{ fontSize: 11, color: '#A89B8B', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>{k.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: k.color || '#161413', letterSpacing: '-0.02em' }}>{k.val}</div>
+                <div style={{ fontSize: 11.5, color: '#A89B8B', marginTop: 2 }}>{k.hint}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Top 10 suppliers */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#75695F', marginBottom: 14 }}>Top suppliers by spend</div>
+            {top10.length === 0 && <div style={{ color: '#A89B8B', fontSize: 13 }}>No PO data yet.</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+              {top10.map(([name, spend], i) => {
+                const pct = Math.round(spend / maxSpend * 100)
+                const sharePct = totalPOs > 0 ? Math.round(spend / totalPOs * 100) : 0
+                return (
+                  <div key={name}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{ fontSize: 10.5, color: '#A89B8B', fontVariantNumeric: 'tabular-nums', width: 16 }}>#{i+1}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#161413' }}>{name}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                        <span style={{ fontSize: 11.5, color: '#A89B8B' }}>{sharePct}%</span>
+                        <span style={{ fontSize: 13.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#161413' }}>{fmt(spend)}</span>
+                      </div>
+                    </div>
+                    <div style={{ height: 5, borderRadius: 3, background: '#EFEBE1', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', borderRadius: 3, background: i === 0 ? '#B07219' : i < 3 ? '#2B5F7A' : '#A89B8B', width: `${pct}%`, transition: 'width 0.4s' }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Spend by category */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#75695F', marginBottom: 14 }}>Spend by category</div>
+            {catEntries.length === 0 && <div style={{ color: '#A89B8B', fontSize: 13 }}>No PO data yet.</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {catEntries.map(([cat, spend]) => {
+                const pct = totalPOs > 0 ? Math.round(spend / totalPOs * 100) : 0
+                const color = CAT_COLOR[cat] || '#A89B8B'
+                return (
+                  <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
+                    <div style={{ flex: 1, fontSize: 12.5, color: '#3D3633', textTransform: 'capitalize' }}>{cat.replace(/_/g,' ')}</div>
+                    <div style={{ width: 110, height: 5, borderRadius: 3, background: '#EFEBE1', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', borderRadius: 3, background: color, width: `${pct}%` }} />
+                    </div>
+                    <div style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums', color: '#75695F', minWidth: 72, textAlign: 'right' }}>{fmt(spend)}</div>
+                    <div style={{ fontSize: 11, color: '#A89B8B', minWidth: 30, textAlign: 'right' }}>{pct}%</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Concentration warning */}
+          {top10[0] && totalPOs > 0 && (top10[0][1] / totalPOs) > 0.4 && (
+            <div style={{ background: '#F7EFDE', border: '1px solid #E5D4A8', borderRadius: 8, padding: '12px 14px', fontSize: 12.5, color: '#8F5C12', lineHeight: 1.5 }}>
+              <strong>⚠ Concentration risk:</strong> {top10[0][0]} accounts for {Math.round(top10[0][1]/totalPOs*100)}% of total spend.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Suppliers Screen ─────────────────────────────────────────────────────────
 const SuppliersScreen = () => {
-  const [suppliers, setSuppliers] = useState(null)
-  const [onboarding, setOnboarding] = useState(false)
-  const [search, setSearch] = useState('')
+  const [suppliers,   setSuppliers]   = useState(null)
+  const [contracts,   setContracts]   = useState(null)  // { [supplier_id]: contract }
+  const [spendMap,    setSpendMap]    = useState(null)  // { [supplier_id]: totalEur }
+  const [selected,    setSelected]    = useState(null)  // supplier object for drawer
+  const [onboarding,  setOnboarding]  = useState(false)
+  const [analytics,   setAnalytics]   = useState(false)
+  const [search,      setSearch]      = useState('')
 
   const load = useCallback(async () => {
     try {
-      const data = await pgFetch('/suppliers?order=name.asc&limit=100')
-      setSuppliers(data)
+      const [sups, cons, pos] = await Promise.all([
+        pgFetch('/suppliers?order=name.asc&limit=100'),
+        pgFetch('/contracts?select=supplier_id,expiry_date,name,contract_number,value_eur,auto_renew,start_date&order=expiry_date.asc&limit=300').catch(() => []),
+        pgFetch('/purchase_orders?select=supplier_id,value_eur&limit=1000').catch(() => []),
+      ])
+      setSuppliers(sups)
+
+      // Nearest-expiry contract per supplier
+      const cm = {}
+      for (const c of cons) {
+        if (!cm[c.supplier_id]) cm[c.supplier_id] = c
+      }
+      setContracts(cm)
+
+      // Total spend per supplier
+      const sm = {}
+      for (const po of pos) {
+        if (!po.supplier_id) continue
+        sm[po.supplier_id] = (sm[po.supplier_id] || 0) + Number(po.value_eur || 0)
+      }
+      setSpendMap(sm)
     } catch { setSuppliers([]) }
   }, [])
 
@@ -1710,57 +2105,67 @@ const SuppliersScreen = () => {
     !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.category?.toLowerCase().includes(search.toLowerCase())
   )
 
-  const HEALTH_CONFIG = {
-    green: { label: 'Approved',    bg: '#EEF3EE', fg: '#3D7A5A', dot: '#3D7A5A' },
-    watch: { label: 'Watch',       bg: '#F7EFDE', fg: '#8F5C12', dot: '#B07219' },
-    red:   { label: 'Blocked',     bg: '#F6E5DE', fg: '#B5462E', dot: '#B5462E' },
+  // Risk flag: combines compliance + contract expiry into a single signal
+  const riskFlag = (s, rag) => {
+    if (s.compliance_status === 'blocked')  return { label: 'Compliance blocked', color: '#B5462E', bg: '#F6E5DE' }
+    if (s.compliance_status === 'running')  return { label: 'Assessment running', color: '#2B5F7A', bg: '#E8EDF3' }
+    if (rag && rag.days < 0)                return { label: 'Contract expired',   color: '#B5462E', bg: '#F6E5DE' }
+    if (rag && rag.days <= 30)              return { label: 'Contract expiring',  color: '#B07219', bg: '#F7EFDE' }
+    return null
   }
 
-  const suppliersByHealth = {
-    green: filtered.filter(s => s.health === 'green'),
-    watch: filtered.filter(s => s.health === 'watch'),
-    red:   filtered.filter(s => s.health === 'red'),
-    other: filtered.filter(s => !['green','watch','red'].includes(s.health)),
-  }
+  const expiringSoon = (contracts && suppliers)
+    ? suppliers.filter(s => { const r = contractRag(contracts[s.id]?.expiry_date); return r && r.days <= 30 }).length
+    : 0
 
   return (
-    <div className="content step-in" style={{ maxWidth: 1180 }}>
+    <div className="content step-in" style={{ maxWidth: 1200 }}>
       <div className="pagehead">
         <div>
           <div className="pagehead__eyebrow">Suppliers</div>
           <h1 className="pagehead__title">{suppliers ? `${suppliers.length} vendors.` : 'Loading…'}</h1>
-          <div className="pagehead__sub">Every vendor. Click onboard to run a full 4-agent compliance assessment.</div>
+          <div className="pagehead__sub">Tier is driven by spend volume and auto-updates. Click any row for contracts, documents and compliance.</div>
         </div>
         <div className="pagehead__actions">
           <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
+          <button className="btn btn--secondary" onClick={() => setAnalytics(true)}>
+            <IconBoard size={14}/> Analytics
+          </button>
           <button className="btn btn--primary" onClick={() => setOnboarding(true)}>
             <IconPlus size={14}/> Onboard supplier
           </button>
         </div>
       </div>
 
-      {/* Stats */}
-      {suppliers && (
+      {/* Stats — tier-centric, not health-centric */}
+      {suppliers && spendMap && (
         <div className="stats" style={{ marginBottom: 24 }}>
+          {TIER_CONFIG.map(t => {
+            const count = suppliers.filter(s => {
+              const spend = Number(spendMap[s.id] || 0)
+              return spend >= t.min && (t.min === 0 || spend < (TIER_CONFIG[TIER_CONFIG.indexOf(t)-1]?.min ?? Infinity))
+            }).length
+            return (
+              <div className="stat" key={t.label}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ padding: '1px 7px', borderRadius: 4, background: t.bg, color: t.fg, fontSize: 10.5, fontWeight: 700 }}>{t.label}</span>
+                </div>
+                <div className="stat__val" style={{ marginTop: 4 }}>{count}</div>
+                <div className="stat__hint">
+                  {t.label === 'Platinum' ? '≥ €1M' : t.label === 'Gold' ? '€250k–€1M' : t.label === 'Silver' ? '€50k–€250k' : '< €50k'}
+                </div>
+              </div>
+            )
+          })}
           <div className="stat">
-            <div className="stat__label">Approved</div>
-            <div className="stat__val" style={{ color: '#3D7A5A' }}>{suppliers.filter(s=>s.health==='green').length}</div>
-            <div className="stat__hint">All checks passed</div>
-          </div>
-          <div className="stat">
-            <div className="stat__label">Conditional</div>
-            <div className="stat__val stat__val--gold">{suppliers.filter(s=>s.health==='watch').length}</div>
-            <div className="stat__hint">Action items open</div>
-          </div>
-          <div className="stat">
-            <div className="stat__label">Blocked</div>
-            <div className="stat__val" style={{ color: '#B5462E' }}>{suppliers.filter(s=>s.health==='red').length}</div>
-            <div className="stat__hint">Compliance blockers</div>
+            <div className="stat__label">Contracts expiring</div>
+            <div className="stat__val" style={{ color: expiringSoon > 0 ? '#B5462E' : '#A89B8B' }}>{expiringSoon}</div>
+            <div className="stat__hint">Within 30 days</div>
           </div>
           <div className="stat">
             <div className="stat__label">Not assessed</div>
-            <div className="stat__val">{suppliers.filter(s=>!['green','watch','red'].includes(s.health)).length}</div>
-            <div className="stat__hint">Run assessment to classify</div>
+            <div className="stat__val">{suppliers.filter(s=>!['approved','blocked'].includes(s.compliance_status)).length}</div>
+            <div className="stat__hint">No compliance check</div>
           </div>
         </div>
       )}
@@ -1773,11 +2178,12 @@ const SuppliersScreen = () => {
       {/* Table */}
       {suppliers && (
         <div className="tlist">
-          <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#75695F' }}>
-            <div>Status</div>
+          <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
+            <div>Tier</div>
             <div>Supplier</div>
             <div>Category</div>
-            <div>Compliance</div>
+            <div>Contract</div>
+            <div>Risk flag</div>
             <div style={{ textAlign: 'right' }}>Actions</div>
           </div>
           {filtered.length === 0 && (
@@ -1786,39 +2192,57 @@ const SuppliersScreen = () => {
             </div>
           )}
           {filtered.map(s => {
-            const hc = HEALTH_CONFIG[s.health] || { label: s.health || 'Unknown', bg: '#F5F1EA', fg: '#A89B8B', dot: '#C9BFAE' }
+            const spend = spendMap ? (spendMap[s.id] || 0) : null
+            const tier  = spend !== null ? tierFor(spend) : null
+            const con   = contracts ? contracts[s.id] : null
+            const rag   = con ? contractRag(con.expiry_date) : null
+            const risk  = riskFlag(s, rag)
+
             return (
-              <div key={s.id} className="trow" style={{ cursor: 'default' }}>
+              <div key={s.id} className="trow" style={{ cursor: 'pointer' }} onClick={() => setSelected(s)}>
+                {/* Tier — primary classification */}
                 <div>
-                  <span className="pill" style={{ background: hc.bg, color: hc.fg }}>
-                    <span className="pill__dot" style={{ background: hc.dot }}/>
-                    {hc.label}
-                  </span>
+                  {tier ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 5, background: tier.bg, color: tier.fg, fontSize: 11.5, fontWeight: 700, letterSpacing: '0.04em' }}>
+                      {tier.label}
+                    </span>
+                  ) : <span style={{ color: '#C9BFAE', fontSize: 12 }}>—</span>}
                 </div>
+                {/* Supplier name */}
                 <div className="trow__main">
                   <div className="trow__title">{s.name}</div>
                   <div className="trow__meta">
                     {s.country && <span>{s.country}</span>}
-                    {s.website && <><span className="dot"/><a href={s.website} target="_blank" rel="noreferrer" style={{ color: '#8F5C12', textDecoration: 'none', fontSize: 12 }}>{s.website.replace('https://','')}</a></>}
+                    {spend !== null && spend > 0 && <><span className="dot"/><span style={{ fontWeight: 600, color: '#8F5C12' }}>{fmt(spend)}</span></>}
                   </div>
                 </div>
-                <div style={{ fontSize: 12.5, color: '#75695F' }}>{s.category || '—'}</div>
+                {/* Category */}
+                <div style={{ fontSize: 12.5, color: '#75695F', textTransform: 'capitalize' }}>{(s.category||'—').replace(/_/g,' ')}</div>
+                {/* Contract RAG */}
                 <div>
-                  {s.compliance_status === 'running' ? (
-                    <span style={{ fontSize: 12, color: '#2B5F7A', fontWeight: 600 }}>⟳ Assessment running</span>
-                  ) : s.compliance_status === 'blocked' ? (
-                    <span style={{ fontSize: 12, color: '#B5462E', fontWeight: 600 }}>Blocked</span>
-                  ) : s.compliance_status === 'approved' ? (
-                    <span style={{ fontSize: 12, color: '#3D7A5A', fontWeight: 600 }}>All checks passed</span>
+                  {rag ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: rag.dot, flexShrink: 0 }} />
+                      <span style={{ color: rag.color, fontWeight: rag.days <= 30 ? 700 : 400 }}>{rag.label}</span>
+                    </span>
                   ) : (
-                    <span style={{ fontSize: 12, color: '#A89B8B' }}>—</span>
+                    <span style={{ fontSize: 12, color: '#C9BFAE' }}>No contract</span>
                   )}
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  {!['approved','blocked'].includes(s.compliance_status) && s.health !== 'green' && (
-                    <button className="btn btn--secondary btn--sm" onClick={() => setOnboarding(true)}>
-                      Assess
-                    </button>
+                {/* Risk flag */}
+                <div>
+                  {risk ? (
+                    <span style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4, background: risk.bg, color: risk.color, fontWeight: 600 }}>
+                      {risk.label}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: '#C9BFAE' }}>—</span>
+                  )}
+                </div>
+                {/* Actions */}
+                <div style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                  {!['approved','blocked'].includes(s.compliance_status) && (
+                    <button className="btn btn--secondary btn--sm" onClick={() => setOnboarding(true)}>Assess</button>
                   )}
                 </div>
               </div>
@@ -1827,12 +2251,21 @@ const SuppliersScreen = () => {
         </div>
       )}
 
+      {selected && (
+        <SupplierDrawer
+          supplier={selected}
+          spendMap={spendMap}
+          onClose={() => setSelected(null)}
+          onAssess={() => { setSelected(null); setOnboarding(true) }}
+        />
+      )}
       {onboarding && (
         <OnboardModal
           onClose={() => setOnboarding(false)}
           onDone={() => { setOnboarding(false); load() }}
         />
       )}
+      {analytics && <AnalyticsDrawer onClose={() => setAnalytics(false)} />}
     </div>
   )
 }
