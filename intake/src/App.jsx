@@ -2892,6 +2892,7 @@ const UsersScreen = () => {
   const [form, setForm]           = useState(NEW_USER_DEFAULTS)
   const [saving, setSaving]       = useState(false)
   const [saveErr, setSaveErr]     = useState('')
+  const [editingRole, setEditingRole] = useState(null)   // user id being role-edited
 
   const load = useCallback(async () => {
     try {
@@ -2937,6 +2938,18 @@ const UsersScreen = () => {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
         body: JSON.stringify({ active: !u.active })
+      })
+      load()
+    } catch {}
+  }
+
+  const changeRole = async (u, newRole) => {
+    setEditingRole(null)
+    try {
+      await fetch(`${POSTGREST_URL}/users?id=eq.${u.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify({ role: newRole })
       })
       load()
     } catch {}
@@ -3048,15 +3061,52 @@ const UsersScreen = () => {
                         </div>
                       </div>
                     </div>
-                    <div style={{ fontSize: 12.5, color: '#75695F' }}>{u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role}</div>
+                    {/* Role — click to change */}
+                    <div style={{ position: 'relative' }}>
+                      {editingRole === u.id ? (
+                        <select
+                          className="select"
+                          autoFocus
+                          defaultValue={u.role}
+                          onBlur={() => setEditingRole(null)}
+                          onChange={e => changeRole(u, e.target.value)}
+                          style={{ fontSize: 12, padding: '3px 8px', height: 'auto' }}
+                        >
+                          <option value="head_of_procurement">Head of Procurement</option>
+                          <option value="procurement">Procurement</option>
+                          <option value="category_manager">Category Manager</option>
+                          <option value="cfo">CFO / Controlling</option>
+                          <option value="it_manager">IT Manager</option>
+                          <option value="it">IT</option>
+                          <option value="user">User</option>
+                          <option value="requester">Requester</option>
+                          <option value="ops_manager">Ops Manager</option>
+                          <option value="legal">Legal</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => setEditingRole(u.id)}
+                          title="Click to change role"
+                          style={{
+                            background: 'none', border: '1px dashed #E5DDD0', borderRadius: 5,
+                            padding: '3px 8px', cursor: 'pointer', fontSize: 12.5, color: '#75695F',
+                            display: 'flex', alignItems: 'center', gap: 5,
+                          }}
+                        >
+                          {u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role}
+                          <span style={{ fontSize: 10, color: '#C9BFAE' }}>✎</span>
+                        </button>
+                      )}
+                    </div>
                     <div style={{ fontSize: 12.5, color: '#75695F' }}>{branch}</div>
-                    <div style={{ textAlign: 'right' }}>
+                    <div style={{ textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                       <button
                         className={`btn btn--sm ${u.active ? 'btn--danger' : 'btn--success'}`}
                         onClick={() => toggleActive(u)}
                         style={{ fontSize: 11.5 }}
                       >
-                        {u.active ? 'Deactivate' : 'Reactivate'}
+                        {u.active ? 'Deactivate' : 'Activate'}
                       </button>
                     </div>
                   </div>
@@ -3164,155 +3214,259 @@ const PERSONA_GROUP_COLOR = {
   admin:       '#6B4F8A',
 }
 
+// ─── Login Screen ─────────────────────────────────────────────────────────────
+// Email-based login: looks up user in DB, shows role confirmation, signs in.
+// Role is set by admin (Users screen). Each role sees only its own nav items.
 const UserSetupModal = ({ onSave }) => {
-  const [users, setUsers]     = useState(null)
-  const [picked, setPicked]   = useState(null)  // full user object
-  const [step, setStep]       = useState('pick') // 'pick' | 'confirm'
+  const [email,   setEmail]   = useState('')
+  const [status,  setStatus]  = useState('idle')   // idle | searching | found | notfound | error
+  const [found,   setFound]   = useState(null)      // matched user object
+  const [allUsers, setAllUsers] = useState(null)    // for demo hint dropdown
 
+  // Load all users for the demo email hint
   useEffect(() => {
     pgFetch('/users?active=eq.true&order=role.asc,name.asc&limit=50')
       .then(data => {
-        // Add a platform admin persona (not in DB — demo only)
         const adminPersona = {
           id: 'admin-demo-0000-0000-000000000001',
-          name: 'Admin Demo',
-          email: 'admin@company.com',
-          role: 'admin',
-          branch_id: BRANCHES[0].id,
-          title: 'Platform Administrator',
+          name: 'Admin Demo', email: 'admin@company.com',
+          role: 'admin', branch_id: BRANCHES[0].id, title: 'Platform Administrator',
         }
-        setUsers([...data, adminPersona])
+        setAllUsers([...data, adminPersona])
       })
-      .catch(() => setUsers([]))
+      .catch(() => setAllUsers([]))
   }, [])
 
-  // Group by role group
+  const lookup = async (e) => {
+    e.preventDefault()
+    if (!email.trim()) return
+    setStatus('searching')
+    try {
+      const q = email.trim().toLowerCase()
+      // First try exact DB match
+      const all = allUsers || []
+      const match = all.find(u => (u.email || '').toLowerCase() === q)
+      if (match) {
+        setFound(match)
+        setStatus('found')
+      } else {
+        setStatus('notfound')
+      }
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  const signIn = () => {
+    if (!found) return
+    onSave({
+      id:       found.id,
+      name:     found.name,
+      email:    found.email || '',
+      role:     found.role,
+      branchId: found.branch_id || BRANCHES[0].id,
+      title:    found.title || ROLE_LABEL[ROLE_GROUP[found.role] || found.role] || found.role,
+    })
+  }
+
+  const roleGroup  = found ? (ROLE_GROUP[found.role] || 'user') : null
+  const roleLabel  = found ? (ROLE_LABEL[roleGroup] || found.role) : null
+  const roleColor  = found ? (PERSONA_GROUP_COLOR[roleGroup] || '#75695F') : null
+  const initials   = found ? found.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : null
+  const branch     = found ? (BRANCHES.find(b => b.id === found.branch_id)?.label || '') : ''
+
+  // Group users for the demo hint dropdown
   const grouped = {}
-  for (const u of (users || [])) {
+  for (const u of (allUsers || [])) {
     const g = ROLE_GROUP[u.role] || 'user'
     if (!grouped[g]) grouped[g] = []
     grouped[g].push(u)
   }
 
-  const confirm = () => {
-    if (!picked) return
-    onSave({
-      id:       picked.id,
-      name:     picked.name,
-      email:    picked.email || '',
-      role:     picked.role,
-      branchId: picked.branch_id || BRANCHES[0].id,
-      title:    picked.title || ROLE_LABEL[picked.role] || picked.role,
-    })
-  }
-
   return (
-    <div className="modal-scrim" style={{ alignItems: 'center', justifyContent: 'center' }}>
-      <div className="modal" style={{ maxWidth: 560, padding: '32px 32px 28px' }}>
-        {/* Header */}
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div style={{ background: '#161413', borderRadius: 6, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <svg width="14" height="14" viewBox="0 0 64 64" fill="none">
-                <path d="M16 18 H48 V25 H37 V48 H29 V25 H16 Z" fill="#B07219"/>
-                <path d="M22 18 L42 18 L42 25 L33 25 L33 32 L25 32 L25 25 L22 25 Z" fill="#D89E40" opacity="0.85"/>
-              </svg>
-            </div>
-            <span style={{ fontWeight: 700, fontSize: 15, color: '#161413', letterSpacing: '-0.01em' }}>TrueSpend</span>
+    <div style={{
+      position: 'fixed', inset: 0, background: '#F5F1EA',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 9999, flexDirection: 'column', gap: 0,
+    }}>
+      {/* Logo */}
+      <div style={{ marginBottom: 40, textAlign: 'center' }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ background: '#161413', borderRadius: 8, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="18" height="18" viewBox="0 0 64 64" fill="none">
+              <path d="M16 18 H48 V25 H37 V48 H29 V25 H16 Z" fill="#B07219"/>
+              <path d="M22 18 L42 18 L42 25 L33 25 L33 32 L25 32 L25 25 L22 25 Z" fill="#D89E40" opacity="0.85"/>
+            </svg>
           </div>
-          <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 26, letterSpacing: '-0.025em', color: '#161413', lineHeight: 1.15, marginBottom: 6 }}>
-            Who are you testing as?
-          </div>
-          <div style={{ fontSize: 13, color: '#75695F', lineHeight: 1.5 }}>
-            Pick a persona — each sees only what their role allows.
-          </div>
+          <span style={{ fontWeight: 800, fontSize: 22, color: '#161413', letterSpacing: '-0.03em' }}>TrueSpend</span>
+        </div>
+      </div>
+
+      {/* Card */}
+      <div style={{
+        background: '#FFFEFB', borderRadius: 12, padding: '40px 44px 36px',
+        boxShadow: '0 2px 24px rgba(22,20,19,0.09)', width: '100%', maxWidth: 420,
+      }}>
+        <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 28, letterSpacing: '-0.025em', color: '#161413', marginBottom: 6 }}>
+          Sign in
+        </div>
+        <div style={{ fontSize: 13, color: '#75695F', marginBottom: 28, lineHeight: 1.5 }}>
+          Your access level is set by your admin.
         </div>
 
-        {users === null && (
-          <div style={{ padding: '32px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>Loading users…</div>
+        {/* Email form */}
+        {status !== 'found' && (
+          <form onSubmit={lookup}>
+            <div className="field" style={{ marginBottom: 16 }}>
+              <label className="field__label">Work email</label>
+              <input
+                className="input"
+                type="email"
+                placeholder="you@company.com"
+                value={email}
+                onChange={e => { setEmail(e.target.value); setStatus('idle') }}
+                autoFocus
+                style={{ fontSize: 14 }}
+              />
+            </div>
+            {status === 'notfound' && (
+              <div style={{ fontSize: 12.5, color: '#B5462E', marginBottom: 14, padding: '8px 12px', background: '#FDF0ED', borderRadius: 6 }}>
+                No account found for that email. Ask your admin to add you.
+              </div>
+            )}
+            {status === 'error' && (
+              <div style={{ fontSize: 12.5, color: '#B5462E', marginBottom: 14, padding: '8px 12px', background: '#FDF0ED', borderRadius: 6 }}>
+                Connection error. Check your network and try again.
+              </div>
+            )}
+            <button
+              type="submit"
+              className="btn btn--primary btn--block btn--lg"
+              disabled={status === 'searching' || !email.trim()}
+              style={{ opacity: (status === 'searching' || !email.trim()) ? 0.6 : 1 }}
+            >
+              {status === 'searching' ? 'Looking up…' : 'Continue'}
+            </button>
+          </form>
         )}
 
-        {users !== null && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
-            {['procurement', 'it', 'user', 'controlling', 'legal', 'admin'].map(group => {
-              const members = grouped[group] || []
-              if (!members.length) return null
-              const color = PERSONA_GROUP_COLOR[group]
-              return (
-                <div key={group}>
-                  {/* Group header */}
-                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 6 }}>
-                    {PERSONA_GROUP_LABEL[group]}
-                    <span style={{ fontWeight: 400, letterSpacing: 0, textTransform: 'none', color: '#C9BFAE', marginLeft: 8, fontSize: 11 }}>
-                      — {PERSONA_GROUP_DESC[group]}
-                    </span>
-                  </div>
-                  {/* User cards */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                    {members.map(u => {
-                      const isActive = picked?.id === u.id
-                      const initials = u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-                      const branch = BRANCHES.find(b => b.id === u.branch_id)?.label || ''
-                      return (
-                        <button
-                          key={u.id}
-                          onClick={() => setPicked(isActive ? null : u)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 12,
-                            width: '100%', padding: '10px 14px', border: 'none', cursor: 'pointer',
-                            borderRadius: 8, textAlign: 'left',
-                            background: isActive ? '#FFFEFB' : '#FAF7F2',
-                            boxShadow: isActive ? `0 0 0 2px ${color}` : '0 0 0 1px #E5DDD0',
-                            transition: 'all 0.12s',
-                          }}
-                        >
-                          {/* Avatar */}
-                          <div style={{
-                            width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
-                            background: isActive ? color : '#E5DDD0',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 12, fontWeight: 700, color: isActive ? '#fff' : '#75695F',
-                            transition: 'all 0.12s',
-                          }}>
-                            {initials}
-                          </div>
-                          {/* Info */}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13.5, fontWeight: 600, color: '#161413', letterSpacing: '-0.005em' }}>{u.name}</div>
-                            <div style={{ fontSize: 11.5, color: '#75695F', marginTop: 1 }}>
-                              {u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role}
-                              {branch && <span style={{ color: '#A89B8B' }}> · {branch}</span>}
-                            </div>
-                          </div>
-                          {/* Role tag */}
-                          <span style={{
-                            fontSize: 10.5, padding: '2px 7px', borderRadius: 4, flexShrink: 0,
-                            background: isActive ? color : '#EFEBE1',
-                            color: isActive ? '#fff' : '#75695F',
-                            fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
-                            transition: 'all 0.12s',
-                          }}>
-                            {ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
+        {/* Confirmed identity */}
+        {status === 'found' && found && (
+          <div>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 14,
+              padding: '14px 16px', background: '#F5F1EA', borderRadius: 8, marginBottom: 20,
+            }}>
+              <div style={{
+                width: 42, height: 42, borderRadius: '50%', background: roleColor,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 14, fontWeight: 700, color: '#fff', flexShrink: 0,
+              }}>{initials}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#161413', letterSpacing: '-0.01em' }}>{found.name}</div>
+                <div style={{ fontSize: 12, color: '#75695F', marginTop: 2 }}>
+                  {found.email}
+                  {branch && <span style={{ color: '#A89B8B' }}> · {branch}</span>}
                 </div>
-              )
-            })}
+              </div>
+              <span style={{
+                padding: '3px 9px', borderRadius: 5, fontSize: 11, fontWeight: 700,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+                background: roleColor + '22', color: roleColor,
+              }}>{roleLabel}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: '#75695F', marginBottom: 20, lineHeight: 1.6 }}>
+              You'll see <strong style={{ color: '#161413' }}>{PERSONA_GROUP_DESC[roleGroup] || 'your role\'s features'}</strong>. Your admin can change your access level from the Users screen.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                className="btn btn--secondary"
+                onClick={() => { setStatus('idle'); setFound(null); setEmail('') }}
+                style={{ flex: 1 }}
+              >
+                Back
+              </button>
+              <button className="btn btn--primary" onClick={signIn} style={{ flex: 2 }}>
+                Sign in as {found.name.split(' ')[0]} →
+              </button>
+            </div>
           </div>
         )}
-
-        <button
-          className="btn btn--primary btn--block btn--lg"
-          onClick={confirm}
-          disabled={!picked}
-          style={{ opacity: picked ? 1 : 0.5, cursor: picked ? 'pointer' : 'default' }}
-        >
-          {picked ? `Continue as ${picked.name.split(' ')[0]}` : 'Select a user to continue'}
-        </button>
       </div>
+
+      {/* Demo hint — collapsible */}
+      {allUsers && allUsers.length > 0 && (
+        <DemoHint users={allUsers} grouped={grouped} onPick={(u) => {
+          setEmail(u.email || '')
+          setFound(u)
+          setStatus('found')
+        }} />
+      )}
+    </div>
+  )
+}
+
+// Demo hint — shows all available test accounts grouped by role
+const DemoHint = ({ users, grouped, onPick }) => {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ marginTop: 20, width: '100%', maxWidth: 420 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', background: 'none', border: '1px solid #E5DDD0', borderRadius: 8,
+          padding: '9px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          fontSize: 12.5, color: '#75695F', fontWeight: 600,
+        }}
+      >
+        <span>Demo accounts</span>
+        <IconChevDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div style={{
+          background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 8, marginTop: 6,
+          padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 2,
+          maxHeight: 320, overflowY: 'auto',
+        }}>
+          {['procurement','it','controlling','legal','user','admin'].map(group => {
+            const members = grouped[group] || []
+            if (!members.length) return null
+            return (
+              <div key={group}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#A89B8B', padding: '6px 8px 3px' }}>
+                  {PERSONA_GROUP_LABEL[group]}
+                </div>
+                {members.map(u => (
+                  <button
+                    key={u.id}
+                    onClick={() => onPick(u)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                      padding: '7px 8px', border: 'none', background: 'none', cursor: 'pointer',
+                      borderRadius: 6, textAlign: 'left',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#F5F1EA'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                  >
+                    <div style={{
+                      width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
+                      background: PERSONA_GROUP_COLOR[group] + '33',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 10, fontWeight: 700, color: PERSONA_GROUP_COLOR[group],
+                    }}>
+                      {u.name.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#161413' }}>{u.name}</div>
+                      <div style={{ fontSize: 11, color: '#A89B8B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
