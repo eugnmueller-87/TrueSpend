@@ -720,7 +720,7 @@ const ConfBar = ({ score }) => {
   )
 }
 
-const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
+const TicketRow = ({ ticket, isOpen, onToggle, onAction, isLegal }) => {
   return (
     <>
       <div className={'trow' + (isOpen ? ' trow--open' : '')} onClick={() => onToggle(ticket.id)}>
@@ -750,10 +750,16 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
             <button className="btn btn--ink btn--sm" onClick={() => onAction(ticket.id, 'sign')}>Sign &amp; send</button>
             <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'decline')}>Decline</button>
           </>)}
-          {ticket.status === 'pending_review' && (<>
+          {ticket.status === 'pending_review' && (isLegal ? (<>
+            <button className="btn btn--success btn--sm" onClick={() => onAction(ticket.id, 'approve')} style={{ background: '#5A3E7A', borderColor: '#5A3E7A' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Approve document
+            </button>
+            <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'reject')}>Request changes</button>
+          </>) : (<>
             <button className="btn btn--success btn--sm" onClick={() => onAction(ticket.id, 'approve')}>Approve</button>
             <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'reject')}>Reject</button>
-          </>)}
+          </>))}
           {ticket.status === 'escalated' && (
             <button className="btn btn--secondary btn--sm" onClick={() => onAction(ticket.id, 'ack')}>Acknowledge</button>
           )}
@@ -768,20 +774,43 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction }) => {
   )
 }
 
+// ─── Legal relevance filter ───────────────────────────────────────────────────
+const isLegalTicket = (t) =>
+  t.review_type === 'legal' ||
+  t.review_type === 'major_contract' ||
+  t.review_type === 'compliance_flag' ||
+  t.review_type === 'signature' ||
+  t.review_type === 'infrastructure' === false && (  // exclude VPS alerts
+    t.source === 'compliance' ||
+    t.source === 'renewal' ||
+    t.status === 'signature_required' ||
+    (t.description || '').toLowerCase().includes('nda') ||
+    (t.description || '').toLowerCase().includes('dpa') ||
+    (t.description || '').toLowerCase().includes('contract') ||
+    (t.description || '').toLowerCase().includes('legal') ||
+    (t.title || '').toLowerCase().includes('nda') ||
+    (t.title || '').toLowerCase().includes('dpa') ||
+    (t.title || '').toLowerCase().includes('contract') ||
+    (t.title || '').toLowerCase().includes('legal') ||
+    (t.title || '').toLowerCase().includes('compliance')
+  )
+
 // ─── Operations Board ─────────────────────────────────────────────────────────
-const OperationsBoard = ({ sectionJump, onCountChange }) => {
+const OperationsBoard = ({ sectionJump, onCountChange, roleGroup }) => {
   const [tickets, setTickets] = useState(null)
   const [openId, setOpenId]   = useState(null)
+  const isLegal = roleGroup === 'legal'
 
   const load = useCallback(async () => {
     try {
       const data = await pgFetch('/open_tickets_board?order=created_at.asc')
-      setTickets(data)
-      onCountChange(data.length)
+      const filtered = isLegal ? data.filter(isLegalTicket) : data
+      setTickets(filtered)
+      onCountChange(filtered.length)
     } catch {
       setTickets([])
     }
-  }, [onCountChange])
+  }, [onCountChange, isLegal])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -832,9 +861,9 @@ const OperationsBoard = ({ sectionJump, onCountChange }) => {
         <div>
           <div className="pagehead">
             <div>
-              <div className="pagehead__eyebrow">Operations · {today}</div>
-              <h1 className="pagehead__title">All clear.</h1>
-              <div className="pagehead__sub">Nothing needs you right now. The agent is handling everything in the queue.</div>
+              <div className="pagehead__eyebrow">{isLegal ? 'Legal review' : 'Operations'} · {today}</div>
+              <h1 className="pagehead__title">{isLegal ? 'No legal items.' : 'All clear.'}</h1>
+              <div className="pagehead__sub">{isLegal ? 'No contracts, NDAs, or DPAs require your review right now.' : 'Nothing needs you right now. The agent is handling everything in the queue.'}</div>
             </div>
             <div className="pagehead__actions">
               <button className="btn btn--tertiary" onClick={load}><IconRotateCw size={14}/> Refresh</button>
@@ -843,10 +872,10 @@ const OperationsBoard = ({ sectionJump, onCountChange }) => {
           <div style={{ background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 8, padding: '80px 24px', textAlign: 'center' }}>
             <IconCheck size={44} color="#3D7A5A" strokeWidth={1.25} />
             <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 32, letterSpacing: '-0.025em', color: '#161413', margin: '18px 0 6px' }}>
-              Nothing <em style={{ fontStyle: 'normal', color: '#8F5C12' }}>needs you</em>.
+              {isLegal ? <>No documents <em style={{ fontStyle: 'normal', color: '#8F5C12' }}>pending review</em>.</> : <>Nothing <em style={{ fontStyle: 'normal', color: '#8F5C12' }}>needs you</em>.</>}
             </h2>
             <p style={{ fontSize: 13.5, color: '#75695F', maxWidth: 360, margin: '0 auto', lineHeight: 1.6 }}>
-              Come back when there's something worth your attention.
+              {isLegal ? 'All contracts and compliance documents are up to date.' : 'Come back when there\'s something worth your attention.'}
             </p>
           </div>
         </div>
@@ -862,19 +891,31 @@ const OperationsBoard = ({ sectionJump, onCountChange }) => {
       <div>
         <div className="pagehead">
           <div>
-            <div className="pagehead__eyebrow">Operations · {today}</div>
+            <div className="pagehead__eyebrow">{isLegal ? 'Legal review' : 'Operations'} · {today}</div>
             <h1 className="pagehead__title">
-              {tickets.length} {tickets.length === 1 ? 'thing' : 'things'} <em>need you</em>.
+              {isLegal
+                ? <>{tickets.length} {tickets.length === 1 ? 'document' : 'documents'} <em>for review</em>.</>
+                : <>{tickets.length} {tickets.length === 1 ? 'thing' : 'things'} <em>need you</em>.</>}
             </h1>
-            <div className="pagehead__sub">Everything else, the agent closed. Expand any row for the brief.</div>
+            <div className="pagehead__sub">
+              {isLegal ? 'Contracts, NDAs, DPAs and compliance items requiring legal sign-off.' : 'Everything else, the agent closed. Expand any row for the brief.'}
+            </div>
           </div>
           <div className="pagehead__actions">
             <button className="btn btn--tertiary" onClick={load}><IconRotateCw size={14}/> Refresh</button>
-            <button className="btn btn--secondary">Export</button>
+            {!isLegal && <button className="btn btn--secondary">Export</button>}
           </div>
         </div>
 
-        <StatsStrip tickets={tickets} />
+        {/* Legal filter badge */}
+        {isLegal && (
+          <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#F0EBF6', border: '1px solid #D4C3E5', borderRadius: 6, fontSize: 12, color: '#5A3E7A', fontWeight: 600 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Filtered to legal-relevant items only — contracts, NDAs, DPAs, compliance flags, signature requests
+          </div>
+        )}
+
+        {!isLegal && <StatsStrip tickets={tickets} />}
 
         {BOARD_SECTIONS.map(sec => {
           const inSec = tickets.filter(t => t.status === sec.status)
@@ -895,6 +936,7 @@ const OperationsBoard = ({ sectionJump, onCountChange }) => {
                     isOpen={openId === t.id}
                     onToggle={(id) => setOpenId(openId === id ? null : id)}
                     onAction={handleAction}
+                    isLegal={isLegal}
                   />
                 ))}
               </div>
@@ -3305,6 +3347,7 @@ export default function App() {
             <OperationsBoard
               sectionJump={sectionJump}
               onCountChange={handleCountChange}
+              roleGroup={ROLE_GROUP[user?.role] || 'user'}
             />
           )}
           {!success && tab === 'orders'    && <OrdersBoard onCountChange={setOrdersCount} />}
