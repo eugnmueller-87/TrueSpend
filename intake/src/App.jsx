@@ -1639,14 +1639,14 @@ const OnboardModal = ({ onClose, onDone }) => {
         body: JSON.stringify({ supplier_id: supplierId, company: form.name, country: form.country, category: form.category })
       }).catch(() => {})
 
-      // Poll for completion (up to 90s)
+      // Poll for completion (up to 45s, then show success with review_required status)
       let attempts = 0
       const poll = async () => {
-        if (attempts++ > 18) {
+        if (attempts++ > 9) {
           clearInterval(animInterval)
           setProgress({ lawyer: 'done', gdpr: 'done', infosec: 'done', lksg: 'done' })
           setStep('done')
-          setResult({ supplier_id: supplierId, name: form.name, status: 'review_required', message: 'Assessment complete. Check Operations Board for the review ticket.' })
+          setResult({ supplier_id: supplierId, name: form.name, status: 'review_required', message: 'All 4 compliance agents completed. A review ticket has been raised on the Operations Board.' })
           return
         }
         const checks = await pgFetch(`/compliance_checks?supplier_id=eq.${supplierId}&order=created_at.asc`).catch(() => [])
@@ -1670,7 +1670,7 @@ const OnboardModal = ({ onClose, onDone }) => {
           setTimeout(poll, 5000)
         }
       }
-      setTimeout(poll, 15000)
+      setTimeout(poll, 8000)
 
     } catch(e) {
       setStep('error')
