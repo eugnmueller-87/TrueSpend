@@ -1,5 +1,9 @@
 # TrueSpend — Claude Code Intelligence
 
+> ⚠️ **Security protocol:** Read [`SECURITY.md`](SECURITY.md) before modifying workflows, credentials, or infrastructure.
+> Credentials live in Railway env vars and n8n encrypted store — **never in source files.**
+> Run `bash scripts/quality-gate.sh` before every push. Hook blocks hardcoded secrets at commit time.
+
 ## What this is
 Agentic procurement operating system. n8n orchestrates Claude (Sonnet 4.6) + PostgreSQL + Email/Jira.
 No Slack. One clean Operations Board is the only human interface.

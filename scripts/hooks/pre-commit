@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────
+# TrueSpend — Pre-commit Security Hook
+# Blocks commits that contain hardcoded secrets.
+# Installed automatically by: bash scripts/install-hooks.sh
+# ──────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+FAIL=0
+
+fail() {
+  echo -e "${RED}✗ SECRET DETECTED:${NC} $1"
+  FAIL=$((FAIL+1))
+}
+
+# Get staged files only (not working tree)
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# ── 1. Block any real JWT tokens (HS256 with known payload patterns) ──
+# Pattern: eyJ...eyJ....<sig> — base64url encoded JWT
+# We specifically block known-compromised and structurally valid tokens
+JWT_PATTERN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
+
+while IFS= read -r file; do
+  [ -f "$file" ] || continue
+
+  # Skip .env.example (contains placeholder eyJ... comment)
+  [[ "$file" == ".env.example" ]] && continue
+  # Skip this hook itself
+  [[ "$file" == ".git/hooks/pre-commit" ]] && continue
+
+  if git show ":$file" 2>/dev/null | grep -qP "$JWT_PATTERN"; then
+    fail "$file contains what looks like a hardcoded JWT (HS256 token)"
+    echo -e "  ${YELLOW}→ Use \$env.POSTGREST_JWT in n8n workflows, or VITE_POSTGREST_JWT env var in React${NC}"
+  fi
+done <<< "$STAGED"
+
+# ── 2. Block private keys ──────────────────────────────────────
+# Skip scripts/ — they may grep for this pattern as a literal string
+while IFS= read -r file; do
+  [ -f "$file" ] || continue
+  [[ "$file" == ".env.example" ]] && continue
+  [[ "$file" == scripts/* ]] && continue
+
+  # Match actual key blocks: -----BEGIN ... KEY-----
+  if git show ":$file" 2>/dev/null | grep -qE '^-----BEGIN (RSA |EC )?PRIVATE KEY-----'; then
+    fail "$file contains a private key"
+    echo -e "  ${YELLOW}→ Private keys belong in n8n env vars (DOCUSIGN_RSA_PRIVATE_KEY), never in source${NC}"
+  fi
+done <<< "$STAGED"
+
+# ── 3. Block .env files (not .env.example) ────────────────────
+while IFS= read -r file; do
+  if [[ "$file" == ".env" ]] || [[ "$file" =~ ^.env\. && "$file" != ".env.example" ]]; then
+    fail "Attempting to commit $file — real env files must never be committed"
+    echo -e "  ${YELLOW}→ Only .env.example (with placeholder values) is allowed in git${NC}"
+  fi
+done <<< "$STAGED"
+
+# ── 4. Block intake/dist/ ─────────────────────────────────────
+while IFS= read -r file; do
+  if [[ "$file" == intake/dist/* ]]; then
+    fail "Attempting to commit build artifact: $file"
+    echo -e "  ${YELLOW}→ intake/dist/ is in .gitignore — run: git rm -r --cached intake/dist/${NC}"
+  fi
+done <<< "$STAGED"
+
+# ── 5. Block Anthropic / OpenAI / Railway API key patterns ────
+SECRET_PATTERNS=(
+  'sk-ant-api[0-9A-Za-z-]{20,}'    # Anthropic API key
+  'sk-[a-zA-Z0-9]{40,}'            # OpenAI API key
+  'ATATT[a-zA-Z0-9+/]{20,}'        # Jira API token
+)
+
+for pattern in "${SECRET_PATTERNS[@]}"; do
+  while IFS= read -r file; do
+    [ -f "$file" ] || continue
+    [[ "$file" == ".env.example" ]] && continue
+
+    if git show ":$file" 2>/dev/null | grep -qP "$pattern"; then
+      fail "$file matches secret pattern: ${pattern:0:20}..."
+    fi
+  done <<< "$STAGED"
+done
+
+# ── 6. Warn if workflow hardcodes POSTGREST URL without $env ──
+while IFS= read -r file; do
+  [[ "$file" == workflows/*.json || "$file" == workflows/**/*.json ]] || continue
+  [ -f "$file" ] || continue
+
+  # Check for hardcoded URL in a string literal (not in a comment or $env reference)
+  if git show ":$file" 2>/dev/null | grep -qP '"https://postgrest-production[^"]*"' ; then
+    # Only warn if it's NOT inside an $env expression
+    HITS=$(git show ":$file" 2>/dev/null | grep -P '"https://postgrest-production[^"]*"' | grep -v '\$env' | wc -l)
+    if [ "$HITS" -gt 0 ]; then
+      echo -e "${YELLOW}⚠ WARNING:${NC} $file has $HITS hardcoded PostgREST URL(s) outside \$env"
+      echo -e "  ${YELLOW}→ Use: \$env.POSTGREST_URL || 'https://postgrest-...' (fallback pattern is OK)${NC}"
+      # Not a hard fail — fallback URL in code is acceptable, but flag it
+    fi
+  fi
+done <<< "$STAGED"
+
+# ── Result ─────────────────────────────────────────────────────
+echo ""
+if [ "$FAIL" -gt 0 ]; then
+  echo -e "${RED}Pre-commit hook BLOCKED $FAIL secret(s). Commit aborted.${NC}"
+  echo -e "${YELLOW}To bypass in a genuine emergency: git commit --no-verify${NC}"
+  echo -e "${YELLOW}(Document the reason and rotate any exposed credentials immediately)${NC}"
+  exit 1
+else
+  echo -e "${GREEN}✓ Pre-commit security check passed${NC}"
+  exit 0
+fi

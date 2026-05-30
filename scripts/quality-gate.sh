@@ -24,6 +24,54 @@ echo ""
 echo "TrueSpend Quality Gate"
 echo "────────────────────────────────────────"
 
+# ── S. Security checks (run first — hard block) ───────────────
+info "Running security checks..."
+
+JWT_PATTERN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
+
+# Scan all tracked workflow + source files for hardcoded JWTs
+SECRET_HITS=$(git ls-files -- 'workflows/*.json' 'workflows/**/*.json' 'intake/src/**' \
+  | grep -v '.env.example' \
+  | xargs grep -lP "$JWT_PATTERN" 2>/dev/null || true)
+
+if [ -n "$SECRET_HITS" ]; then
+  fail "Hardcoded JWT found in tracked files:"
+  echo "$SECRET_HITS" | while read -r f; do echo "    $f"; done
+  echo -e "  ${YELLOW}→ Replace with \$env.POSTGREST_JWT in n8n code nodes${NC}"
+else
+  pass "No hardcoded JWTs in workflows or source"
+fi
+
+# Check for private keys in tracked files
+# Use regex anchored to start-of-line to match actual key blocks, not grep patterns in scripts
+KEY_HITS=$(git ls-files | grep -v '^scripts/' | grep -v '.env.example' \
+  | xargs grep -lE '^-----BEGIN (RSA |EC )?PRIVATE KEY-----' 2>/dev/null || true)
+
+if [ -n "$KEY_HITS" ]; then
+  fail "Private key found in tracked files: $KEY_HITS"
+else
+  pass "No private keys in tracked files"
+fi
+
+# intake/dist/ must not be tracked
+DIST_TRACKED=$(git ls-files intake/dist/ 2>/dev/null || true)
+if [ -n "$DIST_TRACKED" ]; then
+  fail "intake/dist/ is tracked by git — run: git rm -r --cached intake/dist/"
+else
+  pass "intake/dist/ is not tracked by git"
+fi
+
+# All workflow code nodes must use \$env not hardcoded URLs in auth headers
+HARDCODED_AUTH=$(git ls-files -- 'workflows/*.json' 'workflows/**/*.json' \
+  | xargs grep -lP '"Authorization".*"Bearer eyJ' 2>/dev/null || true)
+
+if [ -n "$HARDCODED_AUTH" ]; then
+  fail "Hardcoded Bearer token in workflow Authorization header:"
+  echo "$HARDCODED_AUTH" | while read -r f; do echo "    $f"; done
+else
+  pass "No hardcoded Bearer tokens in workflow headers"
+fi
+
 # ── 0. Prerequisites ───────────────────────────────────────────
 if ! command -v node &>/dev/null; then
   echo -e "${RED}node not found — install Node.js to run this gate${NC}"
