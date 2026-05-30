@@ -3136,7 +3136,7 @@ const UsersScreen = () => {
               </div>
               <div className="field" style={{ gridColumn: 'span 2' }}>
                 <label className="field__label">Work email <span style={{ color: '#B07219' }}>*</span></label>
-                <input className="input" type="email" value={form.email} onChange={e => setForm(f=>({...f,email:e.target.value}))} placeholder="eva@company.com" />
+                <input className="input" type="email" value={form.email} onChange={e => setForm(f=>({...f,email:e.target.value}))} placeholder="eva@truespend.com" />
               </div>
               <div className="field">
                 <label className="field__label">Role</label>
@@ -3315,7 +3315,7 @@ const UserSetupModal = ({ onSave }) => {
               <input
                 className="input"
                 type="email"
-                placeholder="you@company.com"
+                placeholder="you@truespend.com"
                 value={email}
                 onChange={e => { setEmail(e.target.value); setStatus('idle') }}
                 autoFocus
@@ -3470,7 +3470,7 @@ const DemoHint = ({ users, grouped, onPick }) => {
 const DEFAULT_USER = {
   id:       'e1000000-0000-0000-0000-000000000001',
   name:     'Sarah Brennan',
-  email:    'sarah.brennan@company.com',
+  email:    'sarah.brennan@truespend.com',
   role:     'head_of_procurement',
   branchId: 'b1000000-0000-0000-0000-000000000001',
   title:    'Head of Procurement',
