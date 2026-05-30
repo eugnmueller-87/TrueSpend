@@ -1,0 +1,265 @@
+{
+  "name": "TrueSpend — VPS Health Monitor",
+  "description": "Runs every 5 minutes. SSHs into the Pantheon VPS (187.124.14.81), collects load average, top CPU processes, and Docker container health. Claude reasons about whether the state is normal, a transient spike, or an actionable incident. Creates a one_touch ticket on the Operations Board only when action is needed. Deduplicates — no ticket if an open VPS alert already exists.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "position": [0, 400]
+    },
+
+    {
+      "id": "ssh_metrics",
+      "name": "SSH — Collect Metrics",
+      "type": "n8n-nodes-base.ssh",
+      "parameters": {
+        "host": "187.124.14.81",
+        "port": 22,
+        "username": "root",
+        "authentication": "privateKey",
+        "command": "echo 'LOAD:'$(cat /proc/loadavg) && echo 'MEM:'$(free -m | awk '/Mem/{print $2,$3,$4}') && echo 'STEAL:'$(top -bn1 | grep '%Cpu' | awk '{print $9}') && echo 'PROCS:' && ps -eo pid,user,pcpu,pmem,comm --sort=-%cpu | head -8 && echo 'CONTAINERS:' && docker ps --format '{{.Names}}|{{.Status}}' && echo 'STOPPED:' && docker ps -a --filter status=exited --filter status=dead --format '{{.Names}}|{{.Status}}' 2>/dev/null"
+      },
+      "position": [200, 400]
+    },
+
+    {
+      "id": "check_open_alert",
+      "name": "Existing Open VPS Alert?",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.POSTGREST_URL }}/tickets?source=eq.monitoring&status=in.(open,pending_confirm,reasoning)&title=like.VPS*&limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 10000 }
+      },
+      "position": [400, 400]
+    },
+
+    {
+      "id": "already_open",
+      "name": "Alert Already Open?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "position": [600, 400]
+    },
+
+    {
+      "id": "claude_reason",
+      "name": "Claude — Diagnose VPS State",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",  "value": "2023-06-01" },
+            { "name": "content-type",       "value": "application/json" }
+          ]
+        },
+        "body": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 600,
+          "system": "You are a VPS health monitoring agent for a procurement system running on a Hostinger VPS (1 vCPU, 4GB RAM, Ubuntu). The server runs: Pantheon trading stack (zeus, hermes, dashboard, kafka, redis, nginx, grafana, ibgateway). Kafka and ibgateway are Java apps that spike CPU heavily on cold-start (normal for 3-5 minutes). dockerd occasionally accumulates overhead after multi-day uptime. The hypervisor steal time (%st in top) is typically 70-80% — this is a Hostinger infrastructure issue, not your fault.\n\nYou must return ONLY valid JSON with this structure:\n{\n  \"disposition\": \"ok\" | \"one_touch\" | \"escalate\",\n  \"severity\": \"info\" | \"warning\" | \"critical\",\n  \"title\": \"short title for ops board (max 60 chars)\",\n  \"summary\": \"2-3 sentence summary: what is wrong, why, recommended action\",\n  \"culprit\": \"process or container name causing the issue, or null\",\n  \"load_1min\": <number>,\n  \"action_hint\": \"what the ops person should do, or null if ok\"\n}\n\nRules:\n- disposition=ok: load <3.0, no unhealthy containers, nothing obviously wrong\n- disposition=one_touch: load 3-10 AND sustained (not just cold-start), OR container unhealthy >10min, OR dockerd >50% CPU, OR stopped container that should be running\n- disposition=escalate: load >10 sustained, OOM kill in logs, disk >90%, multiple containers down\n- If kafka or ibgateway are the sole culprit and started <10min ago: disposition=ok (cold-start is expected)\n- Never create a ticket for steal time alone — that is a Hostinger problem",
+          "messages": [
+            {
+              "role": "user",
+              "content": "={{ 'VPS metrics snapshot at ' + new Date().toISOString() + ':\\n\\n' + $('SSH — Collect Metrics').item.json.stdout }}"
+            }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "position": [800, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+
+    {
+      "id": "parse_claude",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.content[0].text.trim();\nlet parsed;\ntry {\n  const jsonMatch = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);\n} catch(e) {\n  parsed = {\n    disposition: 'one_touch',\n    severity: 'warning',\n    title: 'VPS — parse error in health check',\n    summary: 'Claude response could not be parsed. Raw: ' + raw.substring(0, 200),\n    culprit: null,\n    load_1min: null,\n    action_hint: 'Check VPS manually'\n  };\n}\nreturn [{ json: parsed }];"
+      },
+      "position": [1000, 300]
+    },
+
+    {
+      "id": "needs_ticket",
+      "name": "Needs Ticket?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.disposition }}",
+              "operation": "notEqual",
+              "value2": "ok"
+            }
+          ]
+        }
+      },
+      "position": [1200, 300]
+    },
+
+    {
+      "id": "gen_reference",
+      "name": "Generate Reference",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const rand = Math.floor(1000 + Math.random() * 9000);\nconst ref = 'TS-' + new Date().getFullYear() + '-' + rand;\nconst disp = $input.item.json.disposition;\nreturn [{ json: { ...($input.item.json), reference: ref, status: disp === 'escalate' ? 'pending_review' : 'pending_confirm' } }];"
+      },
+      "position": [1400, 200]
+    },
+
+    {
+      "id": "create_ticket",
+      "name": "Create VPS Alert Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "body": {
+          "id":           "={{ $uuid() }}",
+          "reference":    "={{ $json.reference }}",
+          "source":       "monitoring",
+          "status":       "={{ $json.status }}",
+          "title":        "={{ 'VPS — ' + $json.title }}",
+          "description":  "={{ $json.summary + ($json.action_hint ? '\\n\\nRecommended action: ' + $json.action_hint : '') + '\\n\\nCulprit: ' + ($json.culprit || 'unknown') + ' | Load (1m): ' + ($json.load_1min ?? 'n/a') }}",
+          "review_type":  "infrastructure",
+          "review_notes": "={{ $json.summary }}",
+          "requested_by": "vps-monitor@truespend.internal",
+          "created_at":   "={{ new Date().toISOString() }}",
+          "updated_at":   "={{ new Date().toISOString() }}"
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [1600, 200],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "write_trace",
+      "name": "Write Trace Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "body": {
+          "ticket_id":  "={{ $('Create VPS Alert Ticket').item.json.id }}",
+          "workflow":   "vps_monitor",
+          "signal":     "monitoring",
+          "disposition":"={{ $('Parse Claude Response').item.json.disposition }}",
+          "confidence": 0.9,
+          "reasoning":  "={{ $('Parse Claude Response').item.json.summary }}",
+          "created_at": "={{ new Date().toISOString() }}"
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [1800, 200]
+    },
+
+    {
+      "id": "no_action",
+      "name": "No Action — VPS OK",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [1400, 500]
+    },
+
+    {
+      "id": "skip_duplicate",
+      "name": "Skip — Alert Already Open",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [800, 600]
+    }
+  ],
+
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [[{ "node": "SSH — Collect Metrics", "type": "main", "index": 0 }]]
+    },
+    "SSH — Collect Metrics": {
+      "main": [[{ "node": "Existing Open VPS Alert?", "type": "main", "index": 0 }]]
+    },
+    "Existing Open VPS Alert?": {
+      "main": [[{ "node": "Alert Already Open?", "type": "main", "index": 0 }]]
+    },
+    "Alert Already Open?": {
+      "main": [
+        [{ "node": "Skip — Alert Already Open", "type": "main", "index": 0 }],
+        [{ "node": "Claude — Diagnose VPS State", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude — Diagnose VPS State": {
+      "main": [[{ "node": "Parse Claude Response", "type": "main", "index": 0 }]]
+    },
+    "Parse Claude Response": {
+      "main": [[{ "node": "Needs Ticket?", "type": "main", "index": 0 }]]
+    },
+    "Needs Ticket?": {
+      "main": [
+        [{ "node": "Generate Reference", "type": "main", "index": 0 }],
+        [{ "node": "No Action — VPS OK", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Reference": {
+      "main": [[{ "node": "Create VPS Alert Ticket", "type": "main", "index": 0 }]]
+    },
+    "Create VPS Alert Ticket": {
+      "main": [[{ "node": "Write Trace Log", "type": "main", "index": 0 }]]
+    }
+  }
+}
