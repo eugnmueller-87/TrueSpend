@@ -47,3 +47,6 @@ infra/grafana-data/
 
 # Build artifacts (may contain bundled env vars)
 intake/dist/
+
+# Private docs (demo credentials, internal notes)
+ROLES.md
