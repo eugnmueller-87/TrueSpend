@@ -97,6 +97,8 @@ const IconClock    = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><path d
 const IconPackage  = (p) => <Icon {...p}><path d="M12 3l9 4.5v9L12 21l-9-4.5v-9z"/><path d="M3 7.5l9 4.5 9-4.5"/><path d="M12 12v9"/></Icon>
 const IconTruck    = (p) => <Icon {...p}><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11v12H5z"/><path d="M14 7h5l3 4v4h-8V7z"/><circle cx="7.5" cy="17.5" r="1.5"/><circle cx="17.5" cy="17.5" r="1.5"/></Icon>
 const IconFile     = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></Icon>
+const IconUserPlus = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></Icon>
+const IconShield   = (p) => <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></Icon>
 
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS = {
@@ -156,15 +158,79 @@ const AGENT_FEED = [
   { time: '09:57', title: 'Onboarded NCC Group — DPA + NDA signed',          branch: 'UK & IE', value: 0,    dim: true },
 ]
 
+// ─── Role config ──────────────────────────────────────────────────────────────
+// Six roles:
+//   procurement — full access (ops board, orders, suppliers, catalogues)
+//   it          — IT scope (orders, catalogues, my requests)
+//   user        — self-service (catalogues, my requests, new request)
+//   controlling — budget oversight (budget screen, ops board read-only)
+//   legal       — legal review queue (ops board filtered to legal flags)
+//   admin       — platform admin (users, ops board, suppliers)
+const ROLE_LABEL = {
+  procurement: 'Procurement',
+  it:          'IT',
+  user:        'User',
+  controlling: 'Controlling',
+  legal:       'Legal',
+  admin:       'Admin',
+}
+
+// Map any legacy DB role values → one of the canonical groups
+const ROLE_GROUP = {
+  procurement:         'procurement',
+  head_of_procurement: 'procurement',
+  category_manager:    'procurement',
+  cfo:                 'procurement',
+  it:                  'it',
+  it_manager:          'it',
+  user:                'user',
+  ops_manager:         'user',
+  requester:           'user',
+  controlling:         'controlling',
+  legal:               'legal',
+  admin:               'admin',
+}
+
+// Nav items per role group
+const NAV_BY_GROUP = {
+  procurement: [
+    { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
+    { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
+    { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
+    { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
+    { id: 'mine',      label: 'My requests', Icon: IconList },
+    { id: 'home',      label: 'New request', Icon: IconPlus },
+  ],
+  it: [
+    { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
+    { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
+    { id: 'mine',      label: 'My requests', Icon: IconList },
+    { id: 'home',      label: 'New request', Icon: IconPlus },
+  ],
+  user: [
+    { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
+    { id: 'mine',      label: 'My requests', Icon: IconList },
+    { id: 'home',      label: 'New request', Icon: IconPlus },
+  ],
+  controlling: [
+    { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
+    { id: 'budget',    label: 'Budget',      Icon: IconShield },
+    { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
+  ],
+  legal: [
+    { id: 'board',     label: 'Legal review', Icon: IconBoard,   countKey: 'open' },
+    { id: 'suppliers', label: 'Suppliers',    Icon: IconBuilding },
+  ],
+  admin: [
+    { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
+    { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
+    { id: 'users',     label: 'Users',       Icon: IconUserPlus },
+  ],
+}
+
+const NAV_PRIMARY = NAV_BY_GROUP.procurement // default — overridden at runtime
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-const NAV_PRIMARY = [
-  { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
-  { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
-  { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
-  { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
-  { id: 'mine',      label: 'My requests', Icon: IconList },
-  { id: 'home',      label: 'New request', Icon: IconPlus },
-]
 
 // ─── PO Status config ──────────────────────────────────────────────────────────
 const PO_STATUS = {
@@ -191,6 +257,8 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
   const sidebarTab = tab === 'request' ? 'home' : tab
   const initials = user ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '?'
   const branch = user ? (BRANCHES.find(b => b.id === user.branchId)?.label || '') : ''
+  const roleGroup = ROLE_GROUP[user?.role] || 'user'
+  const navItems = NAV_BY_GROUP[roleGroup] || NAV_BY_GROUP.user
 
   return (
     <aside className="sidebar">
@@ -206,7 +274,7 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
 
       <div className="sidebar__sectionhead">Workspace</div>
       <nav className="sidebar__nav">
-        {NAV_PRIMARY.map(({ id, label, Icon, countKey }) => {
+        {navItems.map(({ id, label, Icon, countKey }) => {
           const active = sidebarTab === id
           const count = countKey ? counts[countKey] : null
           return (
@@ -2028,34 +2096,536 @@ const SuccessScreen = ({ result, onDone }) => (
 )
 
 // ─── User Setup Modal ──────────────────────────────────────────────────────────
-const UserSetupModal = ({ onSave }) => {
-  const [name,     setName]     = useState('')
-  const [email,    setEmail]    = useState('')
-  const [branchId, setBranchId] = useState(BRANCHES[0].id)
-  const save = () => {
-    if (!name.trim() || !email.trim()) return
-    onSave({ name: name.trim(), email: email.trim(), branchId })
-  }
+// ─── Users Screen (Admin only) ────────────────────────────────────────────────
+// ─── Budget Screen (Controlling) ──────────────────────────────────────────────
+const BudgetScreen = () => {
+  const [buckets, setBuckets] = useState(null)
+
+  const load = useCallback(async () => {
+    try {
+      const data = await pgFetch('/budget_positions?order=period.desc,category.asc&limit=200')
+      setBuckets(data)
+    } catch { setBuckets([]) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const totalPlanned  = (buckets || []).reduce((s, b) => s + Number(b.planned || 0), 0)
+  const totalCommit   = (buckets || []).reduce((s, b) => s + Number(b.committed || 0), 0)
+  const totalSpent    = (buckets || []).reduce((s, b) => s + Number(b.spent || 0), 0)
+  const totalAvail    = totalPlanned - totalCommit - totalSpent
+
   return (
-    <div className="modal-scrim">
-      <div className="modal">
-        <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 28, letterSpacing: '-0.025em', color: '#161413', marginBottom: 6 }}>Welcome.</div>
-        <div style={{ fontSize: 13, color: '#75695F', marginBottom: 24 }}>Tell us who you are — stored locally, never sent anywhere.</div>
-        <div className="field">
-          <label className="field__label">Your name</label>
-          <input className="input" placeholder="Eva Müller" value={name} onChange={e => setName(e.target.value)} />
+    <div className="content step-in" style={{ maxWidth: 1100 }}>
+      <div className="pagehead">
+        <div>
+          <div className="pagehead__eyebrow">Controlling</div>
+          <h1 className="pagehead__title">Budget overview</h1>
+          <div className="pagehead__sub">Live spend vs. plan across all branches and categories. Use this to set and monitor budget buckets.</div>
         </div>
-        <div className="field">
-          <label className="field__label">Work email</label>
-          <input className="input" type="email" placeholder="eva@company.com" value={email} onChange={e => setEmail(e.target.value)} />
+        <div className="pagehead__actions">
+          <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
         </div>
-        <div className="field">
-          <label className="field__label">Branch</label>
-          <select className="select" value={branchId} onChange={e => setBranchId(e.target.value)}>
-            {BRANCHES.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
-          </select>
+      </div>
+
+      {/* Totals strip */}
+      {buckets && (
+        <div className="stats" style={{ marginBottom: 24 }}>
+          <div className="stat">
+            <div className="stat__label">Planned</div>
+            <div className="stat__val">{fmt(totalPlanned)}</div>
+            <div className="stat__hint">Total approved budget</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Committed</div>
+            <div className="stat__val" style={{ color: '#B07219' }}>{fmt(totalCommit)}</div>
+            <div className="stat__hint">POs approved, not yet invoiced</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Spent</div>
+            <div className="stat__val" style={{ color: '#B5462E' }}>{fmt(totalSpent)}</div>
+            <div className="stat__hint">Invoices approved</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Available</div>
+            <div className="stat__val" style={{ color: totalAvail >= 0 ? '#3D7A5A' : '#B5462E' }}>{fmt(totalAvail)}</div>
+            <div className="stat__hint">Planned − committed − spent</div>
+          </div>
         </div>
-        <button className="btn btn--primary btn--block btn--lg" onClick={save}>Get started</button>
+      )}
+
+      {/* Buckets table */}
+      {!buckets && <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>Loading…</div>}
+      {buckets && buckets.length === 0 && (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>No budget positions found.</div>
+      )}
+      {buckets && buckets.length > 0 && (
+        <div className="tlist">
+          <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
+            <div>Period</div>
+            <div>Category</div>
+            <div style={{ textAlign: 'right' }}>Planned</div>
+            <div style={{ textAlign: 'right' }}>Committed</div>
+            <div style={{ textAlign: 'right' }}>Spent</div>
+            <div style={{ textAlign: 'right' }}>Available</div>
+          </div>
+          {buckets.map((b, i) => {
+            const avail = Number(b.planned || 0) - Number(b.committed || 0) - Number(b.spent || 0)
+            const util  = Number(b.planned) > 0 ? Math.round((Number(b.committed) + Number(b.spent)) / Number(b.planned) * 100) : 0
+            return (
+              <div key={i} className="trow" style={{ cursor: 'default' }}>
+                <div style={{ fontSize: 12.5, color: '#75695F' }}>{b.period}</div>
+                <div className="trow__main">
+                  <div className="trow__title" style={{ fontSize: 13 }}>{b.category}</div>
+                  <div style={{ fontSize: 11.5, color: '#A89B8B' }}>{util}% utilised</div>
+                </div>
+                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{fmt(b.planned)}</div>
+                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B07219' }}>{fmt(b.committed)}</div>
+                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B5462E' }}>{fmt(b.spent)}</div>
+                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: avail >= 0 ? '#3D7A5A' : '#B5462E', fontWeight: avail < 0 ? 700 : 400 }}>{fmt(avail)}</div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Upload hint */}
+      <div style={{ marginTop: 24, padding: '14px 16px', background: '#F5F1EA', border: '1px solid #E5DDD0', borderRadius: 8, fontSize: 12.5, color: '#75695F', lineHeight: 1.6 }}>
+        <strong style={{ color: '#3D3633' }}>To upload budget:</strong> Insert rows into <code>budget_positions</code> with <code>branch_id</code>, <code>category</code>, <code>period</code> (e.g. <code>2026-Q3</code>), and <code>planned</code> amount. PostgREST endpoint: <code>POST /budget_positions</code>.
+      </div>
+    </div>
+  )
+}
+
+const NEW_USER_DEFAULTS = { name: '', email: '', role: 'user', branch_id: 'b1000000-0000-0000-0000-000000000001', title: '' }
+
+const UsersScreen = () => {
+  const [users, setUsers]         = useState(null)
+  const [search, setSearch]       = useState('')
+  const [adding, setAdding]       = useState(false)
+  const [form, setForm]           = useState(NEW_USER_DEFAULTS)
+  const [saving, setSaving]       = useState(false)
+  const [saveErr, setSaveErr]     = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const data = await pgFetch('/users?order=role.asc,name.asc&limit=100')
+      setUsers(data)
+    } catch { setUsers([]) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = (users || []).filter(u =>
+    !search || u.name?.toLowerCase().includes(search.toLowerCase()) ||
+    u.email?.toLowerCase().includes(search.toLowerCase()) ||
+    u.role?.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const saveUser = async () => {
+    if (!form.name.trim() || !form.email.trim()) { setSaveErr('Name and email are required.'); return }
+    setSaving(true); setSaveErr('')
+    try {
+      await fetch(`${POSTGREST_URL}/users`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify({
+          name:      form.name.trim(),
+          email:     form.email.trim().toLowerCase(),
+          role:      form.role,
+          branch_id: form.branch_id,
+          title:     form.title.trim() || ROLE_LABEL[form.role] || form.role,
+          active:    true,
+        })
+      })
+      setAdding(false)
+      setForm(NEW_USER_DEFAULTS)
+      load()
+    } catch (e) { setSaveErr('Failed to create user. Try again.') }
+    finally { setSaving(false) }
+  }
+
+  const toggleActive = async (u) => {
+    try {
+      await fetch(`${POSTGREST_URL}/users?id=eq.${u.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify({ active: !u.active })
+      })
+      load()
+    } catch {}
+  }
+
+  const GROUP_ORDER = ['procurement', 'it', 'user', 'controlling', 'legal', 'admin']
+  const byGroup = {}
+  for (const u of filtered) {
+    const g = ROLE_GROUP[u.role] || 'user'
+    if (!byGroup[g]) byGroup[g] = []
+    byGroup[g].push(u)
+  }
+
+  return (
+    <div className="content step-in" style={{ maxWidth: 1100 }}>
+      <div className="pagehead">
+        <div>
+          <div className="pagehead__eyebrow">Users</div>
+          <h1 className="pagehead__title">{users ? `${users.length} users.` : 'Loading…'}</h1>
+          <div className="pagehead__sub">Every person who can log in. Assign roles to control what they see and can do.</div>
+        </div>
+        <div className="pagehead__actions">
+          <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
+          <button className="btn btn--primary" onClick={() => { setAdding(true); setSaveErr('') }}>
+            <IconUserPlus size={14}/> Add user
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      {users && (
+        <div className="stats" style={{ marginBottom: 24 }}>
+          <div className="stat">
+            <div className="stat__label">Procurement</div>
+            <div className="stat__val">{users.filter(u => ROLE_GROUP[u.role] === 'procurement').length}</div>
+            <div className="stat__hint">Full platform access</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">IT</div>
+            <div className="stat__val">{users.filter(u => ROLE_GROUP[u.role] === 'it').length}</div>
+            <div className="stat__hint">IT catalogue + orders</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Users</div>
+            <div className="stat__val">{users.filter(u => ROLE_GROUP[u.role] === 'user').length}</div>
+            <div className="stat__hint">Self-service requests</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Controlling</div>
+            <div className="stat__val">{users.filter(u => ROLE_GROUP[u.role] === 'controlling').length}</div>
+            <div className="stat__hint">Budget oversight</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Legal</div>
+            <div className="stat__val">{users.filter(u => ROLE_GROUP[u.role] === 'legal').length}</div>
+            <div className="stat__hint">Legal review queue</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Active</div>
+            <div className="stat__val" style={{ color: '#3D7A5A' }}>{users.filter(u => u.active).length}</div>
+            <div className="stat__hint">Can log in now</div>
+          </div>
+        </div>
+      )}
+
+      {/* Search */}
+      <div style={{ marginBottom: 18 }}>
+        <input className="input" placeholder="Search by name, email or role…" value={search} onChange={e => setSearch(e.target.value)} style={{ maxWidth: 340 }} />
+      </div>
+
+      {/* User table by group */}
+      {GROUP_ORDER.map(group => {
+        const members = byGroup[group] || []
+        if (!members.length) return null
+        const color = PERSONA_GROUP_COLOR[group]
+        return (
+          <div key={group} style={{ marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color }}>{PERSONA_GROUP_LABEL[group]}</span>
+              <span style={{ fontSize: 11.5, color: '#A89B8B' }}>— {PERSONA_GROUP_DESC[group]}</span>
+            </div>
+            <div className="tlist">
+              <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
+                <div>Status</div>
+                <div>Name</div>
+                <div>Role</div>
+                <div>Branch</div>
+                <div style={{ textAlign: 'right' }}>Actions</div>
+              </div>
+              {members.map(u => {
+                const initials = u.name.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()
+                const branch = BRANCHES.find(b => b.id === u.branch_id)?.label || '—'
+                return (
+                  <div key={u.id} className="trow" style={{ cursor: 'default' }}>
+                    <div>
+                      <span className="pill" style={{ background: u.active ? '#EEF3EE' : '#EFEBE1', color: u.active ? '#3D7A5A' : '#A89B8B' }}>
+                        <span className="pill__dot" style={{ background: u.active ? '#3D7A5A' : '#C9BFAE' }}/>
+                        {u.active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="trow__main">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: u.active ? color : '#E5DDD0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10.5, fontWeight: 700, color: u.active ? '#fff' : '#A89B8B', flexShrink: 0 }}>
+                          {initials}
+                        </div>
+                        <div>
+                          <div className="trow__title" style={{ fontSize: 13 }}>{u.name}</div>
+                          <div style={{ fontSize: 11.5, color: '#A89B8B' }}>{u.email || '—'}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12.5, color: '#75695F' }}>{u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role}</div>
+                    <div style={{ fontSize: 12.5, color: '#75695F' }}>{branch}</div>
+                    <div style={{ textAlign: 'right' }}>
+                      <button
+                        className={`btn btn--sm ${u.active ? 'btn--danger' : 'btn--success'}`}
+                        onClick={() => toggleActive(u)}
+                        style={{ fontSize: 11.5 }}
+                      >
+                        {u.active ? 'Deactivate' : 'Reactivate'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+
+      {/* Add user modal */}
+      {adding && (
+        <div className="modal-scrim" onClick={() => setAdding(false)}>
+          <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 4 }}>Users</div>
+                <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 24, color: '#161413', letterSpacing: '-0.025em' }}>Add user</div>
+              </div>
+              <button className="iconbtn" onClick={() => setAdding(false)}><IconX size={16}/></button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div className="field" style={{ gridColumn: 'span 2' }}>
+                <label className="field__label">Full name <span style={{ color: '#B07219' }}>*</span></label>
+                <input className="input" value={form.name} onChange={e => setForm(f=>({...f,name:e.target.value}))} placeholder="Eva Müller" />
+              </div>
+              <div className="field" style={{ gridColumn: 'span 2' }}>
+                <label className="field__label">Work email <span style={{ color: '#B07219' }}>*</span></label>
+                <input className="input" type="email" value={form.email} onChange={e => setForm(f=>({...f,email:e.target.value}))} placeholder="eva@company.com" />
+              </div>
+              <div className="field">
+                <label className="field__label">Role</label>
+                <select className="select" value={form.role} onChange={e => setForm(f=>({...f,role:e.target.value}))}>
+                  <option value="procurement">Procurement</option>
+                  <option value="it">IT</option>
+                  <option value="user">User</option>
+                  <option value="controlling">Controlling</option>
+                  <option value="legal">Legal</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="field">
+                <label className="field__label">Branch</label>
+                <select className="select" value={form.branch_id} onChange={e => setForm(f=>({...f,branch_id:e.target.value}))}>
+                  {BRANCHES.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
+                </select>
+              </div>
+              <div className="field" style={{ gridColumn: 'span 2' }}>
+                <label className="field__label">Job title <span style={{ color: '#75695F', fontWeight: 400 }}>(optional)</span></label>
+                <input className="input" value={form.title} onChange={e => setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Senior Category Manager" />
+              </div>
+            </div>
+
+            {/* Role description */}
+            <div style={{ background: '#F5F1EA', border: '1px solid #E5DDD0', borderRadius: 6, padding: '10px 12px', marginBottom: 16, fontSize: 12.5, color: '#75695F', lineHeight: 1.5 }}>
+              <strong style={{ color: '#3D3633' }}>{PERSONA_GROUP_LABEL[form.role] || 'User'}</strong>
+              {' — '}{PERSONA_GROUP_DESC[form.role] || 'Self-service access'}
+            </div>
+
+            {saveErr && (
+              <div style={{ background: '#F6E5DE', border: '1px solid #E8C3B5', borderRadius: 6, padding: '10px 12px', marginBottom: 14, fontSize: 12.5, color: '#B5462E' }}>
+                {saveErr}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn btn--tertiary" style={{ flex: 1 }} onClick={() => setAdding(false)}>Cancel</button>
+              <button className="btn btn--primary" style={{ flex: 2 }} onClick={saveUser} disabled={saving || !form.name.trim() || !form.email.trim()}>
+                {saving ? 'Creating…' : 'Create user'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Persona picker (login screen) ───────────────────────────────────────────
+const PERSONA_GROUP_LABEL = {
+  procurement: 'Procurement',
+  it:          'IT',
+  user:        'User',
+  controlling: 'Controlling',
+  legal:       'Legal',
+  admin:       'Admin',
+}
+
+const PERSONA_GROUP_DESC = {
+  procurement: 'Full access — Operations Board, Orders, Suppliers, Catalogues',
+  it:          'IT scope — Orders, Catalogues, My Requests, New Request',
+  user:        'Self-service — Browse Catalogue, submit requests',
+  controlling: 'Budget oversight — Budget upload, spend vs. plan, Operations Board',
+  legal:       'Legal review — Flags on new vendors, ad hoc & high-value purchases',
+  admin:       'Platform admin — Users, Operations Board, Supplier onboarding',
+}
+
+const PERSONA_GROUP_COLOR = {
+  procurement: '#B07219',
+  it:          '#2B5F7A',
+  user:        '#3D7A5A',
+  controlling: '#5A3E7A',
+  legal:       '#7A3E3E',
+  admin:       '#6B4F8A',
+}
+
+const UserSetupModal = ({ onSave }) => {
+  const [users, setUsers]     = useState(null)
+  const [picked, setPicked]   = useState(null)  // full user object
+  const [step, setStep]       = useState('pick') // 'pick' | 'confirm'
+
+  useEffect(() => {
+    pgFetch('/users?active=eq.true&order=role.asc,name.asc&limit=50')
+      .then(data => {
+        // Add a platform admin persona (not in DB — demo only)
+        const adminPersona = {
+          id: 'admin-demo-0000-0000-000000000001',
+          name: 'Admin Demo',
+          email: 'admin@company.com',
+          role: 'admin',
+          branch_id: BRANCHES[0].id,
+          title: 'Platform Administrator',
+        }
+        setUsers([...data, adminPersona])
+      })
+      .catch(() => setUsers([]))
+  }, [])
+
+  // Group by role group
+  const grouped = {}
+  for (const u of (users || [])) {
+    const g = ROLE_GROUP[u.role] || 'user'
+    if (!grouped[g]) grouped[g] = []
+    grouped[g].push(u)
+  }
+
+  const confirm = () => {
+    if (!picked) return
+    onSave({
+      id:       picked.id,
+      name:     picked.name,
+      email:    picked.email || '',
+      role:     picked.role,
+      branchId: picked.branch_id || BRANCHES[0].id,
+      title:    picked.title || ROLE_LABEL[picked.role] || picked.role,
+    })
+  }
+
+  return (
+    <div className="modal-scrim" style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <div className="modal" style={{ maxWidth: 560, padding: '32px 32px 28px' }}>
+        {/* Header */}
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div style={{ background: '#161413', borderRadius: 6, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <svg width="14" height="14" viewBox="0 0 64 64" fill="none">
+                <path d="M16 18 H48 V25 H37 V48 H29 V25 H16 Z" fill="#B07219"/>
+                <path d="M22 18 L42 18 L42 25 L33 25 L33 32 L25 32 L25 25 L22 25 Z" fill="#D89E40" opacity="0.85"/>
+              </svg>
+            </div>
+            <span style={{ fontWeight: 700, fontSize: 15, color: '#161413', letterSpacing: '-0.01em' }}>TrueSpend</span>
+          </div>
+          <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 26, letterSpacing: '-0.025em', color: '#161413', lineHeight: 1.15, marginBottom: 6 }}>
+            Who are you testing as?
+          </div>
+          <div style={{ fontSize: 13, color: '#75695F', lineHeight: 1.5 }}>
+            Pick a persona — each sees only what their role allows.
+          </div>
+        </div>
+
+        {users === null && (
+          <div style={{ padding: '32px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>Loading users…</div>
+        )}
+
+        {users !== null && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+            {['procurement', 'it', 'user', 'controlling', 'legal', 'admin'].map(group => {
+              const members = grouped[group] || []
+              if (!members.length) return null
+              const color = PERSONA_GROUP_COLOR[group]
+              return (
+                <div key={group}>
+                  {/* Group header */}
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 6 }}>
+                    {PERSONA_GROUP_LABEL[group]}
+                    <span style={{ fontWeight: 400, letterSpacing: 0, textTransform: 'none', color: '#C9BFAE', marginLeft: 8, fontSize: 11 }}>
+                      — {PERSONA_GROUP_DESC[group]}
+                    </span>
+                  </div>
+                  {/* User cards */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {members.map(u => {
+                      const isActive = picked?.id === u.id
+                      const initials = u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+                      const branch = BRANCHES.find(b => b.id === u.branch_id)?.label || ''
+                      return (
+                        <button
+                          key={u.id}
+                          onClick={() => setPicked(isActive ? null : u)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 12,
+                            width: '100%', padding: '10px 14px', border: 'none', cursor: 'pointer',
+                            borderRadius: 8, textAlign: 'left',
+                            background: isActive ? '#FFFEFB' : '#FAF7F2',
+                            boxShadow: isActive ? `0 0 0 2px ${color}` : '0 0 0 1px #E5DDD0',
+                            transition: 'all 0.12s',
+                          }}
+                        >
+                          {/* Avatar */}
+                          <div style={{
+                            width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+                            background: isActive ? color : '#E5DDD0',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 12, fontWeight: 700, color: isActive ? '#fff' : '#75695F',
+                            transition: 'all 0.12s',
+                          }}>
+                            {initials}
+                          </div>
+                          {/* Info */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 600, color: '#161413', letterSpacing: '-0.005em' }}>{u.name}</div>
+                            <div style={{ fontSize: 11.5, color: '#75695F', marginTop: 1 }}>
+                              {u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role}
+                              {branch && <span style={{ color: '#A89B8B' }}> · {branch}</span>}
+                            </div>
+                          </div>
+                          {/* Role tag */}
+                          <span style={{
+                            fontSize: 10.5, padding: '2px 7px', borderRadius: 4, flexShrink: 0,
+                            background: isActive ? color : '#EFEBE1',
+                            color: isActive ? '#fff' : '#75695F',
+                            fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+                            transition: 'all 0.12s',
+                          }}>
+                            {ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        <button
+          className="btn btn--primary btn--block btn--lg"
+          onClick={confirm}
+          disabled={!picked}
+          style={{ opacity: picked ? 1 : 0.5, cursor: picked ? 'pointer' : 'default' }}
+        >
+          {picked ? `Continue as ${picked.name.split(' ')[0]}` : 'Select a user to continue'}
+        </button>
       </div>
     </div>
   )
@@ -2125,14 +2695,16 @@ export default function App() {
   }, [])
 
   const crumbs = (() => {
-    if (success)          return ['Submitted']
+    if (success)             return ['Submitted']
     if (tab === 'board')     return ['Operations']
     if (tab === 'orders')    return ['Orders']
     if (tab === 'suppliers') return ['Suppliers']
     if (tab === 'catalog')   return ['Catalogues']
     if (tab === 'mine')      return ['My requests']
-    if (tab === 'home')   return ['New request']
-    if (tab === 'request')return ['New request', FORM_CONFIG[reqType]?.title || 'Request']
+    if (tab === 'home')      return ['New request']
+    if (tab === 'request')   return ['New request', FORM_CONFIG[reqType]?.title || 'Request']
+    if (tab === 'users')     return ['Users']
+    if (tab === 'budget')    return ['Budget']
     return ['Operations']
   })()
 
@@ -2140,7 +2712,14 @@ export default function App() {
 
   return (
     <>
-      {!user && <UserSetupModal onSave={setUser} />}
+      {!user && <UserSetupModal onSave={(u) => {
+        setUser(u)
+        // Land on the right default tab for the role
+        const group = ROLE_GROUP[u.role] || 'user'
+        if (group === 'admin' || group === 'procurement' || group === 'controlling' || group === 'legal') setTab('board')
+        else if (group === 'it') setTab('catalog')
+        else setTab('catalog')
+      }} />}
 
       <div className="app">
         <Sidebar
@@ -2179,6 +2758,8 @@ export default function App() {
               onSuccess={(ref) => setSuccess({ ref, email: user?.email, isOrder: false })}
             />
           )}
+          {!success && tab === 'users'   && <UsersScreen />}
+          {!success && tab === 'budget'  && <BudgetScreen />}
         </main>
       </div>
 
