@@ -27,7 +27,7 @@ echo "────────────────────────�
 # ── S. Security checks (run first — hard block) ───────────────
 info "Running security checks..."
 
-JWT_PATTERN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
+JWT_PATTERN='eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
 
 # Scan all tracked workflow + source files for hardcoded JWTs
 SECRET_HITS=$(git ls-files -- 'workflows/*.json' 'workflows/**/*.json' 'intake/src/**' \

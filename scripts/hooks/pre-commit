@@ -29,7 +29,7 @@ fi
 # ── 1. Block any real JWT tokens (HS256 with known payload patterns) ──
 # Pattern: eyJ...eyJ....<sig> — base64url encoded JWT
 # We specifically block known-compromised and structurally valid tokens
-JWT_PATTERN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
+JWT_PATTERN='eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
 
 while IFS= read -r file; do
   [ -f "$file" ] || continue
