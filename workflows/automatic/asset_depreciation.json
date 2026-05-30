@@ -1,0 +1,333 @@
+{
+  "name": "TrueSpend — Asset Depreciation & Lifecycle",
+  "description": "Runs monthly on the 1st at 06:00. Calculates straight-line depreciation for all active assets, inserts asset_depreciation_log rows, updates current_book_value and accumulated_depreciation on each asset, alerts on warranty expiry (90/30 days), and raises EOL replacement tickets when book value < 10% AND warranty expired AND incident_count > 3.",
+  "nodes": [
+
+    {
+      "id": "trigger",
+      "name": "Monthly — 1st at 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 1 * *"
+            }
+          ]
+        }
+      },
+      "position": [0, 400]
+    },
+
+    {
+      "id": "get_active_assets",
+      "name": "Fetch Active Assets",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.POSTGREST_URL }}/assets?status=eq.active&select=id,asset_tag,category,make,model,purchase_cost_eur,useful_life_months,residual_value,accumulated_depreciation,current_book_value,depreciation_method,warranty_expiry,branch_id,cost_center_id,incident_count,warranty_tier",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "position": [200, 400]
+    },
+
+    {
+      "id": "get_cost_centers",
+      "name": "Fetch Cost Center Codes",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.POSTGREST_URL }}/cost_centers?select=id,code",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [200, 600]
+    },
+
+    {
+      "id": "calculate_depreciation",
+      "name": "Calculate Depreciation Batch",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const assets = $('Fetch Active Assets').item.json;\nconst ccList = $('Fetch Cost Center Codes').item.json;\n\nconst ccMap = {};\n(ccList || []).forEach(cc => { ccMap[cc.id] = cc.code; });\n\nconst now = new Date();\nconst period = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');\nconst today = now.toISOString().split('T')[0];\n\nconst logRows = [];\nconst assetUpdates = [];\nconst warrantyAlerts = [];\nconst eolCandidates = [];\n\nfor (const a of assets) {\n  if (!a.purchase_cost_eur || !a.useful_life_months) continue;\n\n  const depreciableBase = (a.purchase_cost_eur || 0) - (a.residual_value || 0);\n  const monthlyDep = depreciableBase / a.useful_life_months;\n\n  const currentBook = a.current_book_value ?? a.purchase_cost_eur;\n  const accum = a.accumulated_depreciation ?? 0;\n\n  // Don't depreciate below residual value\n  const actualDep = Math.min(monthlyDep, Math.max(0, currentBook - (a.residual_value || 0)));\n  if (actualDep <= 0) continue;\n\n  const newAccum      = Math.round((accum + actualDep) * 100) / 100;\n  const newBookValue  = Math.round((currentBook - actualDep) * 100) / 100;\n\n  const ccCode = ccMap[a.cost_center_id] || 'UNKNOWN';\n\n  logRows.push({\n    id:                   undefined,  // let DB generate\n    asset_id:             a.id,\n    period,\n    depreciation_amount:  Math.round(actualDep * 100) / 100,\n    book_value_before:    currentBook,\n    book_value_after:     newBookValue,\n    method_used:          'straight_line',\n    gl_account:           '6820',\n    cost_center_code:     ccCode,\n    posted:               false\n  });\n\n  assetUpdates.push({\n    id:                      a.id,\n    accumulated_depreciation: newAccum,\n    current_book_value:       newBookValue\n  });\n\n  // Warranty alerts\n  if (a.warranty_expiry) {\n    const expDate = new Date(a.warranty_expiry);\n    const daysToExpiry = Math.floor((expDate - now) / (1000 * 60 * 60 * 24));\n    if (daysToExpiry <= 90 && daysToExpiry > 0) {\n      warrantyAlerts.push({\n        asset_id:   a.id,\n        asset_tag:  a.asset_tag,\n        make:       a.make,\n        model:      a.model,\n        expiry:     a.warranty_expiry,\n        days_left:  daysToExpiry,\n        urgency:    daysToExpiry <= 30 ? 'critical' : 'warning'\n      });\n    }\n  }\n\n  // EOL candidates: book value < 10% of purchase cost AND warranty expired AND incidents > 3\n  const bookValuePct = (newBookValue / a.purchase_cost_eur) * 100;\n  const warrantyExpired = a.warranty_expiry ? new Date(a.warranty_expiry) < now : false;\n  const highIncidents = (a.incident_count || 0) > 3;\n\n  if (bookValuePct < 10 && warrantyExpired && highIncidents) {\n    eolCandidates.push({\n      asset_id:       a.id,\n      asset_tag:      a.asset_tag,\n      make:           a.make,\n      model:          a.model,\n      book_value:     newBookValue,\n      book_value_pct: Math.round(bookValuePct * 10) / 10,\n      incident_count: a.incident_count,\n      branch_id:      a.branch_id,\n      cost_center_id: a.cost_center_id,\n      purchase_cost:  a.purchase_cost_eur\n    });\n  }\n}\n\nreturn [{ json: { period, today, logRows, assetUpdates, warrantyAlerts, eolCandidates } }];"
+      },
+      "position": [400, 400]
+    },
+
+    {
+      "id": "bulk_insert_log",
+      "name": "Insert Depreciation Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/asset_depreciation_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=minimal" }
+          ]
+        },
+        "body": "={{ JSON.stringify($json.logRows) }}",
+        "options": { "timeout": 30000 }
+      },
+      "position": [600, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+
+    {
+      "id": "update_assets_loop",
+      "name": "Update Asset Book Values",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// Build a PATCH array for each asset via PostgREST\n// We'll emit one item per asset update for the HTTP node to process\nconst updates = $input.item.json.assetUpdates || [];\nif (updates.length === 0) return [{ json: { updated: 0 } }];\n\n// Return each update as a separate item\nreturn updates.map(u => ({ json: u }));"
+      },
+      "position": [600, 400]
+    },
+
+    {
+      "id": "patch_each_asset",
+      "name": "PATCH Asset Book Value",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.POSTGREST_URL }}/assets?id=eq.{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=minimal" }
+          ]
+        },
+        "body": {
+          "accumulated_depreciation": "={{ $json.accumulated_depreciation }}",
+          "current_book_value":       "={{ $json.current_book_value }}",
+          "updated_at":               "={{ new Date().toISOString() }}"
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [800, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "summarize_results",
+      "name": "Summarize Results",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// Aggregate results back\nconst calc = $('Calculate Depreciation Batch').item.json;\nreturn [{ json: {\n  period:           calc.period,\n  log_rows_written: calc.logRows.length,\n  assets_updated:   calc.assetUpdates.length,\n  warranty_alerts:  calc.warrantyAlerts,\n  eol_candidates:   calc.eolCandidates,\n  has_warranty_alerts: calc.warrantyAlerts.length > 0,\n  has_eol_candidates:  calc.eolCandidates.length > 0\n} }];"
+      },
+      "position": [1000, 400]
+    },
+
+    {
+      "id": "any_alerts",
+      "name": "Any Alerts to Create?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.has_warranty_alerts || $json.has_eol_candidates }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "position": [1200, 400]
+    },
+
+    {
+      "id": "claude_triage",
+      "name": "Claude — Triage Alerts",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",  "value": "2023-06-01" },
+            { "name": "content-type",       "value": "application/json" }
+          ]
+        },
+        "body": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 800,
+          "system": "You are an IT asset lifecycle agent for a procurement system. You receive a list of assets requiring action: EOL replacement candidates and warranty expiry alerts. For each item, produce a concise ticket recommendation.\n\nReturn ONLY valid JSON:\n{\n  \"tickets\": [\n    {\n      \"asset_tag\": \"string\",\n      \"type\": \"eol_replacement\" | \"warranty_alert\",\n      \"severity\": \"critical\" | \"warning\" | \"info\",\n      \"title\": \"short title max 80 chars\",\n      \"description\": \"2-3 sentences: what the issue is, recommended action, urgency\",\n      \"branch_id\": \"uuid or null\",\n      \"cost_center_id\": \"uuid or null\",\n      \"estimated_replacement_cost\": number_or_null\n    }\n  ]\n}\n\nEOL rules:\n- Book value < 10% AND warranty expired AND incidents > 3 → critical, recommend replacement PO\n- Estimated replacement cost = purchase_cost × 1.05 (assume 5% market increase)\n\nWarranty rules:\n- 0-30 days to expiry → critical (urgent renewal or hardware insurance decision)\n- 31-90 days → warning (plan renewal now)",
+          "messages": [
+            {
+              "role": "user",
+              "content": "={{ 'Period: ' + $json.period + '\\n\\nEOL candidates:\\n' + JSON.stringify($json.eol_candidates, null, 2) + '\\n\\nWarranty alerts:\\n' + JSON.stringify($json.warranty_alerts, null, 2) }}"
+            }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "position": [1400, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+
+    {
+      "id": "parse_claude",
+      "name": "Parse Claude Triage",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.content[0].text.trim();\nlet parsed;\ntry {\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : raw);\n} catch(e) {\n  parsed = { tickets: [] };\n}\nreturn [{ json: parsed }];"
+      },
+      "position": [1600, 300]
+    },
+
+    {
+      "id": "create_alert_tickets",
+      "name": "Create Alert Tickets",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const tickets = ($input.item.json.tickets || []).map(t => ({\n  id:           undefined,\n  reference:    'TS-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000),\n  source:       'automatic',\n  status:       'pending_confirm',\n  title:        t.title,\n  description:  t.description,\n  category:     'hardware',\n  amount:       t.estimated_replacement_cost || null,\n  amount_eur:   t.estimated_replacement_cost || null,\n  currency:     'EUR',\n  branch_id:    t.branch_id || null,\n  cost_center_id: t.cost_center_id || null,\n  review_type:  'budget_check',\n  review_notes: t.description,\n  created_at:   new Date().toISOString(),\n  updated_at:   new Date().toISOString()\n}));\nreturn tickets.map(t => ({ json: t }));"
+      },
+      "position": [1800, 300]
+    },
+
+    {
+      "id": "post_tickets",
+      "name": "POST Alert Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=minimal" }
+          ]
+        },
+        "body": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 15000 }
+      },
+      "position": [2000, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "write_workflow_run",
+      "name": "Write Workflow Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/workflow_runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "body": {
+          "id":            "={{ $uuid() }}",
+          "workflow_name": "asset_depreciation",
+          "status":        "success",
+          "started_at":    "={{ new Date(Date.now() - 30000).toISOString() }}",
+          "ended_at":      "={{ new Date().toISOString() }}"
+        },
+        "options": { "timeout": 10000 }
+      },
+      "position": [2200, 400]
+    },
+
+    {
+      "id": "no_alerts",
+      "name": "No Alerts — Period Complete",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [1400, 500]
+    }
+  ],
+
+  "connections": {
+    "Monthly — 1st at 06:00": {
+      "main": [
+        [{ "node": "Fetch Active Assets",     "type": "main", "index": 0 }],
+        [{ "node": "Fetch Cost Center Codes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Active Assets": {
+      "main": [[{ "node": "Calculate Depreciation Batch", "type": "main", "index": 0 }]]
+    },
+    "Fetch Cost Center Codes": {
+      "main": [[{ "node": "Calculate Depreciation Batch", "type": "main", "index": 0 }]]
+    },
+    "Calculate Depreciation Batch": {
+      "main": [
+        [{ "node": "Insert Depreciation Log",  "type": "main", "index": 0 }],
+        [{ "node": "Update Asset Book Values", "type": "main", "index": 0 }]
+      ]
+    },
+    "Insert Depreciation Log": {
+      "main": [[{ "node": "Summarize Results", "type": "main", "index": 0 }]]
+    },
+    "Update Asset Book Values": {
+      "main": [[{ "node": "PATCH Asset Book Value", "type": "main", "index": 0 }]]
+    },
+    "PATCH Asset Book Value": {
+      "main": [[{ "node": "Summarize Results", "type": "main", "index": 0 }]]
+    },
+    "Summarize Results": {
+      "main": [[{ "node": "Any Alerts to Create?", "type": "main", "index": 0 }]]
+    },
+    "Any Alerts to Create?": {
+      "main": [
+        [{ "node": "Claude — Triage Alerts",   "type": "main", "index": 0 }],
+        [{ "node": "No Alerts — Period Complete", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude — Triage Alerts": {
+      "main": [[{ "node": "Parse Claude Triage", "type": "main", "index": 0 }]]
+    },
+    "Parse Claude Triage": {
+      "main": [[{ "node": "Create Alert Tickets", "type": "main", "index": 0 }]]
+    },
+    "Create Alert Tickets": {
+      "main": [[{ "node": "POST Alert Ticket", "type": "main", "index": 0 }]]
+    },
+    "POST Alert Ticket": {
+      "main": [[{ "node": "Write Workflow Run", "type": "main", "index": 0 }]]
+    },
+    "No Alerts — Period Complete": {
+      "main": [[{ "node": "Write Workflow Run", "type": "main", "index": 0 }]]
+    }
+  }
+}

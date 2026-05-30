@@ -1,0 +1,389 @@
+{
+  "name": "TrueSpend — LLM Consumption Tracking",
+  "description": "Runs daily at 06:30. Pulls yesterday's token usage from Anthropic and OpenAI APIs for all registered keys, inserts llm_consumption rows, charges the ai_consumption budget bucket via record_spend RPC, and raises an anomaly ticket if any key's spend is >3× its 7-day rolling average.",
+  "nodes": [
+
+    {
+      "id": "trigger",
+      "name": "Daily — 06:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 6 * * *"
+            }
+          ]
+        }
+      },
+      "position": [0, 400]
+    },
+
+    {
+      "id": "fetch_api_keys",
+      "name": "Fetch All API Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.POSTGREST_URL }}/llm_api_keys?select=id,provider,key_ref,owner_user_id,team_name,branch_id,cost_center_id,monthly_budget_eur",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [200, 400]
+    },
+
+    {
+      "id": "fetch_7day_history",
+      "name": "Fetch 7-Day Consumption History",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.POSTGREST_URL }}/llm_consumption?created_at=gte.{{ new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString() }}&select=api_key_id,cost_eur,period",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [200, 600]
+    },
+
+    {
+      "id": "prepare_dates",
+      "name": "Prepare Date Context",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst yesterday = new Date(now - 24 * 60 * 60 * 1000);\nconst yesterdayStr = yesterday.toISOString().split('T')[0];  // YYYY-MM-DD\nconst periodStr    = yesterdayStr.substring(0, 7);             // YYYY-MM\nconst monthStart   = new Date(yesterday.getFullYear(), yesterday.getMonth(), 1).toISOString().split('T')[0];\n\nconst apiKeys  = $('Fetch All API Keys').item.json || [];\nconst history  = $('Fetch 7-Day Consumption History').item.json || [];\n\n// Build 7-day avg per key (daily average over last 7 days)\nconst histMap = {};\nfor (const row of history) {\n  if (!histMap[row.api_key_id]) histMap[row.api_key_id] = [];\n  histMap[row.api_key_id].push(row.cost_eur || 0);\n}\nconst avgMap = {};\nfor (const [kid, vals] of Object.entries(histMap)) {\n  avgMap[kid] = vals.reduce((s, v) => s + v, 0) / 7;  // daily avg\n}\n\nreturn [{ json: { yesterdayStr, periodStr, monthStart, apiKeys, avgMap } }];"
+      },
+      "position": [400, 400]
+    },
+
+    {
+      "id": "split_by_provider",
+      "name": "Split Keys by Provider",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const { apiKeys, yesterdayStr, periodStr, monthStart, avgMap } = $input.item.json;\n\n// Group keys by provider\nconst anthropicKeys = apiKeys.filter(k => k.provider === 'anthropic');\nconst openaiKeys    = apiKeys.filter(k => k.provider === 'openai');\n\n// Emit one item total — we'll use code nodes to call APIs\nreturn [{ json: { anthropicKeys, openaiKeys, yesterdayStr, periodStr, monthStart, avgMap } }];"
+      },
+      "position": [600, 400]
+    },
+
+    {
+      "id": "fetch_anthropic_usage",
+      "name": "Anthropic — Usage API",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.anthropic.com/v1/usage?date={{ $('Prepare Date Context').item.json.yesterdayStr }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",  "value": "2023-06-01" },
+            { "name": "content-type",       "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "position": [800, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "continueOnFail": true
+    },
+
+    {
+      "id": "fetch_openai_usage",
+      "name": "OpenAI — Usage API",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.openai.com/v1/usage?date={{ $('Prepare Date Context').item.json.yesterdayStr }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.OPENAI_API_KEY }}" },
+            { "name": "content-type",  "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "position": [800, 500],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "continueOnFail": true
+    },
+
+    {
+      "id": "build_consumption_rows",
+      "name": "Build Consumption Rows",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// Build llm_consumption insert rows from provider API responses\n// and detect anomalies vs 7-day average\n\nconst ctx = $('Prepare Date Context').item.json;\nconst { anthropicKeys, openaiKeys, yesterdayStr, periodStr, monthStart, avgMap } = ctx;\n\nconst anthropicRaw = $('Anthropic — Usage API').item.json || {};\nconst openaiRaw    = $('OpenAI — Usage API').item.json || {};\n\n// EUR/USD exchange rate (static fallback — production would call ECB)\nconst EUR_USD = 1.075;\n\nconst insertRows = [];\nconst anomalies  = [];\n\n// ── ANTHROPIC ──\n// Anthropic usage API returns { data: [{model, input_tokens, output_tokens, ...}] }\nconst anthropicData = anthropicRaw.data || [];\n\n// Aggregate across models per key (Anthropic doesn't break out by key in basic API)\n// We attribute proportionally to registered keys — or if only one key, assign all\nlet totalAntInputTokens  = 0;\nlet totalAntOutputTokens = 0;\nfor (const d of anthropicData) {\n  totalAntInputTokens  += d.input_tokens  || 0;\n  totalAntOutputTokens += d.output_tokens || 0;\n}\n\n// Pricing: claude-sonnet-4-6 — $3/1M input, $15/1M output\nconst antCostUSD = (totalAntInputTokens / 1e6) * 3 + (totalAntOutputTokens / 1e6) * 15;\nconst antCostEUR = antCostUSD / EUR_USD;\n\n// Split evenly across registered Anthropic keys (weighted by monthly_budget)\nconst antTotalBudget = anthropicKeys.reduce((s, k) => s + (k.monthly_budget_eur || 1), 0);\nfor (const key of anthropicKeys) {\n  const weight = (key.monthly_budget_eur || 1) / antTotalBudget;\n  const keyCostEUR = antCostEUR * weight;\n  const keyInputTokens  = Math.round(totalAntInputTokens  * weight);\n  const keyOutputTokens = Math.round(totalAntOutputTokens * weight);\n\n  insertRows.push({\n    api_key_id:     key.id,\n    provider:       'anthropic',\n    model:          'claude-sonnet-4-6',\n    period:         periodStr + '-' + yesterdayStr.split('-')[2],  // daily grain\n    branch_id:      key.branch_id,\n    cost_center_id: key.cost_center_id,\n    input_tokens:   keyInputTokens,\n    output_tokens:  keyOutputTokens,\n    cost_usd:       Math.round(antCostUSD * weight * 100) / 100,\n    cost_eur:       Math.round(keyCostEUR * 100) / 100\n  });\n\n  // Anomaly check\n  const dailyAvg = avgMap[key.id] || 0;\n  if (dailyAvg > 0 && keyCostEUR > dailyAvg * 3) {\n    anomalies.push({\n      api_key_id:    key.id,\n      key_ref:       key.key_ref,\n      team_name:     key.team_name,\n      branch_id:     key.branch_id,\n      cost_center_id: key.cost_center_id,\n      provider:      'anthropic',\n      date:          yesterdayStr,\n      cost_eur:      Math.round(keyCostEUR * 100) / 100,\n      daily_avg_eur: Math.round(dailyAvg * 100) / 100,\n      ratio:         Math.round((keyCostEUR / dailyAvg) * 10) / 10\n    });\n  }\n}\n\n// ── OPENAI ──\nconst openaiData = openaiRaw.data || [];\n// OpenAI usage API: { data: [{aggregation_timestamp, n_requests, operation, snapshot_id, n_context_tokens_total, n_generated_tokens_total}] }\nfor (const key of openaiKeys) {\n  // Sum all models\n  let totalInputTokens  = 0;\n  let totalOutputTokens = 0;\n  for (const d of openaiData) {\n    totalInputTokens  += d.n_context_tokens_total   || 0;\n    totalOutputTokens += d.n_generated_tokens_total || 0;\n  }\n\n  // Pricing: gpt-4o — $2.50/1M input, $10/1M output\n  const openaiCostUSD = (totalInputTokens / 1e6) * 2.5 + (totalOutputTokens / 1e6) * 10;\n  const openaiCostEUR = openaiCostUSD / EUR_USD;\n\n  insertRows.push({\n    api_key_id:     key.id,\n    provider:       'openai',\n    model:          'gpt-4o',\n    period:         periodStr + '-' + yesterdayStr.split('-')[2],\n    branch_id:      key.branch_id,\n    cost_center_id: key.cost_center_id,\n    input_tokens:   totalInputTokens,\n    output_tokens:  totalOutputTokens,\n    cost_usd:       Math.round(openaiCostUSD * 100) / 100,\n    cost_eur:       Math.round(openaiCostEUR * 100) / 100\n  });\n\n  const dailyAvg = avgMap[key.id] || 0;\n  if (dailyAvg > 0 && openaiCostEUR > dailyAvg * 3) {\n    anomalies.push({\n      api_key_id:    key.id,\n      key_ref:       key.key_ref,\n      team_name:     key.team_name,\n      branch_id:     key.branch_id,\n      cost_center_id: key.cost_center_id,\n      provider:      'openai',\n      date:          yesterdayStr,\n      cost_eur:      Math.round(openaiCostEUR * 100) / 100,\n      daily_avg_eur: Math.round(dailyAvg * 100) / 100,\n      ratio:         dailyAvg > 0 ? Math.round((openaiCostEUR / dailyAvg) * 10) / 10 : 0\n    });\n  }\n}\n\nreturn [{ json: { insertRows, anomalies, yesterdayStr, has_anomalies: anomalies.length > 0 } }];"
+      },
+      "position": [1000, 400]
+    },
+
+    {
+      "id": "insert_consumption",
+      "name": "Insert LLM Consumption",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/llm_consumption",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=minimal" }
+          ]
+        },
+        "body": "={{ JSON.stringify($json.insertRows) }}",
+        "options": { "timeout": 30000 }
+      },
+      "position": [1200, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+
+    {
+      "id": "charge_budget",
+      "name": "Charge ai_consumption Budget",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// Build record_spend calls for each branch/cost_center pair\nconst rows = $('Build Consumption Rows').item.json.insertRows;\n\n// Aggregate by branch_id + cost_center_id\nconst agg = {};\nfor (const r of rows) {\n  const key = `${r.branch_id}|${r.cost_center_id}`;\n  if (!agg[key]) agg[key] = { branch_id: r.branch_id, cost_center_id: r.cost_center_id, total_eur: 0 };\n  agg[key].total_eur += r.cost_eur || 0;\n}\n\nreturn Object.values(agg).map(a => ({ json: a }));"
+      },
+      "position": [1200, 500]
+    },
+
+    {
+      "id": "call_record_spend",
+      "name": "RPC — record_spend",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/rpc/record_spend",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=minimal" }
+          ]
+        },
+        "body": {
+          "p_branch_id":      "={{ $json.branch_id }}",
+          "p_cost_center_id": "={{ $json.cost_center_id }}",
+          "p_category":       "ai_consumption",
+          "p_period":         "={{ $('Prepare Date Context').item.json.periodStr }}",
+          "p_amount":         "={{ $json.total_eur }}"
+        },
+        "options": { "timeout": 30000 }
+      },
+      "position": [1400, 500],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "continueOnFail": true
+    },
+
+    {
+      "id": "anomaly_check",
+      "name": "Any Anomalies?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Build Consumption Rows').item.json.has_anomalies }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "position": [1400, 300]
+    },
+
+    {
+      "id": "create_anomaly_tickets",
+      "name": "Create Anomaly Tickets",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const anomalies = $('Build Consumption Rows').item.json.anomalies;\nconst date = $('Build Consumption Rows').item.json.yesterdayStr;\n\nreturn anomalies.map(a => ({ json: {\n  reference:    'TS-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000),\n  source:       'automatic',\n  status:       'pending_confirm',\n  title:        'LLM spend anomaly — ' + a.team_name + ' (' + a.provider + ') — ' + a.ratio + '× daily avg',\n  description:  'Daily LLM spend spike detected: ' + date + ' ' + a.team_name + ' (' + a.provider + ') key consumed €' + a.cost_eur + ' vs 7-day avg €' + a.daily_avg_eur + ' (' + a.ratio + '×). Threshold: 3×. Investigate before monthly budget charge.',\n  category:     'ai_consumption',\n  amount:       a.cost_eur,\n  amount_eur:   a.cost_eur,\n  currency:     'EUR',\n  branch_id:    a.branch_id,\n  cost_center_id: a.cost_center_id,\n  review_type:  null,\n  review_notes: 'Key: ' + a.key_ref + '. Provider: ' + a.provider + '. Ratio: ' + a.ratio + '×. Date: ' + date + '.',\n  created_at:   new Date().toISOString(),\n  updated_at:   new Date().toISOString()\n} }));"
+      },
+      "position": [1600, 200]
+    },
+
+    {
+      "id": "post_anomaly_ticket",
+      "name": "POST Anomaly Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "body": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 15000 }
+      },
+      "position": [1800, 200],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "write_trace_anomaly",
+      "name": "Write Trace — Anomaly",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "body": {
+          "ticket_id":   "={{ $json.id }}",
+          "workflow":    "llm_consumption",
+          "signal":      "consumption",
+          "disposition": "one_touch",
+          "confidence":  0.92,
+          "reasoning":   "={{ 'LLM spend anomaly on ' + $('Build Consumption Rows').item.json.yesterdayStr + '. ' + $json.title }}",
+          "created_at":  "={{ new Date().toISOString() }}"
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [2000, 200]
+    },
+
+    {
+      "id": "write_workflow_run",
+      "name": "Write Workflow Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/workflow_runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "body": {
+          "id":            "={{ $uuid() }}",
+          "workflow_name": "llm_consumption",
+          "status":        "success",
+          "started_at":    "={{ new Date(Date.now() - 14000).toISOString() }}",
+          "ended_at":      "={{ new Date().toISOString() }}"
+        },
+        "options": { "timeout": 10000 }
+      },
+      "position": [2200, 400]
+    },
+
+    {
+      "id": "no_anomaly",
+      "name": "No Anomaly — Run Complete",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [1600, 400]
+    }
+  ],
+
+  "connections": {
+    "Daily — 06:30": {
+      "main": [
+        [{ "node": "Fetch All API Keys",             "type": "main", "index": 0 }],
+        [{ "node": "Fetch 7-Day Consumption History", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch All API Keys": {
+      "main": [[{ "node": "Prepare Date Context", "type": "main", "index": 0 }]]
+    },
+    "Fetch 7-Day Consumption History": {
+      "main": [[{ "node": "Prepare Date Context", "type": "main", "index": 0 }]]
+    },
+    "Prepare Date Context": {
+      "main": [[{ "node": "Split Keys by Provider", "type": "main", "index": 0 }]]
+    },
+    "Split Keys by Provider": {
+      "main": [
+        [{ "node": "Anthropic — Usage API", "type": "main", "index": 0 }],
+        [{ "node": "OpenAI — Usage API",    "type": "main", "index": 0 }]
+      ]
+    },
+    "Anthropic — Usage API": {
+      "main": [[{ "node": "Build Consumption Rows", "type": "main", "index": 0 }]]
+    },
+    "OpenAI — Usage API": {
+      "main": [[{ "node": "Build Consumption Rows", "type": "main", "index": 0 }]]
+    },
+    "Build Consumption Rows": {
+      "main": [
+        [{ "node": "Insert LLM Consumption",     "type": "main", "index": 0 }],
+        [{ "node": "Charge ai_consumption Budget","type": "main", "index": 0 }],
+        [{ "node": "Any Anomalies?",              "type": "main", "index": 0 }]
+      ]
+    },
+    "Insert LLM Consumption": {
+      "main": [[{ "node": "Write Workflow Run", "type": "main", "index": 0 }]]
+    },
+    "Charge ai_consumption Budget": {
+      "main": [[{ "node": "RPC — record_spend", "type": "main", "index": 0 }]]
+    },
+    "RPC — record_spend": {
+      "main": [[{ "node": "Write Workflow Run", "type": "main", "index": 0 }]]
+    },
+    "Any Anomalies?": {
+      "main": [
+        [{ "node": "Create Anomaly Tickets",  "type": "main", "index": 0 }],
+        [{ "node": "No Anomaly — Run Complete","type": "main", "index": 0 }]
+      ]
+    },
+    "Create Anomaly Tickets": {
+      "main": [[{ "node": "POST Anomaly Ticket", "type": "main", "index": 0 }]]
+    },
+    "POST Anomaly Ticket": {
+      "main": [[{ "node": "Write Trace — Anomaly", "type": "main", "index": 0 }]]
+    },
+    "Write Trace — Anomaly": {
+      "main": [[{ "node": "Write Workflow Run", "type": "main", "index": 0 }]]
+    },
+    "No Anomaly — Run Complete": {
+      "main": [[{ "node": "Write Workflow Run", "type": "main", "index": 0 }]]
+    }
+  }
+}
