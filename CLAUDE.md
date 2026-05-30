@@ -19,15 +19,15 @@ Pre-production. Full architecture designed and built as config/code.
 
 ## Key files
 - `db/schema.sql` — single source of truth, all 28 tables + P2I functions, 8 views, indexes, RLS
-- `db/seed/` — 8 SQL files, load in order 01–08
+- `db/seed/` — 12 SQL files, load in order 01–12 (12_big_mock_data.sql = full test data)
 - `db/templates/nda_mutual_de.txt` — mutual NDA (German law, TrueSpend GmbH)
 - `db/templates/dpa_de.txt` — Art. 28 GDPR DPA with TOM annex
-- `workflows/` — 7 n8n workflow JSONs (incl. invoice_processor)
+- `workflows/` — 10 n8n workflow JSONs
 - `intake/` — React + Vite Operations Board, deploys as Docker to Railway
 - `infra/docker-compose.yml` — local n8n + Grafana
 - `.env.example` — all required env vars
 
-## Workflows (7 total)
+## Workflows (10 total)
 - `workflows/stakeholder/intake_receiver.json` — webhook → 5-signal Claude → approve_and_commit RPC → PO email → trace
 - `workflows/communication/supplier_reply_handler.json` — IMAP → Claude → reply or route to board
 - `workflows/automatic/contract_watcher.json` — daily 07:00 → expiring contracts → auto-renew or reason
@@ -35,6 +35,9 @@ Pre-production. Full architecture designed and built as config/code.
 - `workflows/automatic/hyperscaler_monitor.json` — daily 06:00 → cloud spend → anomaly detection
 - `workflows/automatic/supplier_onboarding.json` — webhook → 4 parallel compliance agents → docs + ticket
 - `workflows/automatic/invoice_processor.json` — IMAP invoices → Claude parse → 3-way match → payment instruction → ERP queue
+- `workflows/automatic/delivery_confirmation.json` — webhook → confirm_delivery RPC → 3-way match trigger → late delivery ticket
+- `workflows/automatic/asset_depreciation.json` — monthly 1st 06:00 → depreciation calc → log insert → warranty/EOL alerts → tickets
+- `workflows/automatic/llm_consumption.json` — daily 06:30 → Anthropic/OpenAI usage API → insert consumption → charge budget → anomaly ticket
 
 ## Schema overview (v2.0 — 28 tables)
 ```
@@ -136,9 +139,9 @@ TrueSpend is the reasoning layer. ERP is the book of record.
 
 ## Go-live checklist (immediate)
 1. Apply schema: `psql $DATABASE_URL -f db/schema.sql`
-2. Apply seeds: `for f in db/seed/0*.sql; do psql $DATABASE_URL -f $f; done`
+2. Apply seeds: `for f in db/seed/*.sql; do psql $DATABASE_URL -f $f; done`
 3. Set `VITE_POSTGREST_URL` + `VITE_POSTGREST_JWT` on Railway intake service
-4. Re-import all 7 workflows to n8n (delete old, import updated JSONs)
+4. Re-import all 10 workflows to n8n (delete old, import updated JSONs)
 5. Assign "Authorization-TrueSpend" Header Auth to all PostgREST nodes
 6. Assign Anthropic credential to all Claude nodes
 7. Point invoice_processor IMAP trigger at invoices mailbox (separate from supplier_reply_handler)
