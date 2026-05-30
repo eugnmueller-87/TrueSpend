@@ -158,16 +158,17 @@ const QUICK_TILES = [
   { id: 'other',    label: 'Something else',     sub: 'Any other procurement request',      Icon: IconZap },
 ]
 
-// ─── Agent activity feed (static) ─────────────────────────────────────────────
-const AGENT_FEED = [
-  { time: '11:32', title: 'Auto-approved Figma Organization × 6',           branch: 'DACH',    value: 270 },
-  { time: '11:28', title: 'Released Q2 commit on AWS reserved (us-east-1)', branch: 'Global',  value: 9400 },
-  { time: '11:14', title: 'Reordered Dell UltraSharp 27" × 4',              branch: 'Nordics', value: 2196 },
-  { time: '10:51', title: 'Closed Slack Pro renewal — same terms',           branch: 'Iberia',  value: 1248 },
-  { time: '10:39', title: 'Auto-approved MS 365 E3 × 12 onboardings',       branch: 'DACH',    value: 432 },
-  { time: '10:22', title: 'Cleared shelfware: 14 Salesforce seats',          branch: 'Benelux', value: -2380, dim: true },
-  { time: '09:57', title: 'Onboarded NCC Group — DPA + NDA signed',          branch: 'UK & IE', value: 0,    dim: true },
-]
+// ─── Agent activity feed (live) ───────────────────────────────────────────────
+// Fetched from DB — auto_executed and recently closed tickets
+const useAgentFeed = () => {
+  const [feed, setFeed] = useState(null)
+  useEffect(() => {
+    pgFetch('/tickets?status=in.(auto_executed,closed)&order=updated_at.desc&limit=8&select=id,title,value_eur,amount_eur,updated_at,status,disposition,branch_id')
+      .then(rows => setFeed(rows))
+      .catch(() => setFeed([]))
+  }, [])
+  return feed
+}
 
 // ─── Role config ──────────────────────────────────────────────────────────────
 // Six roles:
@@ -401,33 +402,62 @@ const TopBar = ({ crumbs, cartCount = 0, onOpenCart }) => (
 )
 
 // ─── Agent Rail ────────────────────────────────────────────────────────────────
-const AgentRail = () => (
-  <aside className="rail">
-    <div className="rail__head">
-      <span className="rail__head-dot" />
-      Agent · today
-    </div>
-    <div className="rail__feed">
-      {AGENT_FEED.map((e, i) => (
-        <div key={i} className="rail__entry">
-          <div className="rail__entry-time">{e.time}</div>
-          <div className="rail__entry-title">{e.title}</div>
-          <div className="rail__entry-meta">
-            <span>{e.branch}</span>
-            {e.value !== 0 && (
-              <>
-                <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#C9BFAE', display: 'inline-block' }} />
-                <span className="money" style={{ fontSize: 12, color: e.value < 0 ? '#3D7A5A' : (e.dim ? '#75695F' : '#3D3633') }}>
-                  {e.value < 0 ? '−' : ''}{fmt(Math.abs(e.value))}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  </aside>
-)
+const AgentRail = () => {
+  const feed = useAgentFeed()
+
+  const formatTime = (iso) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const trimTitle = (title) => {
+    if (!title) return '—'
+    // Remove "Auto-" prefix clutter for the feed
+    return title.replace(/^(Auto-approved|Auto-executed|Approved:|Closed:|Rejected:)\s*/i, '')
+  }
+
+  const branchLabel = (branchId) => {
+    if (!branchId) return ''
+    const b = BRANCHES.find(x => x.id === branchId)
+    return b?.label || ''
+  }
+
+  return (
+    <aside className="rail">
+      <div className="rail__head">
+        <span className="rail__head-dot" />
+        Agent · today
+      </div>
+      <div className="rail__feed">
+        {feed === null && (
+          <div style={{ padding: '20px 0', textAlign: 'center', color: '#C9BFAE', fontSize: 12 }}>Loading…</div>
+        )}
+        {feed !== null && feed.length === 0 && (
+          <div style={{ padding: '20px 0', textAlign: 'center', color: '#C9BFAE', fontSize: 12 }}>No agent activity yet.</div>
+        )}
+        {(feed || []).map((e, i) => {
+          const val = parseFloat(e.value_eur || e.amount_eur || 0)
+          return (
+            <div key={i} className="rail__entry">
+              <div className="rail__entry-time">{formatTime(e.updated_at)}</div>
+              <div className="rail__entry-title">{trimTitle(e.title)}</div>
+              <div className="rail__entry-meta">
+                {branchLabel(e.branch_id) && <span>{branchLabel(e.branch_id)}</span>}
+                {val > 0 && (
+                  <>
+                    {branchLabel(e.branch_id) && <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#C9BFAE', display: 'inline-block' }} />}
+                    <span className="money" style={{ fontSize: 12, color: '#3D3633' }}>{fmt(val)}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </aside>
+  )
+}
 
 // ─── Signal badge ─────────────────────────────────────────────────────────────
 const SIGNAL_LABEL = { policy: 'Policy', supplier: 'Supplier', contract: 'Contract', request: 'Request', consumption: 'Budget' }
@@ -1265,9 +1295,10 @@ const PO_SECTIONS = [
 ]
 
 const OrdersBoard = ({ onCountChange }) => {
-  const [pos,    setPos]    = useState(null)
-  const [openId, setOpenId] = useState(null)
-  const [filter, setFilter] = useState('active')  // 'active' | 'all'
+  const [pos,         setPos]         = useState(null)
+  const [openId,      setOpenId]      = useState(null)
+  const [filter,      setFilter]      = useState('active')  // 'active' | 'all'
+  const [delivering,  setDelivering]  = useState(null)      // po_id being confirmed
 
   const load = useCallback(async () => {
     try {
@@ -1280,6 +1311,39 @@ const OrdersBoard = ({ onCountChange }) => {
       onCountChange(0)
     }
   }, [onCountChange])
+
+  const handleMarkDelivered = async (po) => {
+    setDelivering(po.id)
+    try {
+      // Call the delivery_confirmation webhook — it runs confirm_delivery RPC
+      const res = await fetch(`${N8N_WEBHOOK_BASE}/delivery-confirmation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ po_id: po.id, po_number: po.po_number, delivered_at: new Date().toISOString() }),
+      })
+      // Regardless of n8n response, also directly PATCH the PO status as fallback
+      if (!res.ok) {
+        await fetch(`${POSTGREST_URL}/purchase_orders?id=eq.${po.id}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'delivered', delivered_at: new Date().toISOString() }),
+        })
+      }
+      await load()
+    } catch {
+      // Fallback: direct PATCH if n8n is down
+      try {
+        await fetch(`${POSTGREST_URL}/purchase_orders?id=eq.${po.id}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'delivered', delivered_at: new Date().toISOString() }),
+        })
+        await load()
+      } catch {}
+    } finally {
+      setDelivering(null)
+    }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -1363,7 +1427,7 @@ const OrdersBoard = ({ onCountChange }) => {
                 <div>Order</div>
                 <div>Supplier</div>
                 <div style={{ textAlign: 'right' }}>Value</div>
-                <div style={{ textAlign: 'right' }}>Expected</div>
+                <div style={{ textAlign: 'right' }}>Expected / Action</div>
               </div>
               {inSec.map(po => {
                 const isOpen = openId === po.id
@@ -1398,7 +1462,16 @@ const OrdersBoard = ({ onCountChange }) => {
                         {po.currency && po.currency !== 'EUR' && <div style={{ fontSize: 11, color: '#A89B8B' }}>{po.currency}</div>}
                       </div>
                       <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
-                        {po.expected_delivery ? (
+                        {['sent','acknowledged'].includes(po.po_status) ? (
+                          <button
+                            className="btn btn--success btn--sm"
+                            style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }}
+                            disabled={delivering === po.id}
+                            onClick={(e) => { e.stopPropagation(); handleMarkDelivered(po) }}
+                          >
+                            {delivering === po.id ? 'Confirming…' : '✓ Mark delivered'}
+                          </button>
+                        ) : po.expected_delivery ? (
                           <span style={{ fontSize: 12, color: overdue ? '#B5462E' : '#75695F', fontWeight: overdue ? 600 : 400 }}>
                             {overdue ? '⚠ ' : ''}{new Date(po.expected_delivery).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                           </span>
@@ -2436,7 +2509,7 @@ const RequestForm = ({ type, user, onBack, onSuccess }) => {
   const submit = async () => {
     if (loading) return
     setLoading(true)
-    const ref = 'TS-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9000) + 1000)
+    const ref = 'TS-' + new Date().getFullYear() + '-' + String(Date.now()).slice(-4)
     try {
       await fetch(N8N_WEBHOOK, {
         method: 'POST',
@@ -3277,7 +3350,7 @@ export default function App() {
 
   const placeOrder = async (cartLines, notes, total) => {
     setCartOpen(false)
-    const ref = 'TS-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9000) + 1000)
+    const ref = 'TS-' + new Date().getFullYear() + '-' + String(Date.now()).slice(-4)
     const title = cartLines.length === 1
       ? `Purchase — ${cartLines[0].item.name}${cartLines[0].qty > 1 ? ` × ${cartLines[0].qty}` : ''}`
       : `Purchase — ${cartLines.length} catalog items`
