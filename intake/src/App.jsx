@@ -831,17 +831,26 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup }) => {
       if (action === 'sign') {
         // Call n8n → DocuSign: creates envelope + returns embedded signing URL
         const res = await n8nPost('/docusign-sign', { ticket_id: id })
+        if (res?.error) {
+          alert('DocuSign: ' + res.error)
+          return
+        }
         if (res?.signing_url) {
           // Open DocuSign embedded signing in new tab
           window.open(res.signing_url, '_blank', 'noopener,noreferrer')
+          // Do NOT change ticket status here — docusign_callback workflow
+          // will set it to 'approved' once the envelope is completed.
+        } else {
+          alert('DocuSign did not return a signing URL. Check n8n execution logs.')
+          return
         }
-        // Optimistically mark as approved; DocuSign webhook will confirm later
-        await pgPatch(`/tickets?id=eq.${id}`, { status: 'approved' })
       } else {
         await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
       }
       load()
-    } catch {}
+    } catch (e) {
+      alert('Error: ' + (e?.message || 'Unknown error. Check n8n.'))
+    }
   }
 
   const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })

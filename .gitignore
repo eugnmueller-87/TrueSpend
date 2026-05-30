@@ -44,3 +44,6 @@ infra/grafana-data/
 
 # Local vendor cache
 ../SpendLens_App/vendor_cache.json
+
+# Build artifacts (may contain bundled env vars)
+intake/dist/

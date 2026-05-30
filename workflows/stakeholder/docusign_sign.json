@@ -1,0 +1,93 @@
+{
+  "name": "TrueSpend — DocuSign Sign",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "docusign-sign",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook_trigger",
+      "name": "Sign & Send Triggered",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\n\nconst ticketId = $input.first().json.body?.ticket_id || $input.first().json.ticket_id;\nif (!ticketId) throw new Error('Missing ticket_id in request body');\n\nconst ticketRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId + '&select=id,reference,title,supplier_id,supplier_name,submitted_by,submitted_by_email,value_eur,amount_eur',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\nconst ticket = Array.isArray(ticketRes) ? ticketRes[0] : ticketRes;\nif (!ticket) throw new Error('Ticket not found: ' + ticketId);\n\nlet doc = null;\nif (ticket.supplier_id) {\n  const docsRes = await this.helpers.httpRequest({\n    method: 'GET',\n    url: POSTGREST + '/legal_documents?supplier_id=eq.' + ticket.supplier_id + '&status=in.(draft,pending_signature)&order=created_at.desc&limit=1',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n  });\n  doc = Array.isArray(docsRes) && docsRes.length > 0 ? docsRes[0] : null;\n}\n\nreturn [{ json: { ticketId, ticket, doc } }];"
+      },
+      "id": "fetch_ticket",
+      "name": "Fetch Ticket & Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const integrationKey = $env.DOCUSIGN_INTEGRATION_KEY;\nconst userId        = $env.DOCUSIGN_USER_ID;\nconst oauthUrl      = $env.DOCUSIGN_OAUTH_URL || 'https://account-d.docusign.com';\nconst rsaKey        = ($env.DOCUSIGN_RSA_PRIVATE_KEY || '').replace(/\\\\n/g, '\\n');\n\nif (!integrationKey || !userId || !rsaKey) {\n  throw new Error('Missing DocuSign env vars');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst header  = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');\nconst payload = Buffer.from(JSON.stringify({\n  iss: integrationKey,\n  sub: userId,\n  aud: oauthUrl.replace('https://', ''),\n  iat: now,\n  exp: now + 3600,\n  scope: 'signature impersonation'\n})).toString('base64url');\n\nconst crypto = require('crypto');\nconst sign = crypto.createSign('RSA-SHA256');\nsign.update(header + '.' + payload);\nconst sig = sign.sign(rsaKey, 'base64url');\nconst assertion = header + '.' + payload + '.' + sig;\n\nconst tokenRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: oauthUrl + '/oauth/token',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + assertion,\n  returnFullResponse: true\n});\n\nif (tokenRes.statusCode !== 200) {\n  throw new Error('DocuSign token error ' + tokenRes.statusCode + ': ' + JSON.stringify(tokenRes.body));\n}\n\nconst accessToken = tokenRes.body.access_token;\nconst data = $('Fetch Ticket & Document').item.json;\nreturn [{ json: { ...data, accessToken } }];"
+      },
+      "id": "get_docusign_token",
+      "name": "Get DocuSign Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { ticketId, ticket, doc, accessToken } = $input.first().json;\nconst accountId = $env.DOCUSIGN_ACCOUNT_ID;\nconst baseUrl   = $env.DOCUSIGN_BASE_URL || 'https://demo.docusign.net/restapi';\nconst intakeUrl = $env.INTAKE_URL || 'https://intake-production-84a0.up.railway.app';\nconst returnUrl = intakeUrl + '?signed=1&ticket=' + ticketId;\n\nconst signerName  = ticket.submitted_by  || 'TrueSpend User';\nconst signerEmail = ticket.submitted_by_email || 'eugnmueller@googlemail.com';\nconst clientUserId = ticketId;\n\nlet docBase64, docName, docExt;\nif (doc && doc.content) {\n  docBase64 = Buffer.from(doc.content).toString('base64');\n  docName   = (doc.doc_type || 'document').toUpperCase() + ' — ' + (ticket.supplier_name || 'Supplier');\n  docExt    = 'txt';\n} else {\n  const amount = ticket.value_eur || ticket.amount_eur || 0;\n  const text = [\n    'TRUESPEND PROCUREMENT DOCUMENT',\n    '================================',\n    '',\n    'Ticket Reference : ' + ticket.reference,\n    'Title            : ' + ticket.title,\n    'Supplier         : ' + (ticket.supplier_name || '—'),\n    'Value            : EUR ' + Number(amount).toLocaleString('de-DE', { minimumFractionDigits: 2 }),\n    '',\n    'By signing this document, the signatory confirms review and approval',\n    'of the above procurement action in accordance with TrueSpend policy.',\n    '',\n    'Signature:  ________________________   Date: _______________',\n    '',\n    'Printed Name: ________________________',\n  ].join('\\n');\n  docBase64 = Buffer.from(text).toString('base64');\n  docName   = 'Procurement Approval — ' + ticket.reference;\n  docExt    = 'txt';\n}\n\nconst envelope = {\n  emailSubject: 'Please sign: ' + ticket.title,\n  documents: [{ documentBase64: docBase64, name: docName, fileExtension: docExt, documentId: '1' }],\n  recipients: {\n    signers: [{\n      email: signerEmail,\n      name: signerName,\n      clientUserId,\n      recipientId: '1',\n      tabs: {\n        signHereTabs:   [{ documentId: '1', pageNumber: '1', xPosition: '100', yPosition: '400' }],\n        dateSignedTabs: [{ documentId: '1', pageNumber: '1', xPosition: '100', yPosition: '440' }]\n      }\n    }]\n  },\n  status: 'sent'\n};\n\nconst envRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: baseUrl + '/v2.1/accounts/' + accountId + '/envelopes',\n  headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' },\n  body: JSON.stringify(envelope),\n  returnFullResponse: true\n});\n\nif (envRes.statusCode !== 201) {\n  throw new Error('DocuSign envelope error ' + envRes.statusCode + ': ' + JSON.stringify(envRes.body));\n}\n\nconst envelopeId = envRes.body.envelopeId;\n\nconst viewRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: baseUrl + '/v2.1/accounts/' + accountId + '/envelopes/' + envelopeId + '/views/recipient',\n  headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' },\n  body: JSON.stringify({ returnUrl, authenticationMethod: 'none', email: signerEmail, userName: signerName, clientUserId }),\n  returnFullResponse: true\n});\n\nif (viewRes.statusCode !== 201) {\n  throw new Error('DocuSign view URL error ' + viewRes.statusCode + ': ' + JSON.stringify(viewRes.body));\n}\n\nreturn [{ json: { ticketId, envelopeId, signingUrl: viewRes.body.url, ticket } }];"
+      },
+      "id": "create_envelope",
+      "name": "Create Envelope & Get Signing URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\nconst { ticketId, envelopeId, signingUrl, ticket } = $input.first().json;\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: POSTGREST + '/trace_log',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n    body: JSON.stringify({\n      signal: 'contract',\n      value: 'DocuSign envelope ' + envelopeId + ' created for ticket ' + ticketId + ' (' + ticket.reference + '). Awaiting signature.',\n      green: true,\n      weight: 1.0,\n      notes: 'Embedded signing URL generated. Signer: ' + (ticket.submitted_by_email || 'truespend user') + '.'\n    })\n  });\n} catch (e) {\n  console.log('Trace log warning:', e.message);\n}\n\nreturn [{ json: { ticketId, envelopeId, signingUrl } }];"
+      },
+      "id": "log_trace",
+      "name": "Log to Trace",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ signing_url: $json.signingUrl, envelope_id: $json.envelopeId, ticket_id: $json.ticketId }) }}"
+      },
+      "id": "respond_with_url",
+      "name": "Return Signing URL",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 300]
+    }
+  ],
+
+  "connections": {
+    "Sign & Send Triggered": {
+      "main": [[{ "node": "Fetch Ticket & Document", "type": "main", "index": 0 }]]
+    },
+    "Fetch Ticket & Document": {
+      "main": [[{ "node": "Get DocuSign Token", "type": "main", "index": 0 }]]
+    },
+    "Get DocuSign Token": {
+      "main": [[{ "node": "Create Envelope & Get Signing URL", "type": "main", "index": 0 }]]
+    },
+    "Create Envelope & Get Signing URL": {
+      "main": [[{ "node": "Log to Trace", "type": "main", "index": 0 }]]
+    },
+    "Log to Trace": {
+      "main": [[{ "node": "Return Signing URL", "type": "main", "index": 0 }]]
+    }
+  },
+
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": ""
+  },
+  "tags": ["truespend", "docusign", "signing"]
+}
