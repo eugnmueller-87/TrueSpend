@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const POSTGREST_URL = import.meta.env.VITE_POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app'
-const POSTGREST_JWT = import.meta.env.VITE_POSTGREST_JWT || ''
-const N8N_WEBHOOK   = import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://n8n-n3xl.eugenmueller.tech/webhook/intake'
+const POSTGREST_URL    = import.meta.env.VITE_POSTGREST_URL    || 'https://postgrest-production-7960.up.railway.app'
+const POSTGREST_JWT    = import.meta.env.VITE_POSTGREST_JWT    || ''
+const N8N_WEBHOOK      = import.meta.env.VITE_N8N_WEBHOOK_URL  || 'https://n8n-n3xl.eugenmueller.tech/webhook/intake'
+const N8N_WEBHOOK_BASE = import.meta.env.VITE_N8N_WEBHOOK_BASE || 'https://n8n-n3xl.eugenmueller.tech/webhook'
 
 // ─── Branches ─────────────────────────────────────────────────────────────────
 const BRANCHES = [
@@ -58,6 +59,16 @@ async function pgPatch(path, body) {
     body: JSON.stringify(body)
   })
   if (!r.ok) throw new Error(`PostgREST PATCH ${r.status}`)
+  return r.json()
+}
+
+async function n8nPost(path, body) {
+  const r = await fetch(`${N8N_WEBHOOK_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) throw new Error(`n8n ${r.status}`)
   return r.json()
 }
 
@@ -218,8 +229,8 @@ const NAV_BY_GROUP = {
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
   ],
   legal: [
-    { id: 'board',     label: 'Legal review', Icon: IconBoard,   countKey: 'open' },
-    { id: 'suppliers', label: 'Suppliers',    Icon: IconBuilding },
+    { id: 'board',     label: 'Operations',  Icon: IconBoard,   countKey: 'open' },
+    { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
   ],
   admin: [
     { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
@@ -786,9 +797,20 @@ const OperationsBoard = ({ sectionJump, onCountChange }) => {
   }, [sectionJump])
 
   const handleAction = async (id, action) => {
-    const statusMap = { approve: 'approved', reject: 'rejected', sign: 'approved', decline: 'rejected', confirm: 'approved', ack: 'closed' }
+    const statusMap = { approve: 'approved', reject: 'rejected', decline: 'rejected', confirm: 'approved', ack: 'closed' }
     try {
-      await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
+      if (action === 'sign') {
+        // Call n8n → DocuSign: creates envelope + returns embedded signing URL
+        const res = await n8nPost('/docusign-sign', { ticket_id: id })
+        if (res?.signing_url) {
+          // Open DocuSign embedded signing in new tab
+          window.open(res.signing_url, '_blank', 'noopener,noreferrer')
+        }
+        // Optimistically mark as approved; DocuSign webhook will confirm later
+        await pgPatch(`/tickets?id=eq.${id}`, { status: 'approved' })
+      } else {
+        await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
+      }
       load()
     } catch {}
   }
@@ -2531,8 +2553,27 @@ const SuccessScreen = ({ result, onDone }) => (
 // ─── User Setup Modal ──────────────────────────────────────────────────────────
 // ─── Users Screen (Admin only) ────────────────────────────────────────────────
 // ─── Budget Screen (Controlling) ──────────────────────────────────────────────
+const BUDGET_CATEGORIES = [
+  'hardware','saas_license','cloud_infrastructure','professional_services',
+  'facilities','telecoms','travel','marketing','hr','legal','ai_consumption','other'
+]
+const BUDGET_PERIODS = (() => {
+  const out = []
+  const y = new Date().getFullYear()
+  for (let yr = y - 1; yr <= y + 1; yr++)
+    for (let q = 1; q <= 4; q++) out.push(`${yr}-Q${q}`)
+  return out
+})()
+
 const BudgetScreen = () => {
-  const [buckets, setBuckets] = useState(null)
+  const [buckets, setBuckets]     = useState(null)
+  const [adding, setAdding]       = useState(false)
+  const [saving, setSaving]       = useState(false)
+  const [saveErr, setSaveErr]     = useState('')
+  const [saved, setSaved]         = useState(false)
+  const [editRow, setEditRow]     = useState(null)   // { id, planned } being edited inline
+  const EMPTY_FORM = { branch_id: BRANCHES[0].id, category: 'hardware', period: `${new Date().getFullYear()}-Q${Math.ceil((new Date().getMonth()+1)/3)}`, planned: '' }
+  const [form, setForm]           = useState(EMPTY_FORM)
 
   const load = useCallback(async () => {
     try {
@@ -2543,10 +2584,44 @@ const BudgetScreen = () => {
 
   useEffect(() => { load() }, [load])
 
-  const totalPlanned  = (buckets || []).reduce((s, b) => s + Number(b.planned || 0), 0)
-  const totalCommit   = (buckets || []).reduce((s, b) => s + Number(b.committed || 0), 0)
-  const totalSpent    = (buckets || []).reduce((s, b) => s + Number(b.spent || 0), 0)
-  const totalAvail    = totalPlanned - totalCommit - totalSpent
+  const totalPlanned = (buckets || []).reduce((s, b) => s + Number(b.planned || 0), 0)
+  const totalCommit  = (buckets || []).reduce((s, b) => s + Number(b.committed || 0), 0)
+  const totalSpent   = (buckets || []).reduce((s, b) => s + Number(b.spent || 0), 0)
+  const totalAvail   = totalPlanned - totalCommit - totalSpent
+
+  const handleSave = async () => {
+    setSaving(true); setSaveErr(''); setSaved(false)
+    try {
+      const payload = {
+        branch_id: form.branch_id,
+        category:  form.category,
+        period:    form.period,
+        planned:   parseFloat(form.planned) || 0,
+        committed: 0,
+        spent:     0,
+      }
+      const r = await fetch(`${POSTGREST_URL}/budget_positions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify(payload)
+      })
+      if (!r.ok) { const t = await r.text(); throw new Error(t) }
+      setSaved(true); setAdding(false); setForm(EMPTY_FORM)
+      await load()
+    } catch(e) { setSaveErr(e.message) }
+    finally { setSaving(false) }
+  }
+
+  const handleEditSave = async (row) => {
+    try {
+      await fetch(`${POSTGREST_URL}/budget_positions?id=eq.${row.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planned: parseFloat(editRow.planned) || 0 })
+      })
+      setEditRow(null); await load()
+    } catch {}
+  }
 
   return (
     <div className="content step-in" style={{ maxWidth: 1100 }}>
@@ -2554,12 +2629,55 @@ const BudgetScreen = () => {
         <div>
           <div className="pagehead__eyebrow">Controlling</div>
           <h1 className="pagehead__title">Budget overview</h1>
-          <div className="pagehead__sub">Live spend vs. plan across all branches and categories. Use this to set and monitor budget buckets.</div>
+          <div className="pagehead__sub">Live spend vs. plan. Set planned budgets per branch, category, and quarter.</div>
         </div>
         <div className="pagehead__actions">
           <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
+          <button className="btn btn--primary btn--sm" onClick={() => { setAdding(true); setSaved(false); setSaveErr('') }}>
+            <IconPlus size={14}/> Set budget
+          </button>
         </div>
       </div>
+
+      {/* Add budget form */}
+      {adding && (
+        <div style={{ marginBottom: 24, padding: '20px 24px', background: '#FDFAF6', border: '1px solid #E5DDD0', borderRadius: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#3D3633', marginBottom: 14 }}>New budget position</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
+            <div>
+              <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Branch</label>
+              <select className="form-input" value={form.branch_id} onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}>
+                {BRANCHES.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Category</label>
+              <select className="form-input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+                {BUDGET_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Period</label>
+              <select className="form-input" value={form.period} onChange={e => setForm(f => ({ ...f, period: e.target.value }))}>
+                {BUDGET_PERIODS.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Planned (EUR)</label>
+              <input className="form-input" type="number" min="0" placeholder="e.g. 50000"
+                value={form.planned} onChange={e => setForm(f => ({ ...f, planned: e.target.value }))} />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn--primary btn--sm" onClick={handleSave} disabled={saving || !form.planned}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button className="btn btn--tertiary btn--sm" onClick={() => setAdding(false)}>Cancel</button>
+            </div>
+          </div>
+          {saveErr && <div style={{ marginTop: 8, fontSize: 12, color: '#B5462E' }}>{saveErr}</div>}
+        </div>
+      )}
+      {saved && <div style={{ marginBottom: 16, fontSize: 12.5, color: '#3D7A5A', fontWeight: 600 }}>✓ Budget position saved.</div>}
 
       {/* Totals strip */}
       {buckets && (
@@ -2590,29 +2708,45 @@ const BudgetScreen = () => {
       {/* Buckets table */}
       {!buckets && <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>Loading…</div>}
       {buckets && buckets.length === 0 && (
-        <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>No budget positions found.</div>
+        <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>
+          No budget positions yet. Click <strong>Set budget</strong> to add the first one.
+        </div>
       )}
       {buckets && buckets.length > 0 && (
         <div className="tlist">
           <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
             <div>Period</div>
-            <div>Category</div>
+            <div>Branch · Category</div>
             <div style={{ textAlign: 'right' }}>Planned</div>
             <div style={{ textAlign: 'right' }}>Committed</div>
             <div style={{ textAlign: 'right' }}>Spent</div>
             <div style={{ textAlign: 'right' }}>Available</div>
           </div>
           {buckets.map((b, i) => {
-            const avail = Number(b.planned || 0) - Number(b.committed || 0) - Number(b.spent || 0)
-            const util  = Number(b.planned) > 0 ? Math.round((Number(b.committed) + Number(b.spent)) / Number(b.planned) * 100) : 0
+            const avail  = Number(b.planned || 0) - Number(b.committed || 0) - Number(b.spent || 0)
+            const util   = Number(b.planned) > 0 ? Math.round((Number(b.committed) + Number(b.spent)) / Number(b.planned) * 100) : 0
+            const isEdit = editRow?.id === b.id
+            const branch = BRANCHES.find(br => br.id === b.branch_id)
             return (
               <div key={i} className="trow" style={{ cursor: 'default' }}>
                 <div style={{ fontSize: 12.5, color: '#75695F' }}>{b.period}</div>
                 <div className="trow__main">
                   <div className="trow__title" style={{ fontSize: 13 }}>{b.category}</div>
-                  <div style={{ fontSize: 11.5, color: '#A89B8B' }}>{util}% utilised</div>
+                  <div style={{ fontSize: 11.5, color: '#A89B8B' }}>{branch?.label || b.branch_id?.slice(0,8)} · {util}% utilised</div>
                 </div>
-                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{fmt(b.planned)}</div>
+                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
+                  {isEdit
+                    ? <input type="number" style={{ width: 90, textAlign: 'right', fontSize: 12, padding: '2px 6px', border: '1px solid #B07219', borderRadius: 4 }}
+                        value={editRow.planned} autoFocus
+                        onChange={e => setEditRow(r => ({ ...r, planned: e.target.value }))}
+                        onKeyDown={e => { if (e.key === 'Enter') handleEditSave(b); if (e.key === 'Escape') setEditRow(null) }}
+                        onBlur={() => handleEditSave(b)} />
+                    : <span style={{ cursor: 'pointer', borderBottom: '1px dashed #C9BFAE' }}
+                        title="Click to edit" onClick={() => setEditRow({ id: b.id, planned: b.planned })}>
+                        {fmt(b.planned)}
+                      </span>
+                  }
+                </div>
                 <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B07219' }}>{fmt(b.committed)}</div>
                 <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B5462E' }}>{fmt(b.spent)}</div>
                 <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: avail >= 0 ? '#3D7A5A' : '#B5462E', fontWeight: avail < 0 ? 700 : 400 }}>{fmt(avail)}</div>
@@ -2621,11 +2755,6 @@ const BudgetScreen = () => {
           })}
         </div>
       )}
-
-      {/* Upload hint */}
-      <div style={{ marginTop: 24, padding: '14px 16px', background: '#F5F1EA', border: '1px solid #E5DDD0', borderRadius: 8, fontSize: 12.5, color: '#75695F', lineHeight: 1.6 }}>
-        <strong style={{ color: '#3D3633' }}>To upload budget:</strong> Insert rows into <code>budget_positions</code> with <code>branch_id</code>, <code>category</code>, <code>period</code> (e.g. <code>2026-Q3</code>), and <code>planned</code> amount. PostgREST endpoint: <code>POST /budget_positions</code>.
-      </div>
     </div>
   )
 }

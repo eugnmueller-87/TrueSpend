@@ -130,7 +130,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/managers?branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}&order=spend_authority.desc&limit=1",
+        "url": "=https://postgrest-production-7960.up.railway.app/users?branch_id=eq.{{ $node['Intake Form Submitted'].json.body.branch_id }}&order=spend_authority.desc&limit=1",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
