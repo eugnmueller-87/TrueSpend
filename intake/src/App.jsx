@@ -3317,9 +3317,25 @@ const UserSetupModal = ({ onSave }) => {
   )
 }
 
+// ─── Default persona — opens directly on Operations Board for demo ─────────────
+// Fallback when localStorage has nothing. Full user object from DB is loaded
+// by UserSetupModal; this stub just gets the user past the modal on first visit.
+const DEFAULT_USER = {
+  id:       'e1000000-0000-0000-0000-000000000001',
+  name:     'Sarah Brennan',
+  email:    'sarah.brennan@company.com',
+  role:     'head_of_procurement',
+  branchId: 'b1000000-0000-0000-0000-000000000001',
+  title:    'Head of Procurement',
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [user,        setUser]        = useLocalStorage('truespend_user', null)
+  // Upgrade any cached user-role persona to procurement so the demo always
+  // opens on the full Operations Board. Users can still switch via ˅ chevron.
+  const [user, setUser] = useLocalStorage('truespend_user', DEFAULT_USER)
+  const resolvedUser = (user && ROLE_GROUP[user.role] === 'user') ? DEFAULT_USER : user
+
   const [tab,         setTab]         = useState('board')
   const [reqType,     setReqType]     = useState(null)
   const [success,     setSuccess]     = useState(null)
@@ -3329,6 +3345,11 @@ export default function App() {
   const [openByStatus, setOpenByStatus] = useState({})
   const [cart,        setCart]        = useState([])   // [{ item, qty }]
   const [cartOpen,    setCartOpen]    = useState(false)
+
+  // Persist the upgrade so it sticks after reload
+  useEffect(() => {
+    if (user && ROLE_GROUP[user.role] === 'user') setUser(DEFAULT_USER)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const navigate = (t) => { setTab(t); setReqType(null); setSuccess(null); setSectionJump(null) }
   const startRequest = (type) => { setReqType(type); setTab('request') }
@@ -3363,17 +3384,17 @@ export default function App() {
           title,
           description: desc,
           ticket_type: 'purchase',
-          submitted_by: user?.name || '',
-          submitted_by_email: user?.email || '',
+          submitted_by: resolvedUser?.name || '',
+          submitted_by_email: resolvedUser?.email || '',
           supplier_name: cartLines.length === 1 ? cartLines[0].item.supplier : 'Multiple',
           value_eur: total,
           category: 'hardware',
-          branch_id: user?.branchId || null,
+          branch_id: resolvedUser?.branchId || null,
         })
       })
     } catch {}
     setCart([])
-    setSuccess({ ref, email: user?.email, isOrder: true })
+    setSuccess({ ref, email: resolvedUser?.email, isOrder: true })
   }
 
   const handleCountChange = useCallback((count) => {
@@ -3398,7 +3419,8 @@ export default function App() {
 
   return (
     <>
-      {!user && <UserSetupModal onSave={(u) => {
+      {/* Show persona picker only when explicitly switched (user === null) */}
+      {user === null && <UserSetupModal onSave={(u) => {
         setUser(u)
         // Land on the right default tab for the role
         const group = ROLE_GROUP[u.role] || 'user'
@@ -3414,7 +3436,7 @@ export default function App() {
           counts={counts}
           openByStatus={openByStatus}
           onJumpSection={(st) => { setTab('board'); setSectionJump(st) }}
-          user={user}
+          user={resolvedUser}
           onSwitchUser={() => setUser(null)}
         />
 
@@ -3429,20 +3451,20 @@ export default function App() {
             <OperationsBoard
               sectionJump={sectionJump}
               onCountChange={handleCountChange}
-              roleGroup={ROLE_GROUP[user?.role] || 'user'}
+              roleGroup={ROLE_GROUP[resolvedUser?.role] || 'procurement'}
             />
           )}
           {!success && tab === 'orders'    && <OrdersBoard onCountChange={setOrdersCount} />}
           {!success && tab === 'suppliers' && <SuppliersScreen />}
           {!success && tab === 'catalog'   && <CatalogScreen cart={cart} onAddToCart={handleAddToCart} onOpenCart={() => setCartOpen(true)} />}
-          {!success && tab === 'mine'    && <MyRequestsScreen user={user} />}
-          {!success && tab === 'home'    && <HomeScreen user={user} onCatalog={() => navigate('catalog')} onRequestType={startRequest} />}
+          {!success && tab === 'mine'    && <MyRequestsScreen user={resolvedUser} />}
+          {!success && tab === 'home'    && <HomeScreen user={resolvedUser} onCatalog={() => navigate('catalog')} onRequestType={startRequest} />}
           {!success && tab === 'request' && reqType && (
             <RequestForm
               type={reqType}
-              user={user}
+              user={resolvedUser}
               onBack={() => navigate('home')}
-              onSuccess={(ref) => setSuccess({ ref, email: user?.email, isOrder: false })}
+              onSuccess={(ref) => setSuccess({ ref, email: resolvedUser?.email, isOrder: false })}
             />
           )}
           {!success && tab === 'users'   && <UsersScreen />}
