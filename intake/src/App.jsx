@@ -3226,14 +3226,7 @@ const UserSetupModal = ({ onSave }) => {
   // Load all users for the demo email hint
   useEffect(() => {
     pgFetch('/users?active=eq.true&order=role.asc,name.asc&limit=50')
-      .then(data => {
-        const adminPersona = {
-          id: 'admin-demo-0000-0000-000000000001',
-          name: 'Admin Demo', email: 'admin@company.com',
-          role: 'admin', branch_id: BRANCHES[0].id, title: 'Platform Administrator',
-        }
-        setAllUsers([...data, adminPersona])
-      })
+      .then(data => setAllUsers(data))
       .catch(() => setAllUsers([]))
   }, [])
 
