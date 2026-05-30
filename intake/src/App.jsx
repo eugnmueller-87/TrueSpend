@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const POSTGREST_URL    = import.meta.env.VITE_POSTGREST_URL    || 'https://postgrest-production-7960.up.railway.app'
@@ -244,6 +244,142 @@ const NAV_PRIMARY = NAV_BY_GROUP.procurement // default — overridden at runtim
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
+// Role switcher popover — one-click demo persona switching from the sidebar footer
+const RoleSwitcher = ({ currentUser, onSwitch, onSignOut }) => {
+  const [open, setOpen]       = useState(false)
+  const [users, setUsers]     = useState(null)
+  const ref = useRef(null)
+
+  // Load users once on mount
+  useEffect(() => {
+    pgFetch('/users?active=eq.true&order=role.asc,name.asc&limit=50')
+      .then(d => setUsers(d))
+      .catch(() => setUsers([]))
+  }, [])
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const grouped = {}
+  for (const u of (users || [])) {
+    const g = ROLE_GROUP[u.role] || 'user'
+    if (!grouped[g]) grouped[g] = []
+    grouped[g].push(u)
+  }
+
+  const pick = (u) => {
+    setOpen(false)
+    onSwitch({
+      id:       u.id,
+      name:     u.name,
+      email:    u.email || '',
+      role:     u.role,
+      branchId: u.branch_id || BRANCHES[0].id,
+      title:    u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role,
+    })
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        className="iconbtn"
+        title="Switch role"
+        style={{ width: 26, height: 26 }}
+        onClick={() => setOpen(o => !o)}
+      >
+        <IconChevDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', bottom: 38, left: -180, width: 260,
+          background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 10,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.13)', zIndex: 200,
+          padding: '8px 0 6px',
+          maxHeight: 400, overflowY: 'auto',
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#A89B8B', padding: '4px 14px 6px' }}>
+            Switch role
+          </div>
+
+          {users === null && (
+            <div style={{ padding: '10px 14px', fontSize: 12, color: '#A89B8B' }}>Loading…</div>
+          )}
+
+          {['procurement','it','controlling','legal','user','admin'].map(group => {
+            const members = grouped[group] || []
+            if (!members.length) return null
+            return (
+              <div key={group}>
+                <div style={{
+                  fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
+                  color: PERSONA_GROUP_COLOR[group], padding: '8px 14px 3px',
+                  borderTop: '1px solid #F0EBE1', marginTop: 2,
+                }}>
+                  {PERSONA_GROUP_LABEL[group]}
+                </div>
+                {members.map(u => {
+                  const isCurrent = u.id === currentUser?.id
+                  return (
+                    <button
+                      key={u.id}
+                      onClick={() => pick(u)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 9, width: '100%',
+                        padding: '6px 14px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: isCurrent ? PERSONA_GROUP_COLOR[group] + '12' : 'none',
+                      }}
+                      onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = '#F5F1EA' }}
+                      onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = 'none' }}
+                    >
+                      <div style={{
+                        width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                        background: PERSONA_GROUP_COLOR[group] + '28',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 9.5, fontWeight: 700, color: PERSONA_GROUP_COLOR[group],
+                      }}>
+                        {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: isCurrent ? 700 : 500, color: '#161413', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {u.name}
+                          {isCurrent && <span style={{ fontSize: 9, background: PERSONA_GROUP_COLOR[group] + '22', color: PERSONA_GROUP_COLOR[group], borderRadius: 4, padding: '1px 5px', fontWeight: 700 }}>current</span>}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: '#A89B8B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })}
+
+          <div style={{ borderTop: '1px solid #EDE8DF', marginTop: 6, padding: '6px 8px 2px' }}>
+            <button
+              onClick={() => { setOpen(false); onSignOut() }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '6px 6px', border: 'none', background: 'none', cursor: 'pointer',
+                borderRadius: 6, fontSize: 12.5, color: '#9B3A2A', fontWeight: 500,
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = '#FAF0EE'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              <IconX size={13} />
+              Sign out
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── PO Status config ──────────────────────────────────────────────────────────
 const PO_STATUS = {
   sent:         { label: 'Sent to supplier',  dot: '#2B5F7A', bg: '#E6EEF2', fg: '#2B5F7A' },
@@ -265,7 +401,7 @@ const PoStatusPill = ({ status }) => {
   )
 }
 
-const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwitchUser }) => {
+const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwitchUser, onQuickSwitch }) => {
   const sidebarTab = tab === 'request' ? 'home' : tab
   const initials = user ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '?'
   const branch = user ? (BRANCHES.find(b => b.id === user.branchId)?.label || '') : ''
@@ -350,9 +486,11 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
           <div className="sidebar__user-name">{user?.name || 'Guest'}</div>
           <div className="sidebar__user-sub">{branch}</div>
         </div>
-        <button className="iconbtn" title="Switch user" style={{ width: 26, height: 26 }} onClick={onSwitchUser}>
-          <IconChevDown size={14} />
-        </button>
+        <RoleSwitcher
+          currentUser={user}
+          onSwitch={onQuickSwitch}
+          onSignOut={onSwitchUser}
+        />
       </div>
     </aside>
   )
@@ -3585,6 +3723,14 @@ export default function App() {
           onJumpSection={(st) => { setTab('board'); setSectionJump(st) }}
           user={resolvedUser}
           onSwitchUser={() => setUser(null)}
+          onQuickSwitch={(u) => {
+            setUser(u)
+            setSuccess(null)
+            const group = ROLE_GROUP[u.role] || 'user'
+            if (group === 'admin' || group === 'procurement' || group === 'controlling' || group === 'legal') setTab('board')
+            else if (group === 'it') setTab('catalog')
+            else setTab('catalog')
+          }}
         />
 
         <main className="main">
