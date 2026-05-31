@@ -3344,14 +3344,20 @@ const BUDGET_PERIODS = (() => {
 })()
 
 const BudgetScreen = ({ user }) => {
-  const [buckets, setBuckets]     = useState(null)
-  const [adding, setAdding]       = useState(false)
-  const [saving, setSaving]       = useState(false)
-  const [saveErr, setSaveErr]     = useState('')
-  const [saved, setSaved]         = useState(false)
-  const [editRow, setEditRow]     = useState(null)   // { id, planned } being edited inline
-  const EMPTY_FORM = { branch_id: BRANCHES[0].id, category: 'hardware', period: `${new Date().getFullYear()}-Q${Math.ceil((new Date().getMonth()+1)/3)}`, planned: '' }
-  const [form, setForm]           = useState(EMPTY_FORM)
+  const [buckets,     setBuckets]     = useState(null)
+  const [costCenters, setCostCenters] = useState([])   // all CCs from DB
+  const [adding,      setAdding]      = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [saveErr,     setSaveErr]     = useState('')
+  const [saved,       setSaved]       = useState(false)
+  const [editRow,     setEditRow]     = useState(null)
+  const [filterBranch, setFilterBranch] = useState('')
+  const [filterCC,     setFilterCC]    = useState('')
+  const [filterCat,    setFilterCat]   = useState('')
+
+  const curQ = `${new Date().getFullYear()}-Q${Math.ceil((new Date().getMonth()+1)/3)}`
+  const EMPTY_FORM = { branch_id: BRANCHES[0].id, cost_center_id: '', category: 'hardware', period: curQ, planned: '' }
+  const [form, setForm] = useState(EMPTY_FORM)
 
   // Roles that see ALL positions; others see only their own CC
   const isFullAccess = !user || ['controlling', 'cfo', 'head_of_procurement', 'admin'].includes(user.role) ||
@@ -3359,32 +3365,65 @@ const BudgetScreen = ({ user }) => {
 
   const load = useCallback(async () => {
     try {
-      let path = '/budget_positions?order=period.desc,category.asc&limit=400'
+      // Always join cost_center name + code via select
+      let path = '/budget_positions?select=id,branch_id,cost_center_id,category,period,planned,committed,spent&order=period.desc,branch_id.asc,cost_center_id.asc,category.asc&limit=500'
       if (!isFullAccess && user?.costCenterId) {
-        path = `/budget_positions?cost_center_id=eq.${user.costCenterId}&order=period.desc,category.asc&limit=400`
+        path = `/budget_positions?cost_center_id=eq.${user.costCenterId}&select=id,branch_id,cost_center_id,category,period,planned,committed,spent&order=period.desc,category.asc&limit=200`
       }
-      const data = await pgFetch(path)
+      const [data, ccs] = await Promise.all([
+        pgFetch(path),
+        pgFetch('/cost_centers?select=id,code,name,branch_id&order=branch_id.asc,code.asc&limit=200'),
+      ])
       setBuckets(data)
-    } catch { setBuckets([]) }
+      setCostCenters(ccs || [])
+    } catch { setBuckets([]); setCostCenters([]) }
   }, [isFullAccess, user])
 
   useEffect(() => { load() }, [load])
 
-  const totalPlanned = (buckets || []).reduce((s, b) => s + Number(b.planned || 0), 0)
-  const totalCommit  = (buckets || []).reduce((s, b) => s + Number(b.committed || 0), 0)
-  const totalSpent   = (buckets || []).reduce((s, b) => s + Number(b.spent || 0), 0)
+  // Build CC lookup map
+  const ccMap = Object.fromEntries((costCenters || []).map(c => [c.id, c]))
+
+  // CCs for selected branch in the "add" form
+  const formCCs = costCenters.filter(c => c.branch_id === form.branch_id)
+
+  // Filtered view
+  const displayed = (buckets || []).filter(b => {
+    if (filterBranch && b.branch_id !== filterBranch) return false
+    if (filterCC) {
+      if (filterCC === '__none__') { if (b.cost_center_id) return false }
+      else if (b.cost_center_id !== filterCC) return false
+    }
+    if (filterCat && b.category !== filterCat) return false
+    return true
+  })
+
+  const totalPlanned = displayed.reduce((s, b) => s + Number(b.planned || 0), 0)
+  const totalCommit  = displayed.reduce((s, b) => s + Number(b.committed || 0), 0)
+  const totalSpent   = displayed.reduce((s, b) => s + Number(b.spent || 0), 0)
   const totalAvail   = totalPlanned - totalCommit - totalSpent
+
+  // Group displayed by branch → cost_center → rows
+  const grouped = {}
+  for (const b of displayed) {
+    const branchKey = b.branch_id || 'unknown'
+    if (!grouped[branchKey]) grouped[branchKey] = {}
+    const ccKey = b.cost_center_id || '__none__'
+    if (!grouped[branchKey][ccKey]) grouped[branchKey][ccKey] = []
+    grouped[branchKey][ccKey].push(b)
+  }
 
   const handleSave = async () => {
     setSaving(true); setSaveErr(''); setSaved(false)
     try {
       const payload = {
-        branch_id: form.branch_id,
-        category:  form.category,
-        period:    form.period,
-        planned:   parseFloat(form.planned) || 0,
-        committed: 0,
-        spent:     0,
+        branch_id:      form.branch_id,
+        cost_center_id: form.cost_center_id || null,
+        category:       form.category,
+        period:         form.period,
+        planned:        parseFloat(form.planned) || 0,
+        committed:      0,
+        spent:          0,
       }
       const r = await fetch(`${POSTGREST_URL}/budget_positions`, {
         method: 'POST',
@@ -3409,22 +3448,24 @@ const BudgetScreen = ({ user }) => {
     } catch {}
   }
 
+  const utilColor = (util) => util >= 100 ? '#B5462E' : util >= 85 ? '#C99119' : '#3D7A5A'
+
   return (
-    <div className="content step-in" style={{ maxWidth: 1100 }}>
+    <div className="content step-in" style={{ maxWidth: 1200 }}>
       <div className="pagehead">
         <div>
           <div className="pagehead__eyebrow">Controlling</div>
           <h1 className="pagehead__title">Budget overview</h1>
           <div className="pagehead__sub">
             {isFullAccess
-              ? 'Live spend vs. plan — all branches and cost centres. Set planned budgets per branch, category, and quarter.'
-              : `Showing your cost centre budget only. Contact Controlling to update planned figures.`}
+              ? 'Live spend vs. plan — by branch, cost centre, category and quarter.'
+              : `Showing your cost centre budget only.`}
           </div>
         </div>
         <div className="pagehead__actions">
           <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
           {isFullAccess && (
-            <button className="btn btn--primary btn--sm" onClick={() => { setAdding(true); setSaved(false); setSaveErr('') }}>
+            <button className="btn btn--primary btn--sm" onClick={() => { setAdding(a => !a); setSaved(false); setSaveErr('') }}>
               <IconPlus size={14}/> Set budget
             </button>
           )}
@@ -3435,11 +3476,18 @@ const BudgetScreen = ({ user }) => {
       {adding && (
         <div style={{ marginBottom: 24, padding: '20px 24px', background: '#FDFAF6', border: '1px solid #E5DDD0', borderRadius: 10 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#3D3633', marginBottom: 14 }}>New budget position</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
             <div>
               <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Branch</label>
-              <select className="select" value={form.branch_id} onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}>
+              <select className="select" value={form.branch_id} onChange={e => setForm(f => ({ ...f, branch_id: e.target.value, cost_center_id: '' }))}>
                 {BRANCHES.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Cost centre</label>
+              <select className="select" value={form.cost_center_id} onChange={e => setForm(f => ({ ...f, cost_center_id: e.target.value }))}>
+                <option value="">Branch-level (no CC)</option>
+                {formCCs.map(c => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
               </select>
             </div>
             <div>
@@ -3471,13 +3519,37 @@ const BudgetScreen = ({ user }) => {
       )}
       {saved && <div style={{ marginBottom: 16, fontSize: 12.5, color: '#3D7A5A', fontWeight: 600 }}>✓ Budget position saved.</div>}
 
-      {/* Totals strip */}
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select className="select" style={{ fontSize: 12.5, minWidth: 150 }} value={filterBranch} onChange={e => { setFilterBranch(e.target.value); setFilterCC('') }}>
+          <option value="">All branches</option>
+          {BRANCHES.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
+        </select>
+        <select className="select" style={{ fontSize: 12.5, minWidth: 200 }} value={filterCC} onChange={e => setFilterCC(e.target.value)}>
+          <option value="">All cost centres</option>
+          <option value="__none__">Branch-level only</option>
+          {(filterBranch ? costCenters.filter(c => c.branch_id === filterBranch) : costCenters).map(c => (
+            <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+          ))}
+        </select>
+        <select className="select" style={{ fontSize: 12.5 }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+          <option value="">All categories</option>
+          {BUDGET_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {(filterBranch || filterCC || filterCat) && (
+          <button className="btn btn--tertiary btn--sm" style={{ fontSize: 12 }} onClick={() => { setFilterBranch(''); setFilterCC(''); setFilterCat('') }}>
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {/* Totals strip — for current filter */}
       {buckets && (
         <div className="stats" style={{ marginBottom: 24 }}>
           <div className="stat">
             <div className="stat__label">Planned</div>
             <div className="stat__val">{fmt(totalPlanned)}</div>
-            <div className="stat__hint">Total approved budget</div>
+            <div className="stat__hint">{filterBranch || filterCC || filterCat ? 'Filtered total' : 'Total approved budget'}</div>
           </div>
           <div className="stat">
             <div className="stat__label">Committed</div>
@@ -3497,54 +3569,115 @@ const BudgetScreen = ({ user }) => {
         </div>
       )}
 
-      {/* Buckets table */}
+      {/* Table */}
       {!buckets && <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>Loading…</div>}
       {buckets && buckets.length === 0 && (
         <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>
           No budget positions yet. Click <strong>Set budget</strong> to add the first one.
         </div>
       )}
-      {buckets && buckets.length > 0 && (
-        <div className="tlist">
-          <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
-            <div>Period</div>
-            <div>Branch · Category</div>
-            <div style={{ textAlign: 'right' }}>Planned</div>
-            <div style={{ textAlign: 'right' }}>Committed</div>
-            <div style={{ textAlign: 'right' }}>Spent</div>
-            <div style={{ textAlign: 'right' }}>Available</div>
-          </div>
-          {buckets.map((b, i) => {
-            const avail  = Number(b.planned || 0) - Number(b.committed || 0) - Number(b.spent || 0)
-            const util   = Number(b.planned) > 0 ? Math.round((Number(b.committed) + Number(b.spent)) / Number(b.planned) * 100) : 0
-            const isEdit = editRow?.id === b.id
-            const branch = BRANCHES.find(br => br.id === b.branch_id)
-            return (
-              <div key={i} className="trow" style={{ cursor: 'default' }}>
-                <div style={{ fontSize: 12.5, color: '#75695F' }}>{b.period}</div>
-                <div className="trow__main">
-                  <div className="trow__title" style={{ fontSize: 13 }}>{b.category}</div>
-                  <div style={{ fontSize: 11.5, color: '#A89B8B' }}>{branch?.label || b.branch_id?.slice(0,8)} · {util}% utilised</div>
-                </div>
-                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
-                  {isEdit
-                    ? <input type="number" style={{ width: 90, textAlign: 'right', fontSize: 12, padding: '2px 6px', border: '1px solid #B07219', borderRadius: 4 }}
-                        value={editRow.planned} autoFocus
-                        onChange={e => setEditRow(r => ({ ...r, planned: e.target.value }))}
-                        onKeyDown={e => { if (e.key === 'Enter') handleEditSave(b); if (e.key === 'Escape') setEditRow(null) }}
-                        onBlur={() => handleEditSave(b)} />
-                    : <span style={{ cursor: 'pointer', borderBottom: '1px dashed #C9BFAE' }}
-                        title="Click to edit" onClick={() => setEditRow({ id: b.id, planned: b.planned })}>
-                        {fmt(b.planned)}
-                      </span>
-                  }
-                </div>
-                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B07219' }}>{fmt(b.committed)}</div>
-                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B5462E' }}>{fmt(b.spent)}</div>
-                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: avail >= 0 ? '#3D7A5A' : '#B5462E', fontWeight: avail < 0 ? 700 : 400 }}>{fmt(avail)}</div>
+
+      {buckets && displayed.length > 0 && Object.entries(grouped).map(([branchId, ccGroups]) => {
+        const branch = BRANCHES.find(b => b.id === branchId)
+        return (
+          <div key={branchId} style={{ marginBottom: 28 }}>
+            {/* Branch header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 18, color: '#161413', letterSpacing: '-0.02em' }}>
+                {branch?.label || branchId}
               </div>
-            )
-          })}
+              <div style={{ flex: 1, height: 1, background: '#E5DDD0' }} />
+            </div>
+
+            {Object.entries(ccGroups).map(([ccKey, rows]) => {
+              const cc = ccKey === '__none__' ? null : ccMap[ccKey]
+              const ccPlanned  = rows.reduce((s, r) => s + Number(r.planned || 0), 0)
+              const ccCommit   = rows.reduce((s, r) => s + Number(r.committed || 0), 0)
+              const ccSpent    = rows.reduce((s, r) => s + Number(r.spent || 0), 0)
+              const ccAvail    = ccPlanned - ccCommit - ccSpent
+              const ccUtil     = ccPlanned > 0 ? Math.round((ccCommit + ccSpent) / ccPlanned * 100) : 0
+
+              return (
+                <div key={ccKey} style={{ marginBottom: 16 }}>
+                  {/* Cost centre header */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0 6px 4px', marginBottom: 4 }}>
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                      padding: '2px 8px', borderRadius: 4,
+                      background: cc ? '#F0EDE8' : '#F5F1EA', color: cc ? '#75695F' : '#A89B8B',
+                      border: '1px solid #E5DDD0',
+                    }}>
+                      {cc ? cc.code : 'Branch-level'}
+                    </div>
+                    {cc && <div style={{ fontSize: 13, fontWeight: 600, color: '#3D3633' }}>{cc.name}</div>}
+                    <div style={{ flex: 1 }} />
+                    {/* CC utilisation bar */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 80, height: 5, background: '#E5DDD0', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ width: `${Math.min(ccUtil, 100)}%`, height: '100%', background: utilColor(ccUtil), borderRadius: 3 }} />
+                      </div>
+                      <span style={{ fontSize: 11.5, fontWeight: 600, color: utilColor(ccUtil), fontVariantNumeric: 'tabular-nums', minWidth: 34 }}>{ccUtil}%</span>
+                      <span style={{ fontSize: 11.5, color: '#A89B8B' }}>utilised</span>
+                      <span style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums', color: ccAvail >= 0 ? '#3D7A5A' : '#B5462E', fontWeight: 600, marginLeft: 4 }}>
+                        {ccAvail >= 0 ? '+' : ''}{fmt(ccAvail)} avail.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Category rows */}
+                  <div className="tlist">
+                    <div className="trow" style={{ gridTemplateColumns: '80px 1fr 130px 130px 100px 130px', background: '#EFEBE1', cursor: 'default', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
+                      <div>Period</div>
+                      <div>Category</div>
+                      <div style={{ textAlign: 'right' }}>Planned</div>
+                      <div style={{ textAlign: 'right' }}>Committed</div>
+                      <div style={{ textAlign: 'right' }}>Spent</div>
+                      <div style={{ textAlign: 'right' }}>Available</div>
+                    </div>
+                    {rows.map((b, i) => {
+                      const avail  = Number(b.planned || 0) - Number(b.committed || 0) - Number(b.spent || 0)
+                      const util   = Number(b.planned) > 0 ? Math.round((Number(b.committed) + Number(b.spent)) / Number(b.planned) * 100) : 0
+                      const isEdit = editRow?.id === b.id
+                      return (
+                        <div key={i} className="trow" style={{ gridTemplateColumns: '80px 1fr 130px 130px 100px 130px', cursor: 'default' }}>
+                          <div style={{ fontSize: 11.5, color: '#75695F', fontFamily: "'Geist Mono', monospace" }}>{b.period}</div>
+                          <div>
+                            <span className="pill" style={{ background: '#F0EDE8', color: '#75695F', fontSize: 11 }}>{b.category}</span>
+                            {util > 0 && (
+                              <span style={{ marginLeft: 8, fontSize: 10.5, color: utilColor(util), fontWeight: 600 }}>{util}%</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
+                            {isEdit
+                              ? <input type="number" style={{ width: 90, textAlign: 'right', fontSize: 12, padding: '2px 6px', border: '1px solid #B07219', borderRadius: 4 }}
+                                  value={editRow.planned} autoFocus
+                                  onChange={e => setEditRow(r => ({ ...r, planned: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === 'Enter') handleEditSave(b); if (e.key === 'Escape') setEditRow(null) }}
+                                  onBlur={() => handleEditSave(b)} />
+                              : <span style={{ cursor: isFullAccess ? 'pointer' : 'default', borderBottom: isFullAccess ? '1px dashed #C9BFAE' : 'none' }}
+                                  title={isFullAccess ? 'Click to edit' : ''}
+                                  onClick={() => isFullAccess && setEditRow({ id: b.id, planned: b.planned })}>
+                                  {fmt(b.planned)}
+                                </span>
+                            }
+                          </div>
+                          <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B07219' }}>{fmt(b.committed)}</div>
+                          <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: '#B5462E' }}>{fmt(b.spent)}</div>
+                          <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: avail >= 0 ? '#3D7A5A' : '#B5462E', fontWeight: avail < 0 ? 700 : 400 }}>{fmt(avail)}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
+
+      {buckets && displayed.length === 0 && (buckets.length > 0) && (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>
+          No budget positions match the current filter.
         </div>
       )}
     </div>
