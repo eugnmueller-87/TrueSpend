@@ -918,11 +918,12 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
       <div className={'trow' + (isOpen ? ' trow--open' : '')} onClick={() => onToggle(ticket.id)}>
         <div className="trow__status">
           <StatusPill status={ticket.status} />
-          <span className="trow__step">Step {flow.step} · {flow.label}</span>
         </div>
         <div className="trow__main">
           <div className="trow__title">{ticket.title}</div>
           <div className="trow__meta">
+            <span className="trow__step">Step {flow.step} · {flow.label}</span>
+            <span className="dot" />
             <span className="ref">{ticket.reference}</span>
             <span className="dot" />
             <span>{timeAgo(ticket.created_at)}</span>
