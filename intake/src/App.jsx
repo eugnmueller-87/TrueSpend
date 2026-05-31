@@ -894,16 +894,31 @@ const ConfBar = ({ score }) => {
   )
 }
 
+// Flow step labels per status: 4 steps in the P2I/approval journey
+const FLOW_STEPS = {
+  reasoning:          { step: '1 of 4', label: 'Agent reviewing' },
+  pending_review:     { step: '2 of 4', label: 'Awaiting your decision' },
+  pending_confirm:    { step: '2 of 4', label: 'Quick confirm needed' },
+  signature_required: { step: '3 of 4', label: 'Awaiting your signature' },
+  escalated:          { step: '3 of 4', label: 'Needs CFO / Legal' },
+  approved:           { step: '4 of 4', label: 'Approved — PO issued' },
+  auto_executed:      { step: '4 of 4', label: 'Auto-executed' },
+  closed:             { step: '4 of 4', label: 'Closed' },
+  rejected:           { step: '—',      label: 'Rejected' },
+}
+
 const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
-  const canAct        = roleGroup === 'procurement'           // only procurement managers act
-  const canSign       = roleGroup === 'procurement'           // only procurement managers sign
-  const readOnly      = roleGroup === 'controlling' || roleGroup === 'it' || roleGroup === 'admin'
+  const canAct   = roleGroup === 'procurement'
+  const canSign  = roleGroup === 'procurement'
+  const readOnly = roleGroup === 'controlling' || roleGroup === 'it' || roleGroup === 'admin'
+  const flow     = FLOW_STEPS[ticket.status] || { step: '—', label: '' }
 
   return (
     <>
       <div className={'trow' + (isOpen ? ' trow--open' : '')} onClick={() => onToggle(ticket.id)}>
         <div className="trow__status">
           <StatusPill status={ticket.status} />
+          <span className="trow__step">Step {flow.step} · {flow.label}</span>
         </div>
         <div className="trow__main">
           <div className="trow__title">{ticket.title}</div>
@@ -924,11 +939,9 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
           {ticket.confidence_score && <ConfBar score={ticket.confidence_score} />}
         </div>
         <div className="trow__actions" onClick={e => e.stopPropagation()}>
-          {/* Read-only roles: no action buttons */}
           {readOnly && (
             <span style={{ fontSize: 11, color: '#A89B8B', fontStyle: 'italic' }}>view only</span>
           )}
-          {/* Procurement managers: full action buttons */}
           {canAct && ticket.status === 'signature_required' && (<>
             {canSign && <button className="btn btn--ink btn--sm" onClick={() => onAction(ticket.id, 'sign')}>Sign &amp; send</button>}
             <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'decline')}>Decline</button>
@@ -1015,18 +1028,33 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
     try {
       if (action === 'sign') {
         // Call n8n → DocuSign: creates envelope + returns embedded signing URL
-        const res = await n8nPost('/docusign-sign', { ticket_id: id })
+        let res
+        try {
+          res = await n8nPost('/docusign-sign', { ticket_id: id })
+        } catch (fetchErr) {
+          // n8n unreachable — show actionable message
+          alert(
+            'Cannot reach the signing service (n8n).\n\n' +
+            'This usually means the n8n server needs a restart.\n' +
+            'Ask your admin to run: ssh root@187.127.87.206 "cd /docker/n8n-n3xl && docker compose up -d"\n\n' +
+            'Technical detail: ' + (fetchErr?.message || 'network error')
+          )
+          return
+        }
         if (res?.error) {
-          alert('DocuSign: ' + res.error)
+          alert('DocuSign error: ' + res.error)
           return
         }
         if (res?.signing_url) {
           // Open DocuSign embedded signing in new tab
           window.open(res.signing_url, '_blank', 'noopener,noreferrer')
-          // Do NOT change ticket status here — docusign_callback workflow
-          // will set it to 'approved' once the envelope is completed.
+          // Ticket status is updated by the DocuSign callback workflow, not here.
         } else {
-          alert('DocuSign did not return a signing URL. Check n8n execution logs.')
+          alert(
+            'DocuSign did not return a signing URL.\n\n' +
+            'The n8n workflow ran but produced no URL. Check execution logs at:\n' +
+            'https://n8n-n3xl.eugenmueller.tech (workflow: docusign_sign)'
+          )
           return
         }
       } else {
@@ -1034,7 +1062,7 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
       }
       load()
     } catch (e) {
-      alert('Error: ' + (e?.message || 'Unknown error. Check n8n.'))
+      alert('Error: ' + (e?.message || 'Unknown error.'))
     }
   }
 
