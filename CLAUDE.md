@@ -188,11 +188,31 @@ TrueSpend is the reasoning layer. ERP is the book of record.
 bash scripts/quality-gate.sh
 ```
 
+## n8n VPS — important infrastructure note (2026-05-31)
+- n8n container: `/docker/n8n-n3xl/` — docker compose with Traefik labels
+- **Traefik label bug was fixed**: missing `COMPOSE_PROJECT_NAME=n8n-n3xl` and `TRAEFIK_HOST=eugenmueller.tech`
+  in `/docker/n8n-n3xl/.env` caused label to resolve as `Host(\`n8n-n3xl.\`)` (missing domain).
+  After adding these vars and `docker compose up -d --force-recreate`, n8n is externally accessible.
+- If n8n is unreachable: SSH to `root@187.127.87.206`, run `cd /docker/n8n-n3xl && docker compose up -d`
+- Intake receiver workflow ID: `tUiEY7LpGe7zOvW8` (active). SMTP cred: `4nJqszHi2HtSAqVx`, Jira cred: `MYydmb8FjLgo9CxM`
+- If workflow fails validation on startup: use `db/migrations/fix_workflow_creds.js` to re-assign credentials
+
+## compliance_status enum (suppliers table)
+Valid values: `pending`, `running`, `green`, `amber`, `red`, `waived` — NOT `approved`.
+All 17 mock suppliers set to `'green'` (2026-05-31). Pre-Check Gate checks `=== 'green'`.
+
+## open_tickets_board view — extra columns added (2026-05-31)
+Now includes: `branch_id`, `cost_center_id`, `submitted_by`, `submitted_by_email`,
+`confidence_score` (alias of `t.confidence`), `value_eur`, `category`.
+`po_delivery_overdue` is computed inline (purchase_orders has no `delivery_overdue` column).
+Decisions table has no `budget_available_eur`/`budget_bucket_pct` columns — removed from view.
+
 ## Known issues
 ### Open
 - **H3** — RLS policies: 15 tables covered. `trace_log`, `supplier_emails`, `branches`,
   `hyperscaler_positions`, `contract_changes` covered by `app_role_all` pattern but not enumerated
 - **UX** — No "Mark Delivered" button on Ops Board (delivery_confirmation webhook at `/webhook/delivery-confirmation` works, just no button yet)
+- **n8n instability** — container may crash on workflow activation failure. If down: SSH restart `docker compose up -d`
 
 ### Fixed
 - **H1** ✓ — `hyperscaler_monitor.json` check_flags already used correct field names
@@ -210,6 +230,11 @@ bash scripts/quality-gate.sh
 - **DocuSign IF node** ✓ — `$env.VAR` doesn't evaluate in IF node conditions; removed IF node, made straight-line flow
 - **Webhook conflict** ✓ — old `womQsMmOTTD78LYq` workflow deleted; `docusign-sign` path now owned by `D4aWf18qlGfxL4Qm`
 - **Mock data** ✓ — all 28 tables seeded; 41 tickets including `signature_required` tickets for DocuSign testing
+- **Branch scoping** ✓ — `open_tickets_board` now exposes `branch_id`; all tickets have branch_id set; all branches have demo tickets
+- **Supplier compliance** ✓ — all 17 suppliers set to `compliance_status='green'`; Pre-Check Gate checks `'green'` not `'approved'`
+- **Traefik routing** ✓ — n8n external URL fixed; `COMPOSE_PROJECT_NAME` + `TRAEFIK_HOST` added to VPS `/docker/n8n-n3xl/.env`
+- **PO query column** ✓ — `purchase_orders.value_eur` → `amount_eur` in App.jsx analytics and supplier overview
+- **Submitted by email** ✓ — all mock tickets backfilled with `submitted_by_email` from owner
 
 ## Stability improvements (2026-05-27)
 - All 9 Claude httpRequest nodes: 120,000ms timeout, retry 3× with 2s backoff
