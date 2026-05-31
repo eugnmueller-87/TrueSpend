@@ -1,6 +1,6 @@
-# Pre-built dist is committed — skip npm build, just serve
+# Build intake SPA and serve via static file server
 [phases.build]
-cmds = ["npm ci --omit=dev"]
+cmds = ["npm ci", "npm run build"]
 
 [start]
 cmd = "npm start"
