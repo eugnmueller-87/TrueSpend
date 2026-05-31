@@ -925,7 +925,7 @@ const TicketTableHead = () => (
   <div className="tlist__head">
     <div className="tlist__hcell">Status</div>
     <div className="tlist__hcell">Step</div>
-    <div className="tlist__hcell">Request</div>
+    <div className="tlist__hcell">Request &amp; Requester</div>
     <div className="tlist__hcell">Supplier</div>
     <div className="tlist__hcell tlist__hcell--right">Value</div>
     <div className="tlist__hcell tlist__hcell--right">Action</div>
@@ -953,22 +953,25 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
           <span className="trow__step-sub">{flow.label}</span>
         </div>
 
-        {/* Col 3 — Title + meta */}
+        {/* Col 3 — Request title + requester (moved from supplier col) */}
         <div className="trow__main">
           <div className="trow__title">{ticket.title}</div>
           <div className="trow__meta">
+            {ticket.submitted_by && (
+              <span style={{ fontWeight: 600, color: '#5C3D08' }}>{ticket.submitted_by}</span>
+            )}
+            {ticket.submitted_by && <span className="dot" />}
             <span className="ref">{ticket.reference}</span>
             <span className="dot" />
             <span>{timeAgo(ticket.created_at)}</span>
             {ticket.branch_name && <><span className="dot" /><span>{ticket.branch_name}</span></>}
-            {ticket.category && <><span className="dot" /><span>{ticket.category}</span></>}
           </div>
         </div>
 
-        {/* Col 4 — Supplier */}
+        {/* Col 4 — Supplier only (requester moved to request col) */}
         <div>
           <div className="trow__supplier">{ticket.supplier_name || '—'}</div>
-          <div className="trow__supplier-meta">{ticket.submitted_by || ''}</div>
+          {ticket.category && <div className="trow__supplier-meta">{ticket.category}</div>}
         </div>
 
         {/* Col 5 — Value */}
