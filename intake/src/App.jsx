@@ -111,6 +111,8 @@ const IconFile     = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0
 const IconUserPlus = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></Icon>
 const IconShield   = (p) => <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></Icon>
 const IconSearch   = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></Icon>
+const IconContract = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></Icon>
+const IconPieChart = (p) => <Icon {...p}><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></Icon>
 
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS = {
@@ -212,6 +214,8 @@ const NAV_BY_GROUP = {
   procurement: [
     { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
+    { id: 'contracts', label: 'Contracts',   Icon: IconContract },
+    { id: 'budget',    label: 'Budget',      Icon: IconPieChart },
     { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
     { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
     { id: 'search',    label: 'Search docs', Icon: IconSearch },
@@ -233,7 +237,8 @@ const NAV_BY_GROUP = {
   ],
   controlling: [
     { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
-    { id: 'budget',    label: 'Budget',      Icon: IconShield },
+    { id: 'budget',    label: 'Budget',      Icon: IconPieChart },
+    { id: 'contracts', label: 'Contracts',   Icon: IconContract },
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
     { id: 'search',    label: 'Search docs', Icon: IconSearch },
   ],
@@ -470,33 +475,29 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
         </div>
       )}
 
-      <div className="sidebar__sectionhead">Analytics</div>
-      <nav className="sidebar__nav">
-        {[
-          { label: 'Vendor Intel', Icon: IconBuilding, url: 'https://grafana-production-49fc.up.railway.app/d/3c77930d-33a5-4f55-b104-766e171573bf/suppliers' },
-          { label: 'Budgets',      Icon: IconWrench,   url: 'https://grafana-production-49fc.up.railway.app/d/06389734-1dd7-4bae-89c0-dcce8b1c8d09/budgets' },
-          { label: 'Contracts',    Icon: IconRefresh,  url: 'https://grafana-production-49fc.up.railway.app/d/7731a334-ca87-4301-a364-9b816c58b64c/contracts' },
-          { label: 'Expiring',     Icon: IconClock,    url: 'https://grafana-production-49fc.up.railway.app/d/a1b2c3d4-expiry-dash-0001/expiring-contracts-and-licenses' },
-          { label: 'PO Status',    Icon: IconTruck,    url: 'https://grafana-production-49fc.up.railway.app/d/po-board-dash-0001/purchase-orders' },
-        ].map(({ label, Icon, url }) => (
-          <button key={label} className="sidebar__link" onClick={() => window.open(url, '_blank')}>
-            <span className="sidebar__link-icon"><Icon size={16} /></span>
-            <span>{label}</span>
-          </button>
-        ))}
-      </nav>
-
-      <div className="sidebar__user">
-        <div className="sidebar__avatar">{initials}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="sidebar__user-name">{user?.name || 'Guest'}</div>
-          <div className="sidebar__user-sub">{branch}</div>
+      <div className="sidebar__user" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 0, padding: '10px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <div className="sidebar__avatar" style={{ background: PERSONA_GROUP_COLOR[roleGroup] || '#B07219' }}>{initials}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sidebar__user-name">{user?.name || 'Guest'}</div>
+            <div className="sidebar__user-sub">{branch}</div>
+          </div>
         </div>
-        <RoleSwitcher
-          currentUser={user}
-          onSwitch={onQuickSwitch}
-          onSignOut={onSwitchUser}
-        />
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{
+            flex: 1, fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+            padding: '3px 8px', borderRadius: 5,
+            background: (PERSONA_GROUP_COLOR[roleGroup] || '#B07219') + '1A',
+            color: PERSONA_GROUP_COLOR[roleGroup] || '#B07219',
+          }}>
+            {ROLE_LABEL[roleGroup] || roleGroup}
+          </span>
+          <RoleSwitcher
+            currentUser={user}
+            onSwitch={onQuickSwitch}
+            onSignOut={onSwitchUser}
+          />
+        </div>
       </div>
     </aside>
   )
@@ -2030,8 +2031,8 @@ const OrdersBoard = ({ onCountChange }) => {
               <span className="section__hint">{sec.hint}</span>
             </div>
             <div className="tlist">
-              {/* Header row */}
-              <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#75695F' }}>
+              {/* Header row — 5-col orders grid */}
+              <div className="trow" style={{ gridTemplateColumns: '150px 1fr 160px 110px 200px', background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#75695F' }}>
                 <div>Status</div>
                 <div>Order</div>
                 <div>Supplier</div>
@@ -2043,7 +2044,7 @@ const OrdersBoard = ({ onCountChange }) => {
                 const overdue = po.expected_delivery && new Date(po.expected_delivery) < new Date() && ['sent','acknowledged'].includes(po.po_status)
                 return (
                   <div key={po.id}>
-                    <div className="trow" style={{ cursor: 'pointer' }} onClick={() => setOpenId(isOpen ? null : po.id)}>
+                    <div className="trow" style={{ gridTemplateColumns: '150px 1fr 160px 110px 200px', cursor: 'pointer' }} onClick={() => setOpenId(isOpen ? null : po.id)}>
                       <div><PoStatusPill status={po.po_status} /></div>
                       <div className="trow__main">
                         <div className="trow__title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3437,25 +3438,25 @@ const BudgetScreen = ({ user }) => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
             <div>
               <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Branch</label>
-              <select className="form-input" value={form.branch_id} onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}>
+              <select className="select" value={form.branch_id} onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}>
                 {BRANCHES.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
               </select>
             </div>
             <div>
               <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Category</label>
-              <select className="form-input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+              <select className="select" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
                 {BUDGET_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
               <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Period</label>
-              <select className="form-input" value={form.period} onChange={e => setForm(f => ({ ...f, period: e.target.value }))}>
+              <select className="select" value={form.period} onChange={e => setForm(f => ({ ...f, period: e.target.value }))}>
                 {BUDGET_PERIODS.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
             <div>
               <label style={{ fontSize: 11, color: '#75695F', display: 'block', marginBottom: 4 }}>Planned (EUR)</label>
-              <input className="form-input" type="number" min="0" placeholder="e.g. 50000"
+              <input className="input" type="number" min="0" placeholder="e.g. 50000"
                 value={form.planned} onChange={e => setForm(f => ({ ...f, planned: e.target.value }))} />
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -4137,6 +4138,271 @@ const SEARCH_TYPES = [
 
 const GDPR_STATUS_COLOR = { signed: '#3D7A5A', draft: '#B5462E', generated: '#D97706', sent: '#2563EB', expired: '#6B7280', filed: '#3D7A5A' }
 
+// ─── Contracts Screen ─────────────────────────────────────────────────────────
+// Real DB data from /contracts. Shows expiry urgency, auto-renew flag, RAG status.
+// "Renew" action fires the n8n intake webhook (ticket_type: renew).
+const CONTRACT_CATEGORIES = { hardware: 'Hardware', hyperscaler: 'Hyperscaler', saas_license: 'SaaS', services: 'Services', facilities: 'Facilities', telecoms: 'Telecoms', other: 'Other' }
+
+function ragStatus(expiryDate) {
+  if (!expiryDate) return { label: 'No expiry', color: '#A89B8B', bg: '#F0EBE3' }
+  const days = Math.ceil((new Date(expiryDate) - new Date()) / 86400000)
+  if (days < 0)   return { label: 'Expired',     color: '#B5462E', bg: '#F6E5DE', days }
+  if (days <= 30) return { label: `${days}d`,    color: '#B5462E', bg: '#F6E5DE', days }
+  if (days <= 90) return { label: `${days}d`,    color: '#C99119', bg: '#FAF1D7', days }
+  if (days <= 180) return { label: `${days}d`,   color: '#B07219', bg: '#F7EFDE', days }
+  return { label: `${days}d`,                    color: '#3D7A5A', bg: '#EEF3EE', days }
+}
+
+function ContractsScreen({ user }) {
+  const [contracts,  setContracts]  = useState(null)
+  const [suppliers,  setSuppliers]  = useState({})
+  const [filter,     setFilter]     = useState('')      // category filter
+  const [search,     setSearch]     = useState('')
+  const [renewing,   setRenewing]   = useState(null)
+  const [renewOk,    setRenewOk]    = useState(null)
+  const [openId,     setOpenId]     = useState(null)
+  const roleGroup = ROLE_GROUP[user?.role] || 'user'
+  const canRenew  = roleGroup === 'procurement'
+
+  useEffect(() => {
+    Promise.all([
+      pgFetch('/contracts?order=expiry_date.asc&limit=200&select=id,name,contract_number,supplier_id,category,value_eur,expiry_date,auto_renew,renewal_state,start_date'),
+      pgFetch('/suppliers?select=id,name&limit=200'),
+    ]).then(([ctrs, sups]) => {
+      const supMap = {}
+      for (const s of (sups || [])) supMap[s.id] = s.name
+      setSuppliers(supMap)
+      // Sort: expired first, then by days asc, then auto_renew
+      const sorted = (ctrs || []).slice().sort((a, b) => {
+        const da = a.expiry_date ? Math.ceil((new Date(a.expiry_date) - new Date()) / 86400000) : 9999
+        const db = b.expiry_date ? Math.ceil((new Date(b.expiry_date) - new Date()) / 86400000) : 9999
+        return da - db
+      })
+      setContracts(sorted)
+    }).catch(() => setContracts([]))
+  }, [])
+
+  const handleRenew = async (c) => {
+    if (renewing) return
+    setRenewing(c.id)
+    try {
+      await fetch(N8N_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticket_type:       'renew',
+          title:             `Renew — ${c.name}`,
+          description:       `Contract renewal request for ${c.name} (${c.contract_number || c.id}). Current expiry: ${c.expiry_date || 'unknown'}. Category: ${c.category || 'other'}.`,
+          submitted_by:      user?.name || '',
+          submitted_by_email: user?.email || '',
+          supplier_name:     suppliers[c.supplier_id] || '',
+          value_eur:         c.value_eur || 0,
+          category:          c.category || 'other',
+          branch_id:         user?.branchId || null,
+        }),
+      })
+      setRenewOk(c.id)
+      setTimeout(() => setRenewOk(null), 3000)
+    } catch {}
+    setRenewing(null)
+  }
+
+  const displayed = (contracts || []).filter(c => {
+    if (filter && c.category !== filter) return false
+    if (search) {
+      const q = search.toLowerCase()
+      return (c.name || '').toLowerCase().includes(q) || (suppliers[c.supplier_id] || '').toLowerCase().includes(q) || (c.contract_number || '').toLowerCase().includes(q)
+    }
+    return true
+  })
+
+  // Stats
+  const now = new Date()
+  const expired   = (contracts || []).filter(c => c.expiry_date && new Date(c.expiry_date) < now).length
+  const exp30     = (contracts || []).filter(c => { if (!c.expiry_date) return false; const d = Math.ceil((new Date(c.expiry_date) - now) / 86400000); return d >= 0 && d <= 30 }).length
+  const exp90     = (contracts || []).filter(c => { if (!c.expiry_date) return false; const d = Math.ceil((new Date(c.expiry_date) - now) / 86400000); return d > 30 && d <= 90 }).length
+  const autoRenew = (contracts || []).filter(c => c.auto_renew).length
+
+  return (
+    <div className="board-wrap">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 4 }}>Contracts</div>
+          <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 28, color: '#161413', letterSpacing: '-0.025em' }}>
+            Contract register
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input
+            className="input"
+            placeholder="Search contracts…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ width: 200, fontSize: 13 }}
+          />
+          <select className="select" value={filter} onChange={e => setFilter(e.target.value)} style={{ fontSize: 13 }}>
+            <option value="">All categories</option>
+            {Object.entries(CONTRACT_CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Stats strip */}
+      {contracts && (
+        <div className="stats" style={{ marginBottom: 24 }}>
+          <div className="stat">
+            <div className="stat__label">Total</div>
+            <div className="stat__val">{contracts.length}</div>
+            <div className="stat__hint">Active contracts</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Expired</div>
+            <div className="stat__val" style={{ color: expired ? '#B5462E' : '#3D7A5A' }}>{expired}</div>
+            <div className="stat__hint">Need immediate action</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Expiring &lt;30d</div>
+            <div className="stat__val" style={{ color: exp30 ? '#C99119' : '#3D7A5A' }}>{exp30}</div>
+            <div className="stat__hint">Critical renewal window</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Expiring &lt;90d</div>
+            <div className="stat__val" style={{ color: exp90 ? '#B07219' : '#3D7A5A' }}>{exp90}</div>
+            <div className="stat__hint">Renewal window open</div>
+          </div>
+          <div className="stat">
+            <div className="stat__label">Auto-renew</div>
+            <div className="stat__val" style={{ color: '#3D7A5A' }}>{autoRenew}</div>
+            <div className="stat__hint">Handled by agent</div>
+          </div>
+        </div>
+      )}
+
+      {/* Contracts list */}
+      {!contracts && <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>Loading contracts…</div>}
+      {contracts && contracts.length === 0 && (
+        <div style={{ padding: '60px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>No contracts found.</div>
+      )}
+
+      {contracts && displayed.length > 0 && (
+        <div className="tlist">
+          {/* Header */}
+          <div className="trow" style={{ gridTemplateColumns: '100px 1fr 160px 110px 140px 160px', background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#75695F' }}>
+            <div>Expiry</div>
+            <div>Contract</div>
+            <div>Supplier</div>
+            <div style={{ textAlign: 'right' }}>Value</div>
+            <div>Category</div>
+            <div style={{ textAlign: 'right' }}>Actions</div>
+          </div>
+
+          {displayed.map(c => {
+            const rag     = ragStatus(c.expiry_date)
+            const isOpen  = openId === c.id
+            const supName = suppliers[c.supplier_id] || '—'
+
+            return (
+              <div key={c.id}>
+                <div
+                  className="trow"
+                  style={{ gridTemplateColumns: '100px 1fr 160px 110px 140px 160px', cursor: 'pointer' }}
+                  onClick={() => setOpenId(isOpen ? null : c.id)}
+                >
+                  {/* Expiry badge */}
+                  <div>
+                    <span className="pill" style={{ background: rag.bg, color: rag.color, fontFamily: "'Geist Mono', monospace", fontWeight: 700, fontSize: 11 }}>
+                      {rag.days !== undefined && rag.days < 0 ? 'Expired' : rag.label}
+                    </span>
+                  </div>
+
+                  {/* Name */}
+                  <div className="trow__main">
+                    <div className="trow__title">
+                      {c.name}
+                      {c.auto_renew && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 4, background: '#EEF3EE', color: '#3D7A5A', border: '1px solid #C5D8C9' }}>Auto-renew</span>}
+                    </div>
+                    <div className="trow__meta">
+                      {c.contract_number && <span className="ref">{c.contract_number}</span>}
+                      {c.start_date && <><span className="dot"/><span>from {new Date(c.start_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span></>}
+                    </div>
+                  </div>
+
+                  {/* Supplier */}
+                  <div>
+                    <div className="trow__supplier">{supName}</div>
+                  </div>
+
+                  {/* Value */}
+                  <div style={{ textAlign: 'right' }}>
+                    <div className="trow__value">{c.value_eur ? fmt(c.value_eur) : '—'}</div>
+                  </div>
+
+                  {/* Category */}
+                  <div>
+                    <span className="pill" style={{ background: '#F0EDE8', color: '#75695F', fontSize: 11 }}>
+                      {CONTRACT_CATEGORIES[c.category] || c.category || '—'}
+                    </span>
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
+                    {renewOk === c.id ? (
+                      <span style={{ fontSize: 12, color: '#3D7A5A', fontWeight: 600 }}>✓ Submitted</span>
+                    ) : canRenew && (
+                      <button
+                        className="btn btn--secondary btn--sm"
+                        style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                        disabled={renewing === c.id}
+                        onClick={e => { e.stopPropagation(); handleRenew(c) }}
+                      >
+                        {renewing === c.id ? 'Submitting…' : 'Renew'}
+                      </button>
+                    )}
+                    <IconChevDown size={14} style={{ color: '#A89B8B', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }} />
+                  </div>
+                </div>
+
+                {/* Expanded detail */}
+                {isOpen && (
+                  <div style={{ padding: '16px 24px 20px', background: '#FDFAF5', borderTop: '1px solid #EEE7DA', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 6 }}>Contract details</div>
+                      <div style={{ fontSize: 12.5, color: '#3D3633', lineHeight: 1.8 }}>
+                        <div><strong>Number:</strong> {c.contract_number || '—'}</div>
+                        <div><strong>Start:</strong> {c.start_date ? new Date(c.start_date).toLocaleDateString('en-GB') : '—'}</div>
+                        <div><strong>Expiry:</strong> {c.expiry_date ? new Date(c.expiry_date).toLocaleDateString('en-GB') : '—'}</div>
+                        <div><strong>Auto-renew:</strong> {c.auto_renew ? 'Yes' : 'No'}</div>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 6 }}>Renewal state</div>
+                      <div>
+                        <span className="pill" style={{ fontSize: 12, background: c.renewal_state === 'auto_renewed' ? '#EEF3EE' : c.renewal_state === 'manual_required' ? '#FAF1D7' : '#F0EDE8', color: c.renewal_state === 'auto_renewed' ? '#3D7A5A' : c.renewal_state === 'manual_required' ? '#8C6510' : '#75695F' }}>
+                          {c.renewal_state || 'not set'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 6 }}>Supplier</div>
+                      <div style={{ fontSize: 12.5, color: '#3D3633' }}>{supName}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {contracts && displayed.length === 0 && (contracts.length > 0) && (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: '#A89B8B', fontSize: 13 }}>
+          No contracts match the current filter.
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SearchScreen() {
   const [query,     setQuery]     = useState('')
   const [docType,   setDocType]   = useState('')
@@ -4428,6 +4694,7 @@ export default function App() {
     if (tab === 'home' || tab === 'request') return ['New request']
     if (tab === 'users')     return ['Users']
     if (tab === 'budget')    return ['Budget']
+    if (tab === 'contracts') return ['Contracts']
     if (tab === 'search')    return ['Search']
     return ['Operations']
   })()
@@ -4491,9 +4758,10 @@ export default function App() {
               onSuccess={(ref) => setSuccess({ ref, email: resolvedUser?.email, isOrder: false })}
             />
           )}
-          {!success && tab === 'users'   && <UsersScreen />}
-          {!success && tab === 'budget'  && <BudgetScreen user={resolvedUser} />}
-          {!success && tab === 'search'  && <SearchScreen />}
+          {!success && tab === 'users'     && <UsersScreen />}
+          {!success && tab === 'budget'    && <BudgetScreen user={resolvedUser} />}
+          {!success && tab === 'contracts' && <ContractsScreen user={resolvedUser} />}
+          {!success && tab === 'search'    && <SearchScreen />}
         </main>
       </div>
 
