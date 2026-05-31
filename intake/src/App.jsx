@@ -265,9 +265,9 @@ const ROLE_GROUP = {
   user:                'user',
   ops_manager:         'user',
   requester:           'user',
+  legal:               'user',        // legal has read-only access
   controlling:         'controlling',
   admin:               'admin',
-  // cfo and legal removed — no tool access
 }
 
 // IT categories — IT Manager only sees board tickets in these categories
@@ -319,18 +319,11 @@ const NAV_PRIMARY = NAV_BY_GROUP.procurement // default — overridden at runtim
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 // Role switcher popover — one-click demo persona switching from the sidebar footer
-const RoleSwitcher = ({ currentUser, onSwitch, onSignOut }) => {
-  const [open, setOpen]       = useState(false)
-  const [users, setUsers]     = useState(null)
-  const [fetchErr, setFetchErr] = useState(null)
+const RoleSwitcher = ({ currentUser, users, fetchErr, onSwitch, onSignOut }) => {
+  // users + fetchErr are fetched once at App level and passed down as props.
+  // This means the list survives role switches without re-fetching.
+  const [open, setOpen] = useState(false)
   const ref = useRef(null)
-
-  // Load users once on mount
-  useEffect(() => {
-    pgFetch('/users?active=eq.true&order=role.asc,name.asc&limit=50')
-      .then(d => { setUsers(d); setFetchErr(null) })
-      .catch(e => { setUsers([]); setFetchErr(e?.message || 'Failed to load users') })
-  }, [])
 
   // Close on outside click
   useEffect(() => {
@@ -487,7 +480,7 @@ const PoStatusPill = ({ status }) => {
   )
 }
 
-const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwitchUser, onQuickSwitch }) => {
+const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, allUsers, usersErr, onSwitchUser, onQuickSwitch }) => {
   const sidebarTab = tab === 'request' ? 'home' : tab
   const initials = user ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '?'
   const branch = user ? (BRANCHES.find(b => b.id === user.branchId)?.label || '') : ''
@@ -569,6 +562,8 @@ const Sidebar = ({ tab, onNav, counts, openByStatus, onJumpSection, user, onSwit
           </span>
           <RoleSwitcher
             currentUser={user}
+            users={allUsers}
+            fetchErr={usersErr}
             onSwitch={onQuickSwitch}
             onSignOut={onSwitchUser}
           />
@@ -5272,10 +5267,20 @@ export default function App() {
   const [openByStatus, setOpenByStatus] = useState({})
   const [cart,        setCart]        = useState([])   // [{ item, qty }]
   const [cartOpen,    setCartOpen]    = useState(false)
+  const [allUsers,    setAllUsers]    = useState(null)  // hoisted — survives role switches
+  const [usersErr,    setUsersErr]    = useState(null)
 
   // Clear stale cached sessions with removed roles (cfo, legal, head_of_procurement)
   useEffect(() => {
     if (user && !ROLE_GROUP[user.role]) setUser(DEFAULT_USER)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch all users once at app level — RoleSwitcher reads this prop instead of
+  // fetching itself, so the list survives role switches without re-fetching.
+  useEffect(() => {
+    pgFetch('/users?active=eq.true&order=role.asc,name.asc&limit=50')
+      .then(d => { setAllUsers(d); setUsersErr(null) })
+      .catch(e => { setAllUsers([]); setUsersErr(e?.message || 'Failed to load users') })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const navigate = (t) => { setTab(t); setReqType(null); setSuccess(null); setSectionJump(null) }
@@ -5365,6 +5370,8 @@ export default function App() {
           openByStatus={openByStatus}
           onJumpSection={(st) => { setTab('board'); setSectionJump(st) }}
           user={resolvedUser}
+          allUsers={allUsers}
+          usersErr={usersErr}
           onSwitchUser={() => setUser(null)}
           onQuickSwitch={(u) => {
             setUser(u)
