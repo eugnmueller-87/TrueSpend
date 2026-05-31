@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const POSTGREST_URL    = import.meta.env.VITE_POSTGREST_URL    || 'https://postgrest-production-7960.up.railway.app'
-const POSTGREST_JWT    = import.meta.env.VITE_POSTGREST_JWT    || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoidHJ1ZXNwZW5kIiwiaWF0IjoxNzgwMTYzNDg3LCJleHAiOjIwOTU3Mzk0ODd9.NfCfCbnipo0tblsx6UUU7tpS7ZQbTkOWMhniaK6kXqE'
+const POSTGREST_JWT    = import.meta.env.VITE_POSTGREST_JWT    || ''
 const N8N_WEBHOOK      = import.meta.env.VITE_N8N_WEBHOOK_URL  || 'https://n8n-n3xl.eugenmueller.tech/webhook/intake'
 const N8N_WEBHOOK_BASE = import.meta.env.VITE_N8N_WEBHOOK_BASE || 'https://n8n-n3xl.eugenmueller.tech/webhook'
 
@@ -2555,9 +2555,15 @@ const ONBOARD_STEPS = [
   { key: 'lksg',    label: 'LkSG / Ethics',        agent: 'LkSG Agent',     desc: 'Supply chain risk, sanctions, COC' },
 ]
 
-const OnboardModal = ({ onClose, onDone }) => {
+const OnboardModal = ({ onClose, onDone, initialSupplier }) => {
   const [step, setStep] = useState('form')   // form | running | done | error
-  const [form, setForm] = useState({ name: '', country: 'Germany', category: 'saas_license', website: '', contact_email: '' })
+  const [form, setForm] = useState({
+    name: initialSupplier?.name || '',
+    country: initialSupplier?.country || 'Germany',
+    category: initialSupplier?.category || 'saas_license',
+    website: initialSupplier?.website || '',
+    contact_email: initialSupplier?.contact_email || '',
+  })
   const [progress, setProgress] = useState({})   // { lawyer: 'done'|'running'|'pending', ... }
   const [result, setResult] = useState(null)
   const [errMsg, setErrMsg] = useState('')
@@ -2570,23 +2576,33 @@ const OnboardModal = ({ onClose, onDone }) => {
     setProgress({ lawyer: 'running', gdpr: 'pending', infosec: 'pending', lksg: 'pending' })
 
     try {
-      // POST to n8n supplier onboarding webhook
-      // n8n first needs a supplier_id — we'll create the supplier row first via PostgREST
-      const newSupplier = await fetch(`${POSTGREST_URL}/suppliers`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          category: form.category,
-          health: 'watch',
-          compliance_status: 'running',
-          contact_email: form.contact_email || null,
-          website: form.website || null,
-          country: form.country,
+      let supplierId = initialSupplier?.id || null
+
+      if (!supplierId) {
+        // New supplier — create the row first, then run compliance agents
+        const newSupplier = await fetch(`${POSTGREST_URL}/suppliers`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+          body: JSON.stringify({
+            name: form.name.trim(),
+            category: form.category,
+            health: 'watch',
+            compliance_status: 'running',
+            contact_email: form.contact_email || null,
+            website: form.website || null,
+            country: form.country,
+          })
+        }).then(r => r.json())
+        supplierId = newSupplier[0]?.id
+        if (!supplierId) throw new Error('Failed to create supplier record')
+      } else {
+        // Existing supplier — reset compliance_status to 'running' before re-assessment
+        await fetch(`${POSTGREST_URL}/suppliers?id=eq.${supplierId}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify({ compliance_status: 'running' })
         })
-      }).then(r => r.json())
-      const supplierId = newSupplier[0]?.id
-      if (!supplierId) throw new Error('Failed to create supplier record')
+      }
 
       // Animate progress while n8n runs (it takes ~60s for 4 agents)
       const animInterval = setInterval(() => {
@@ -3187,8 +3203,9 @@ const SuppliersScreen = () => {
   const [contracts,   setContracts]   = useState(null)  // { [supplier_id]: contract }
   const [spendMap,    setSpendMap]    = useState(null)  // { [supplier_id]: totalEur }
   const [selected,    setSelected]    = useState(null)  // supplier object for drawer
-  const [onboarding,  setOnboarding]  = useState(false)
-  const [analytics,   setAnalytics]   = useState(false)
+  const [onboarding,        setOnboarding]        = useState(false)
+  const [onboardingSupplier, setOnboardingSupplier] = useState(null)
+  const [analytics,         setAnalytics]          = useState(false)
   const [search,      setSearch]      = useState('')
 
   const load = useCallback(async () => {
@@ -3359,8 +3376,16 @@ const SuppliersScreen = () => {
                 </div>
                 {/* Actions */}
                 <div style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
-                  {!['approved','blocked'].includes(s.compliance_status) && (
-                    <button className="btn btn--secondary btn--sm" onClick={() => setOnboarding(true)}>Assess</button>
+                  {!['approved','blocked'].includes(s.compliance_status) ? (
+                    <button
+                      className="btn btn--primary btn--sm"
+                      style={{ background: '#B07219', borderColor: '#B07219' }}
+                      onClick={() => { setOnboardingSupplier(s); setOnboarding(true) }}
+                    >
+                      Assess
+                    </button>
+                  ) : (
+                    <button className="btn btn--tertiary btn--sm" onClick={() => setSelected(s)}>View</button>
                   )}
                 </div>
               </div>
@@ -3374,13 +3399,14 @@ const SuppliersScreen = () => {
           supplier={selected}
           spendMap={spendMap}
           onClose={() => setSelected(null)}
-          onAssess={() => { setSelected(null); setOnboarding(true) }}
+          onAssess={() => { setOnboardingSupplier(selected); setSelected(null); setOnboarding(true) }}
         />
       )}
       {onboarding && (
         <OnboardModal
-          onClose={() => setOnboarding(false)}
-          onDone={() => { setOnboarding(false); load() }}
+          initialSupplier={onboardingSupplier}
+          onClose={() => { setOnboarding(false); setOnboardingSupplier(null) }}
+          onDone={() => { setOnboarding(false); setOnboardingSupplier(null); load() }}
         />
       )}
       {analytics && <AnalyticsDrawer onClose={() => setAnalytics(false)} />}
