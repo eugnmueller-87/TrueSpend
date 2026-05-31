@@ -3,6 +3,17 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Build-time env vars — set as Railway build variables (not secrets)
+ARG VITE_POSTGREST_URL=https://postgrest-production-7960.up.railway.app
+ARG VITE_POSTGREST_JWT
+ARG VITE_N8N_WEBHOOK_URL=https://n8n-n3xl.eugenmueller.tech/webhook/intake
+ARG VITE_N8N_WEBHOOK_BASE=https://n8n-n3xl.eugenmueller.tech/webhook
+
+ENV VITE_POSTGREST_URL=$VITE_POSTGREST_URL
+ENV VITE_POSTGREST_JWT=$VITE_POSTGREST_JWT
+ENV VITE_N8N_WEBHOOK_URL=$VITE_N8N_WEBHOOK_URL
+ENV VITE_N8N_WEBHOOK_BASE=$VITE_N8N_WEBHOOK_BASE
+
 # Build context is repo root; intake/ contains the app
 COPY intake/package.json intake/package-lock.json* ./
 RUN npm ci --prefer-offline

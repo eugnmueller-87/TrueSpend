@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const POSTGREST_URL    = import.meta.env.VITE_POSTGREST_URL    || 'https://postgrest-production-7960.up.railway.app'
-const POSTGREST_JWT    = import.meta.env.VITE_POSTGREST_JWT    || ''
+const POSTGREST_JWT    = import.meta.env.VITE_POSTGREST_JWT    || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoidHJ1ZXNwZW5kIiwiaWF0IjoxNzgwMTYzNDg3LCJleHAiOjIwOTU3Mzk0ODd9.NfCfCbnipo0tblsx6UUU7tpS7ZQbTkOWMhniaK6kXqE'
 const N8N_WEBHOOK      = import.meta.env.VITE_N8N_WEBHOOK_URL  || 'https://n8n-n3xl.eugenmueller.tech/webhook/intake'
 const N8N_WEBHOOK_BASE = import.meta.env.VITE_N8N_WEBHOOK_BASE || 'https://n8n-n3xl.eugenmueller.tech/webhook'
 
