@@ -2,12 +2,17 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-live-brightgreen?style=flat-square" alt="Status" />
-  <img src="https://img.shields.io/badge/AI-Claude%20Sonnet%204.6-5A67D8?style=flat-square&logo=anthropic&logoColor=white" alt="Claude" />
-  <img src="https://img.shields.io/badge/orchestration-n8n-EA4B71?style=flat-square&logo=n8n&logoColor=white" alt="n8n" />
-  <img src="https://img.shields.io/badge/database-PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL" />
-  <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
+  <img src="https://img.shields.io/badge/AI-Claude%20Sonnet%204.6-5A67D8?style=flat-square&logo=anthropic&logoColor=white" alt="Claude Sonnet 4.6" />
+  <img src="https://img.shields.io/badge/orchestration-n8n%20%C2%B7%2014%20workflows-EA4B71?style=flat-square&logo=n8n&logoColor=white" alt="n8n · 14 workflows" />
+  <img src="https://img.shields.io/badge/database-PostgreSQL%20%C2%B7%2028%20tables-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL · 28 tables" />
+  <img src="https://img.shields.io/badge/REST-PostgREST-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgREST" />
+  <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React + Vite" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
   <img src="https://img.shields.io/badge/observability-Grafana-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana" />
+  <img src="https://img.shields.io/badge/e--signature-DocuSign%20JWT%20Grant-FFB600?style=flat-square&logo=docusign&logoColor=black" alt="DocuSign JWT Grant" />
+  <img src="https://img.shields.io/badge/escalations-Jira%20%E2%89%A5%E2%82%AC100k-0052CC?style=flat-square&logo=jira&logoColor=white" alt="Jira ≥€100k" />
+  <img src="https://img.shields.io/badge/security-NOSUPERUSER%20%C2%B7%20RPC%20boundary-CC3333?style=flat-square&logo=postgresql&logoColor=white" alt="NOSUPERUSER · RPC boundary" />
+  <img src="https://img.shields.io/badge/quality%20gate-24%20checks-3D7A5A?style=flat-square" alt="Quality gate · 24 checks" />
 </p>
 
 <p align="center">
@@ -129,19 +134,26 @@ No Slack. One clean Operations Board. The agent is silent on everything it handl
 
 ---
 
-## Workflows (7)
+## Workflows (14)
 
 | File | Trigger | Function |
 |------|---------|----------|
-| `intake_receiver.json` | Webhook (UI or Jira) | 5-signal reasoning → auto/one-touch/escalate |
-| `supplier_reply_handler.json` | IMAP | Reads supplier email, replies or routes to board |
+| `intake_receiver.json` | Webhook (UI or Jira) | 5-signal reasoning → auto / one-touch / escalate |
+| `supplier_reply_handler.json` | IMAP | Reads supplier email, replies directly or routes to board |
+| `docusign_sign.json` | Webhook (Sign button) | DocuSign JWT Grant → embedded signing URL |
+| `docusign_callback.json` | DocuSign event | Envelope signed → ticket approved, legal doc updated |
 | `contract_watcher.json` | Daily 07:00 | Expiring contracts → auto-renew or agent brief |
 | `reorder_trigger.json` | Daily | Reorder candidates → place order or escalate |
-| `hyperscaler_monitor.json` | Daily 06:00 | Cloud positions → anomaly detection |
-| `supplier_onboarding.json` | Webhook | 4 parallel compliance agents → docs + ticket |
+| `hyperscaler_monitor.json` | Daily 06:00 | Cloud positions → anomaly + overspend alerts |
+| `supplier_onboarding.json` | Webhook | 4 parallel compliance agents → docs + board ticket |
 | `invoice_processor.json` | IMAP | Parse invoice → 3-way match → payment instruction → ERP queue |
+| `delivery_confirmation.json` | Webhook | `confirm_delivery` RPC → PO delivered, SLA check |
+| `asset_depreciation.json` | Monthly 1st 06:00 | Depreciation engine → warranty alerts → replacement tickets |
+| `llm_consumption.json` | Daily 06:30 | AI spend tracking per team/model → anomaly tickets |
+| `rag_embedder.json` | Every 6h | Legal docs → OpenAI embeddings → `document_embeddings` |
+| `vps_monitor.json` | Scheduled | VPS health → alert ticket on anomaly |
 
-All workflows: 120s timeout, 3× retry, full trace_log per signal.
+All workflows: 120s timeout, 3× retry, full `trace_log` per signal. Status transitions call SECURITY DEFINER RPCs — no workflow writes `tickets.status` directly.
 
 ---
 
@@ -165,7 +177,7 @@ Intelligence    vendor_pricing_benchmarks · trust_settings
 ```
 
 **Views (live in production):**
-`open_tickets_board` · `purchase_orders_board` · `catalog_by_supplier` · `contracts_expiring` · `license_waste_report` · `agent_performance` · `weekly_digest` · `workflow_runs`
+`open_tickets_board` · `purchase_orders_board` · `catalog_by_supplier` · `contracts_expiring` · `po_analytics` · `invoice_analytics` · `spend_trend` · `savings_tracking` · `supplier_performance` · `approval_velocity`
 
 ---
 
@@ -184,7 +196,7 @@ The single human interface. No Slack. No email. No dashboards to check unless yo
 
 **Analytics sidebar:** Grafana dashboards for Vendor Intel · Budgets · Contracts · Expiring · PO Status — all tagged and live.
 
-Buttons PATCH PostgREST directly. No backend API needed.
+Approve / Reject / Confirm / Close call SECURITY DEFINER RPCs via PostgREST (`/rpc/*`). Read/display operations PATCH PostgREST directly. No backend API layer needed.
 
 ---
 
@@ -207,6 +219,33 @@ Three-tier approval check on every request:
 1. **Category bucket** — `branch × category × quarter` headroom?
 2. **Branch annual** — running above 80% YTD?
 3. **Manager authority** — within `users.spend_authority` for this category?
+
+---
+
+## Security model
+
+**Database layer (enforced at the PostgreSQL level — not client-side):**
+
+```
+PostgREST connects as truespend_app (NOSUPERUSER, NOBYPASSRLS)
+  ↓
+GRANT/REVOKE is real — no superuser bypass
+  ↓
+tickets.status — no UPDATE grant to truespend_app
+PATCH /tickets {status: "approved"} → 403 Forbidden
+  ↓
+Status transitions ONLY through SECURITY DEFINER RPCs:
+  approve_and_commit   → sets approved + creates PO + commits budget (atomic)
+  reject_ticket        → releases committed budget + sets rejected
+  close_ticket         → sets closed (ack path)
+  confirm_delivery     → sets delivered + SLA check + supplier health flag
+  match_invoice        → 3-way match logic
+  create_payment_instruction → records spend + ERP sync queue entry
+```
+
+**Pre-commit hook** (`scripts/quality-gate.sh`): blocks hardcoded JWTs, private keys, and Bearer tokens in workflow headers. 24 checks, must be green before every push.
+
+**Dormant role guard**: All money RPCs check the JWT `app_role` claim. Currently a NO-OP (static token has no claim). Auto-arms when SSO issues per-user JWTs with `app_role`. One line per RPC to go fail-closed.
 
 ---
 
