@@ -32,6 +32,7 @@ MIGRATION_ORDER=(
   "step2d_truespend_app_role.sql"
   "step3_invoice_rpc_grants.sql"
   "step4_rls_truespend_app.sql"
+  "step5_action_ledger.sql"
 )
 
 # ── Args ──────────────────────────────────────────────────────────────────────
