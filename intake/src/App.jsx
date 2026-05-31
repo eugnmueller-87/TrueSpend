@@ -8,16 +8,28 @@ const N8N_WEBHOOK_BASE = import.meta.env.VITE_N8N_WEBHOOK_BASE || 'https://n8n-n
 
 // ─── Branches ─────────────────────────────────────────────────────────────────
 const BRANCHES = [
-  { label: 'Global HQ',    id: 'b1000000-0000-0000-0000-000000000001' },
-  { label: 'DACH',         id: 'b1000000-0000-0000-0000-000000000002' },
-  { label: 'UK & Ireland', id: 'b1000000-0000-0000-0000-000000000003' },
-  { label: 'Benelux',      id: 'b1000000-0000-0000-0000-000000000004' },
-  { label: 'France',       id: 'b1000000-0000-0000-0000-000000000005' },
-  { label: 'Nordics',      id: 'b1000000-0000-0000-0000-000000000006' },
-  { label: 'Iberia',       id: 'b1000000-0000-0000-0000-000000000007' },
-  { label: 'Italy',        id: 'b1000000-0000-0000-0000-000000000008' },
-  { label: 'CEE',          id: 'b1000000-0000-0000-0000-000000000009' },
-  { label: 'Nordics East', id: 'b1000000-0000-0000-0000-000000000010' },
+  { label: 'Global HQ',    id: 'b1000000-0000-0000-0000-000000000001', currency: 'EUR' },
+  { label: 'DACH',         id: 'b1000000-0000-0000-0000-000000000002', currency: 'EUR' },
+  { label: 'UK & Ireland', id: 'b1000000-0000-0000-0000-000000000003', currency: 'GBP' },
+  { label: 'Benelux',      id: 'b1000000-0000-0000-0000-000000000004', currency: 'EUR' },
+  { label: 'France',       id: 'b1000000-0000-0000-0000-000000000005', currency: 'EUR' },
+  { label: 'Nordics',      id: 'b1000000-0000-0000-0000-000000000006', currency: 'SEK' },
+  { label: 'Iberia',       id: 'b1000000-0000-0000-0000-000000000007', currency: 'EUR' },
+  { label: 'Italy',        id: 'b1000000-0000-0000-0000-000000000008', currency: 'EUR' },
+  { label: 'CEE',          id: 'b1000000-0000-0000-0000-000000000009', currency: 'PLN' },
+  { label: 'Nordics East', id: 'b1000000-0000-0000-0000-000000000010', currency: 'EUR' },
+]
+
+// Supported currencies for intake form
+const CURRENCIES = [
+  { code: 'EUR', symbol: '€', label: 'EUR — Euro' },
+  { code: 'GBP', symbol: '£', label: 'GBP — Pound' },
+  { code: 'USD', symbol: '$', label: 'USD — Dollar' },
+  { code: 'SEK', symbol: 'kr', label: 'SEK — Krona' },
+  { code: 'PLN', symbol: 'zł', label: 'PLN — Złoty' },
+  { code: 'CHF', symbol: '₣', label: 'CHF — Franc' },
+  { code: 'DKK', symbol: 'kr', label: 'DKK — Krone' },
+  { code: 'NOK', symbol: 'kr', label: 'NOK — Krone' },
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1272,13 +1284,15 @@ function buildApprovalPath(amountEur, category, hasPersonalData, existingSupplie
 }
 
 const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
-  const firstName   = user?.name?.split(' ')[0] || 'there'
-  const branchLabel = BRANCHES.find(b => b.id === user?.branchId)?.label || ''
+  const firstName    = user?.name?.split(' ')[0] || 'there'
+  const branchLabel  = BRANCHES.find(b => b.id === user?.branchId)?.label || ''
+  const branchCcy    = BRANCHES.find(b => b.id === user?.branchId)?.currency || 'EUR'
 
   // ── Form state ──
   const [desc,          setDesc]          = useState('')
   const [supplier,      setSupplier]      = useState('')
   const [amount,        setAmount]        = useState('')
+  const [currency,      setCurrency]      = useState(branchCcy)
   const [category,      setCategory]      = useState('')
   const [costCenterId,  setCostCenterId]  = useState(user?.costCenterId || '')
   const [isRecurring,   setIsRecurring]   = useState(false)
@@ -1350,6 +1364,7 @@ const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
           submitted_by_email:  user?.email || '',
           supplier_name:       supplier,
           value_eur:           amtNum,
+          currency:            currency,
           category:            category || 'other',
           branch_id:           user?.branchId || null,
           cost_center_id:      costCenterId || null,
@@ -1445,10 +1460,42 @@ const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
 
               <div className="field" style={{ marginBottom: 0 }}>
                 <label className="field__label">Estimated value</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#75695F', fontSize: 14 }}>€</span>
-                  <input className="input" style={{ paddingLeft: 28 }} value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="0" />
+                <div style={{ display: 'flex', gap: 0 }}>
+                  {/* Currency selector */}
+                  <select
+                    className="select"
+                    value={currency}
+                    onChange={e => setCurrency(e.target.value)}
+                    style={{
+                      borderRadius: '6px 0 0 6px', borderRight: 'none',
+                      minWidth: 72, flexShrink: 0, fontSize: 13, fontWeight: 600,
+                      color: '#5C3D08', background: '#F7EFDE',
+                    }}
+                  >
+                    {CURRENCIES.map(c => (
+                      <option key={c.code} value={c.code}>{c.code}</option>
+                    ))}
+                  </select>
+                  {/* Amount input */}
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#A89B8B', fontSize: 13, pointerEvents: 'none' }}>
+                      {CURRENCIES.find(c => c.code === currency)?.symbol || currency}
+                    </span>
+                    <input
+                      className="input"
+                      style={{ paddingLeft: 28, borderRadius: '0 6px 6px 0' }}
+                      value={amount}
+                      onChange={e => setAmount(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="0"
+                    />
+                  </div>
                 </div>
+                {currency !== 'EUR' && amtNum > 0 && (
+                  <div style={{ marginTop: 5, fontSize: 11, color: '#A89B8B' }}>
+                    Agent converts to EUR for budget check using live ECB rate.
+                  </div>
+                )}
                 <div style={{ marginTop: 6 }}><TierBadge amt={amtNum} /></div>
               </div>
             </div>
