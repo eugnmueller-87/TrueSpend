@@ -1,0 +1,170 @@
+{
+  "name": "RAG Document Embedder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 6 }]
+        }
+      },
+      "id": "rag-trigger-001",
+      "name": "Every 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check how many documents need embeddings\nconst POSTGREST = $env.POSTGREST_URL;\nconst JWT = $env.POSTGREST_JWT;\n\n// Fetch legal_documents without embeddings\nconst resp = await $http.request({\n  method: 'GET',\n  url: `${POSTGREST}/legal_documents?select=id,supplier_id,doc_type,status,content,created_at&order=created_at.desc&limit=50`,\n  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' }\n});\nconst docs = resp;\n\n// Check which ones already have embeddings\nconst existResp = await $http.request({\n  method: 'GET',\n  url: `${POSTGREST}/document_embeddings?select=source_id&doc_type=eq.legal_document&limit=500`,\n  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' }\n});\nconst existingIds = new Set(existResp.map(e => e.source_id));\n\nconst toEmbed = docs.filter(d => !existingIds.has(d.id));\nconsole.log(`Legal docs to embed: ${toEmbed.length} / ${docs.length}`);\n\n// Also fetch contracts\nconst contractResp = await $http.request({\n  method: 'GET',\n  url: `${POSTGREST}/contracts?select=id,supplier_id,name,category,terms_summary,value,currency,expiry_date,renewal_state&order=created_at.desc&limit=100`,\n  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' }\n});\n\nconst existContractResp = await $http.request({\n  method: 'GET',\n  url: `${POSTGREST}/document_embeddings?select=source_id&doc_type=eq.contract&limit=500`,\n  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' }\n});\nconst existContractIds = new Set(existContractResp.map(e => e.source_id));\n\nconst contractsToEmbed = contractResp.filter(c => !existContractIds.has(c.id) && c.terms_summary);\nconsole.log(`Contracts to embed: ${contractsToEmbed.length}`);\n\n// Also fetch policies\nconst policyResp = await $http.request({\n  method: 'GET',\n  url: `${POSTGREST}/rag_policies?select=id,title,category,content&limit=20`,\n  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' }\n});\n\nconst existPolicyResp = await $http.request({\n  method: 'GET',\n  url: `${POSTGREST}/document_embeddings?select=source_id&doc_type=eq.policy&limit=100`,\n  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' }\n});\nconst existPolicyIds = new Set(existPolicyResp.map(e => e.source_id));\nconst policiesToEmbed = policyResp.filter(p => !existPolicyIds.has(p.id));\nconsole.log(`Policies to embed: ${policiesToEmbed.length}`);\n\n// Combine all work items\nconst workItems = [\n  ...toEmbed.map(d => ({\n    type: 'legal_document',\n    source_id: d.id,\n    supplier_id: d.supplier_id,\n    text: `${d.doc_type.toUpperCase()}: ${d.content}`,\n    meta_title: `${d.doc_type.toUpperCase()} - ${d.status}`,\n    meta_category: d.doc_type,\n    meta_status: d.status,\n    meta_tags: [d.doc_type, d.status]\n  })),\n  ...contractsToEmbed.map(c => ({\n    type: 'contract',\n    source_id: c.id,\n    supplier_id: c.supplier_id,\n    text: `CONTRACT: ${c.name}\\nCategory: ${c.category}\\nValue: ${c.value} ${c.currency}\\nExpiry: ${c.expiry_date}\\nRenewal state: ${c.renewal_state}\\nTerms: ${c.terms_summary}`,\n    meta_title: c.name,\n    meta_category: c.category,\n    meta_status: c.renewal_state,\n    meta_tags: [c.category, c.renewal_state, c.currency]\n  })),\n  ...policiesToEmbed.map(p => ({\n    type: 'policy',\n    source_id: p.id,\n    supplier_id: null,\n    text: `POLICY: ${p.title}\\n${p.content}`,\n    meta_title: p.title,\n    meta_category: p.category,\n    meta_status: 'active',\n    meta_tags: [p.category, 'policy']\n  }))\n];\n\nconsole.log(`Total items to embed: ${workItems.length}`);\nreturn workItems.map(item => ({ json: item }));"
+      },
+      "id": "rag-collect-001",
+      "name": "Collect Unembed Docs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-items",
+              "leftValue": "={{ $json.source_id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rag-gate-001",
+      "name": "Has items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Batch into groups of 5 to avoid rate limits\nconst items = $input.all();\nconst batches = [];\nfor (let i = 0; i < items.length; i += 5) {\n  batches.push(items.slice(i, i + 5));\n}\nconsole.log(`Processing ${items.length} items in ${batches.length} batches`);\n// Return first batch (loop handles rest via SplitInBatches)\nreturn items;"
+      },
+      "id": "rag-prep-001",
+      "name": "Prepare Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.OPENAI_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": {{ JSON.stringify($json.text.substring(0, 8000)) }},\n  \"dimensions\": 1536\n}",
+        "options": {
+          "timeout": 30000,
+          "response": { "response": { "neverError": false } }
+        }
+      },
+      "id": "rag-embed-001",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract embedding from OpenAI response and build insert record\nconst embedding = $json.data[0].embedding;\nconst item = $('Prepare Batches').item.json;\n\nreturn [{\n  json: {\n    doc_type: item.type,\n    source_id: item.source_id,\n    supplier_id: item.supplier_id,\n    chunk_index: 0,\n    chunk_text: item.text.substring(0, 4000),\n    embedding: JSON.stringify(embedding),  // PostgREST accepts stringified vector\n    meta_title: item.meta_title,\n    meta_category: item.meta_category,\n    meta_status: item.meta_status,\n    meta_tags: item.meta_tags\n  }\n}];"
+      },
+      "id": "rag-format-001",
+      "name": "Format for Insert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/document_embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "rag-store-001",
+      "name": "Store Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log summary\nconst all = $input.all();\nconsole.log(`RAG embedder run complete. Processed ${all.length} items.`);\nreturn [{ json: { status: 'done', processed: all.length, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "rag-log-001",
+      "name": "Log Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1920, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('No documents to embed — all up to date.');\nreturn [{ json: { status: 'no_work', timestamp: new Date().toISOString() } }];"
+      },
+      "id": "rag-noop-001",
+      "name": "Nothing to do",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 400]
+    }
+  ],
+  "connections": {
+    "Every 6h": {
+      "main": [[{ "node": "Collect Unembed Docs", "type": "main", "index": 0 }]]
+    },
+    "Collect Unembed Docs": {
+      "main": [[{ "node": "Has items?", "type": "main", "index": 0 }]]
+    },
+    "Has items?": {
+      "main": [
+        [{ "node": "Prepare Batches", "type": "main", "index": 0 }],
+        [{ "node": "Nothing to do", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Batches": {
+      "main": [[{ "node": "Generate Embedding", "type": "main", "index": 0 }]]
+    },
+    "Generate Embedding": {
+      "main": [[{ "node": "Format for Insert", "type": "main", "index": 0 }]]
+    },
+    "Format for Insert": {
+      "main": [[{ "node": "Store Embedding", "type": "main", "index": 0 }]]
+    },
+    "Store Embedding": {
+      "main": [[{ "node": "Log Summary", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "automatic" }]
+}

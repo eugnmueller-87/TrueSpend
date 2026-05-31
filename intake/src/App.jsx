@@ -110,6 +110,7 @@ const IconTruck    = (p) => <Icon {...p}><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 
 const IconFile     = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></Icon>
 const IconUserPlus = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></Icon>
 const IconShield   = (p) => <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></Icon>
+const IconSearch   = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></Icon>
 
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS = {
@@ -213,6 +214,7 @@ const NAV_BY_GROUP = {
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
     { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
     { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
+    { id: 'search',    label: 'Search docs', Icon: IconSearch },
     { id: 'mine',      label: 'My requests', Icon: IconList },
     { id: 'home',      label: 'New request', Icon: IconPlus },
   ],
@@ -220,6 +222,7 @@ const NAV_BY_GROUP = {
     { id: 'board',     label: 'IT Requests', Icon: IconBoard,    countKey: 'open' },
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
     { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
+    { id: 'search',    label: 'Search docs', Icon: IconSearch },
     { id: 'mine',      label: 'My requests', Icon: IconList },
     { id: 'home',      label: 'New request', Icon: IconPlus },
   ],
@@ -232,10 +235,12 @@ const NAV_BY_GROUP = {
     { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
     { id: 'budget',    label: 'Budget',      Icon: IconShield },
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
+    { id: 'search',    label: 'Search docs', Icon: IconSearch },
   ],
   admin: [
     { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
     { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
+    { id: 'search',    label: 'Search docs', Icon: IconSearch },
     { id: 'users',     label: 'Users',       Icon: IconUserPlus },
   ],
 }
@@ -3671,6 +3676,217 @@ const DemoHint = ({ users, grouped, onPick }) => {
   )
 }
 
+// ─── Search Screen ────────────────────────────────────────────────────────────
+// Semantic search across contracts, legal docs, policies, and supplier intelligence
+// Uses keyword fallback (PostgREST full-text) when embeddings aren't indexed yet
+
+const SEARCH_TYPES = [
+  { value: '',                label: 'All documents' },
+  { value: 'legal_document',  label: 'NDAs & DPAs' },
+  { value: 'contract',        label: 'Contracts' },
+  { value: 'policy',          label: 'Policies' },
+]
+
+const GDPR_STATUS_COLOR = { signed: '#3D7A5A', draft: '#B5462E', generated: '#D97706', sent: '#2563EB', expired: '#6B7280', filed: '#3D7A5A' }
+
+function SearchScreen() {
+  const [query,     setQuery]     = useState('')
+  const [docType,   setDocType]   = useState('')
+  const [results,   setResults]   = useState(null)
+  const [loading,   setLoading]   = useState(false)
+  const [error,     setError]     = useState(null)
+  const [selected,  setSelected]  = useState(null)
+  const inputRef = useRef(null)
+
+  const doSearch = useCallback(async (q, type) => {
+    if (!q || q.trim().length < 2) { setResults(null); return }
+    setLoading(true); setError(null)
+    try {
+      // Use keyword search RPC (works without embeddings being pre-generated)
+      const params = new URLSearchParams({ query_text: q, result_limit: 20 })
+      if (type) params.set('filter_doc_type', type)
+      const data = await pgFetch(`/rpc/search_documents_text?${params}`)
+      setResults(data)
+    } catch (e) {
+      // Fallback: direct FTS on source tables
+      try {
+        const [ldocs, contracts, policies] = await Promise.all([
+          (!type || type === 'legal_document')
+            ? pgFetch(`/legal_documents?content=ilike.*${encodeURIComponent(q)}*&select=id,supplier_id,doc_type,status,content,created_at&limit=15`)
+            : Promise.resolve([]),
+          (!type || type === 'contract')
+            ? pgFetch(`/contracts?or=(name.ilike.*${encodeURIComponent(q)}*,terms_summary.ilike.*${encodeURIComponent(q)}*)&select=id,supplier_id,name,category,value,currency,expiry_date,renewal_state,terms_summary&limit=10`)
+            : Promise.resolve([]),
+          (!type || type === 'policy')
+            ? pgFetch(`/rag_policies?content=ilike.*${encodeURIComponent(q)}*&select=id,title,category,content&limit=5`)
+            : Promise.resolve([]),
+        ])
+        const combined = [
+          ...ldocs.map(d => ({ doc_type: 'legal_document', source_id: d.id, supplier_id: d.supplier_id, meta_title: `${d.doc_type.toUpperCase()} — ${d.status}`, meta_status: d.status, meta_category: d.doc_type, chunk_text: d.content, similarity: null })),
+          ...contracts.map(c => ({ doc_type: 'contract', source_id: c.id, supplier_id: c.supplier_id, meta_title: c.name, meta_status: c.renewal_state, meta_category: c.category, chunk_text: c.terms_summary || c.name, similarity: null })),
+          ...policies.map(p => ({ doc_type: 'policy', source_id: p.id, supplier_id: null, meta_title: p.title, meta_status: 'active', meta_category: p.category, chunk_text: p.content, similarity: null })),
+        ]
+        setResults(combined)
+      } catch (e2) {
+        setError(e2.message)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Debounced search
+  useEffect(() => {
+    const t = setTimeout(() => doSearch(query, docType), 350)
+    return () => clearTimeout(t)
+  }, [query, docType, doSearch])
+
+  const docTypeLabel = (t) => ({ legal_document: 'Legal Doc', contract: 'Contract', policy: 'Policy' }[t] || t)
+  const docTypeColor = (t) => ({ legal_document: '#7C3AED', contract: '#2563EB', policy: '#D97706' }[t] || '#6B7280')
+
+  const highlight = (text, q) => {
+    if (!q || !text) return text
+    const parts = text.split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'))
+    return parts.map((part, i) =>
+      part.toLowerCase() === q.toLowerCase()
+        ? <mark key={i} style={{ background: '#FEF08A', borderRadius: 2, padding: '0 1px' }}>{part}</mark>
+        : part
+    )
+  }
+
+  return (
+    <div style={{ padding: '28px 32px', maxWidth: 900 }}>
+      {/* Header */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#161413', margin: 0 }}>Document Search</h2>
+        <p style={{ fontSize: 13, color: '#7A6A5A', margin: '4px 0 0' }}>
+          Search across contracts, NDAs, DPAs, compliance reports, and procurement policies
+        </p>
+      </div>
+
+      {/* Search bar + filter */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#A89B8B" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+            style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            ref={inputRef}
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder='Search: "auto-renew clause", "GDPR DPA Salesforce", "spend authority €100k"…'
+            style={{ width: '100%', padding: '10px 12px 10px 36px', fontSize: 14, border: '1.5px solid #E8E0D8', borderRadius: 8, outline: 'none', background: '#FBF9F7', boxSizing: 'border-box', color: '#161413' }}
+          />
+        </div>
+        <select value={docType} onChange={e => setDocType(e.target.value)}
+          style={{ padding: '10px 12px', fontSize: 13, border: '1.5px solid #E8E0D8', borderRadius: 8, background: '#FBF9F7', color: '#4A3728', outline: 'none', minWidth: 150 }}>
+          {SEARCH_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+      </div>
+
+      {/* Quick suggestions */}
+      {!query && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+          {['auto-renew expiring', 'DPA signed Germany', 'GDPR data residency', 'price increase clause', 'spend authority €100k', 'LkSG declaration pending', 'Anthropic API', 'SOC 2 Type II'].map(s => (
+            <button key={s} onClick={() => { setQuery(s); inputRef.current?.focus() }}
+              style={{ padding: '5px 12px', fontSize: 12, border: '1px solid #E8E0D8', borderRadius: 20, background: 'white', color: '#7A6A5A', cursor: 'pointer' }}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && <div style={{ color: '#A89B8B', fontSize: 13, padding: '16px 0' }}>Searching…</div>}
+      {error && <div style={{ color: '#B5462E', fontSize: 13, padding: '8px 12px', background: '#FFF0ED', borderRadius: 6 }}>Search error: {error}</div>}
+
+      {/* Results */}
+      {results !== null && !loading && (
+        <>
+          <div style={{ fontSize: 12, color: '#A89B8B', marginBottom: 12 }}>
+            {results.length === 0 ? 'No results found' : `${results.length} result${results.length !== 1 ? 's' : ''} for "${query}"`}
+          </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+            {/* Result list */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {results.map((r, i) => (
+                <button key={r.source_id + i} onClick={() => setSelected(selected?.source_id === r.source_id ? null : r)}
+                  style={{
+                    textAlign: 'left', padding: '12px 14px', borderRadius: 8, cursor: 'pointer',
+                    border: selected?.source_id === r.source_id ? '1.5px solid #9B7A5A' : '1.5px solid #E8E0D8',
+                    background: selected?.source_id === r.source_id ? '#FAF6F2' : 'white',
+                    transition: 'all 0.12s'
+                  }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: '2px 7px', borderRadius: 10, background: docTypeColor(r.doc_type) + '18', color: docTypeColor(r.doc_type) }}>
+                      {docTypeLabel(r.doc_type)}
+                    </span>
+                    {r.meta_status && (
+                      <span style={{ fontSize: 10, color: GDPR_STATUS_COLOR[r.meta_status] || '#6B7280', fontWeight: 500 }}>
+                        {r.meta_status}
+                      </span>
+                    )}
+                    {r.meta_category && (
+                      <span style={{ fontSize: 10, color: '#A89B8B' }}>{r.meta_category}</span>
+                    )}
+                    {r.similarity !== null && r.similarity !== undefined && (
+                      <span style={{ fontSize: 10, color: '#A89B8B', marginLeft: 'auto' }}>{Math.round(r.similarity * 100)}% match</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#161413', marginBottom: 4 }}>
+                    {highlight(r.meta_title, query)}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#7A6A5A', lineHeight: 1.5,
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    {highlight((r.chunk_text || '').substring(0, 200), query)}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Detail pane */}
+            {selected && (
+              <div style={{ width: 360, flexShrink: 0, background: '#FAF6F2', border: '1.5px solid #E8E0D8', borderRadius: 10, padding: '16px', alignSelf: 'flex-start', position: 'sticky', top: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                  <div>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: '2px 7px', borderRadius: 10, background: docTypeColor(selected.doc_type) + '18', color: docTypeColor(selected.doc_type) }}>
+                      {docTypeLabel(selected.doc_type)}
+                    </span>
+                  </div>
+                  <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#A89B8B', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+                </div>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: '#161413', margin: '0 0 8px' }}>
+                  {selected.meta_title}
+                </h3>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                  {selected.meta_status && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#F0EDE8', color: GDPR_STATUS_COLOR[selected.meta_status] || '#6B7280', fontWeight: 600 }}>{selected.meta_status}</span>}
+                  {selected.meta_category && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#F0EDE8', color: '#7A6A5A' }}>{selected.meta_category}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: '#4A3728', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 400, overflowY: 'auto' }}>
+                  {selected.chunk_text}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Empty state */}
+      {results === null && !loading && (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: '#A89B8B' }}>
+          <svg width={40} height={40} viewBox="0 0 24 24" fill="none" stroke="#D8CFC7" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 12px', display: 'block' }}>
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Search your document library</div>
+          <div style={{ fontSize: 12 }}>100 suppliers · 80+ contracts · NDAs, DPAs, compliance reports, policies</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Default persona — opens directly on Operations Board for demo ─────────────
 // Fallback when localStorage has nothing. Full user object from DB is loaded
 // by UserSetupModal; this stub just gets the user past the modal on first visit.
@@ -3765,6 +3981,7 @@ export default function App() {
     if (tab === 'request')   return ['New request', FORM_CONFIG[reqType]?.title || 'Request']
     if (tab === 'users')     return ['Users']
     if (tab === 'budget')    return ['Budget']
+    if (tab === 'search')    return ['Search']
     return ['Operations']
   })()
 
@@ -3831,6 +4048,7 @@ export default function App() {
           )}
           {!success && tab === 'users'   && <UsersScreen />}
           {!success && tab === 'budget'  && <BudgetScreen user={resolvedUser} />}
+          {!success && tab === 'search'  && <SearchScreen />}
         </main>
       </div>
 
