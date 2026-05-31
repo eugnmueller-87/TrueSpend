@@ -907,6 +907,18 @@ const FLOW_STEPS = {
   rejected:           { step: '—',      label: 'Rejected' },
 }
 
+// Column header row — rendered once above each tlist
+const TicketTableHead = () => (
+  <div className="tlist__head">
+    <div className="tlist__hcell">Status</div>
+    <div className="tlist__hcell">Step</div>
+    <div className="tlist__hcell">Request</div>
+    <div className="tlist__hcell">Supplier</div>
+    <div className="tlist__hcell tlist__hcell--right">Value</div>
+    <div className="tlist__hcell tlist__hcell--right">Action</div>
+  </div>
+)
+
 const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
   const canAct   = roleGroup === 'procurement'
   const canSign  = roleGroup === 'procurement'
@@ -916,29 +928,43 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
   return (
     <>
       <div className={'trow' + (isOpen ? ' trow--open' : '')} onClick={() => onToggle(ticket.id)}>
+
+        {/* Col 1 — Status */}
         <div className="trow__status">
           <StatusPill status={ticket.status} />
         </div>
+
+        {/* Col 2 — Step */}
+        <div className="trow__step-col">
+          <span className="trow__step">Step {flow.step}</span>
+          <span className="trow__step-sub">{flow.label}</span>
+        </div>
+
+        {/* Col 3 — Title + meta */}
         <div className="trow__main">
           <div className="trow__title">{ticket.title}</div>
           <div className="trow__meta">
-            <span className="trow__step">Step {flow.step} · {flow.label}</span>
-            <span className="dot" />
             <span className="ref">{ticket.reference}</span>
             <span className="dot" />
             <span>{timeAgo(ticket.created_at)}</span>
-            {ticket.branch_name && <><span className="dot" /><span style={{ color: '#A89B8B' }}>{ticket.branch_name}</span></>}
+            {ticket.branch_name && <><span className="dot" /><span>{ticket.branch_name}</span></>}
             {ticket.category && <><span className="dot" /><span>{ticket.category}</span></>}
           </div>
         </div>
+
+        {/* Col 4 — Supplier */}
         <div>
           <div className="trow__supplier">{ticket.supplier_name || '—'}</div>
           <div className="trow__supplier-meta">{ticket.submitted_by || ''}</div>
         </div>
-        <div>
+
+        {/* Col 5 — Value */}
+        <div style={{ textAlign: 'right' }}>
           <div className="trow__value">{ticket.value_eur ? fmt(ticket.value_eur) : '—'}</div>
           {ticket.confidence_score && <ConfBar score={ticket.confidence_score} />}
         </div>
+
+        {/* Col 6 — Actions */}
         <div className="trow__actions" onClick={e => e.stopPropagation()}>
           {readOnly && (
             <span style={{ fontSize: 11, color: '#A89B8B', fontStyle: 'italic' }}>view only</span>
@@ -1158,6 +1184,7 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
                 <span className="section__hint">{sec.hint}</span>
               </div>
               <div className="tlist">
+                <TicketTableHead />
                 {inSec.map(t => (
                   <TicketRow
                     key={t.id}

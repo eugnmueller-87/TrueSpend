@@ -214,30 +214,73 @@ button { font-family: inherit; }
 .section--urgent .section__count { color: var(--ts-negative); background: var(--ts-negative-wash); border-color: var(--ts-negative-soft); }
 .section__hint { font-size: 12px; color: var(--ts-ink-mute); margin-left: auto; }
 
-/* ── Ticket rows ── */
+/* ── Ticket table ── */
+/*
+  Column layout (fixed, never wraps):
+  [status 130px] [step 170px] [title 1fr] [supplier 150px] [value 100px] [actions 210px]
+  Total fixed: 130+170+150+100+210 = 760px + 1fr title + gaps
+  All cells: overflow hidden, no wrap. Nothing can bleed.
+*/
+:root { --tc-status: 130px; --tc-step: 170px; --tc-supplier: 150px; --tc-value: 100px; --tc-actions: 210px; --tc-gap: 0px; }
+
 .tlist { background: var(--ts-surface); border: 1px solid var(--ts-line); border-radius: 8px; overflow: hidden; }
+
+.tlist__head {
+  display: grid;
+  grid-template-columns: var(--tc-status) var(--tc-step) 1fr var(--tc-supplier) var(--tc-value) var(--tc-actions);
+  padding: 8px 20px; gap: 0;
+  border-bottom: 2px solid var(--ts-line);
+  background: var(--ts-paper-deep);
+}
+.tlist__hcell {
+  font-size: 10.5px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ts-ink-mute); white-space: nowrap; overflow: hidden; padding: 0 12px 0 0;
+}
+.tlist__hcell--right { text-align: right; padding-right: 0; }
+
 .trow {
-  display: grid; grid-template-columns: 128px 1fr 140px 110px 220px;
-  align-items: center; padding: 13px 20px; gap: 12px;
+  display: grid;
+  grid-template-columns: var(--tc-status) var(--tc-step) 1fr var(--tc-supplier) var(--tc-value) var(--tc-actions);
+  align-items: center; padding: 13px 20px; gap: 0;
   border-bottom: 1px solid var(--ts-line);
   transition: background var(--ts-dur-fast) var(--ts-ease);
   cursor: pointer;
+  min-width: 0;
 }
 .trow:last-child { border-bottom: none; }
 .trow:hover { background: var(--ts-brand-gold-wash); }
 .trow--open { background: var(--ts-paper-deep); }
 .trow--open:hover { background: var(--ts-paper-deep); }
-.trow__step { font-size: 11px; font-weight: 600; color: var(--ts-brand-gold); letter-spacing: 0.01em; white-space: nowrap; flex-shrink: 0; }
-.trow__main { min-width: 0; }
-.trow__title { font-size: 14px; font-weight: 600; color: var(--ts-ink); letter-spacing: -0.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
-.trow__meta { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--ts-ink-mute); flex-wrap: wrap; }
+
+/* Every cell clips — no exceptions */
+.trow > * { overflow: hidden; padding-right: 12px; min-width: 0; }
+.trow > *:last-child { padding-right: 0; }
+
+/* Col: Status */
+.trow__status { display: flex; align-items: center; }
+
+/* Col: Step */
+.trow__step-col { display: flex; flex-direction: column; justify-content: center; gap: 1px; }
+.trow__step     { font-size: 11px; font-weight: 700; color: var(--ts-brand-gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow__step-sub { font-size: 10.5px; color: var(--ts-ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Col: Title */
+.trow__main { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.trow__title { font-size: 13.5px; font-weight: 600; color: var(--ts-ink); letter-spacing: -0.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.trow__meta  { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--ts-ink-mute); white-space: nowrap; overflow: hidden; }
 .trow__meta .dot { width: 3px; height: 3px; background: var(--ts-line-strong); border-radius: 50%; flex-shrink: 0; }
-.trow__meta .ref { font-family: var(--ts-font-mono); }
-.trow__supplier { font-size: 13px; color: var(--ts-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.trow__supplier-meta { font-size: 11.5px; color: var(--ts-ink-mute); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.trow__value { font-family: var(--ts-font-sans); font-variant-numeric: tabular-nums lining-nums; font-size: 16px; font-weight: 600; color: var(--ts-ink); letter-spacing: -0.01em; text-align: right; }
-.trow__conf { font-size: 11.5px; color: var(--ts-ink-mute); margin-top: 2px; text-align: right; }
-.trow__actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: nowrap; align-items: center; }
+.trow__meta .ref { font-family: var(--ts-font-mono); flex-shrink: 0; }
+
+/* Col: Supplier */
+.trow__supplier      { font-size: 13px; color: var(--ts-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow__supplier-meta { font-size: 11px; color: var(--ts-ink-mute); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Col: Value */
+.trow__value { font-variant-numeric: tabular-nums lining-nums; font-size: 14px; font-weight: 600; color: var(--ts-ink); letter-spacing: -0.01em; text-align: right; white-space: nowrap; }
+.trow__conf  { font-size: 11px; color: var(--ts-ink-mute); margin-top: 2px; text-align: right; }
+
+/* Col: Actions */
+.trow__actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; overflow: visible; }
 
 .tbrief { background: var(--ts-paper-deep); border-bottom: 1px solid var(--ts-line); padding: 20px 24px 22px; display: grid; grid-template-columns: 1fr 280px; gap: 32px; }
 .tbrief__h { font-size: 10.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ts-ink-mute); margin-bottom: 10px; }
@@ -414,8 +457,14 @@ input[type='number'] { -moz-appearance: textfield; }
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { position: relative; height: auto; }
-  .trow { grid-template-columns: 110px 1fr 190px; }
-  .trow__supplier { display: none; }
+  /* On small screens: collapse to status + title + actions only */
+  :root { --tc-step: 0px; --tc-supplier: 0px; --tc-value: 0px; }
+  .trow__step-col, .trow > *:nth-child(4), .trow > *:nth-child(5) { display: none; }
+  .tlist__head .tlist__hcell:nth-child(2),
+  .tlist__head .tlist__hcell:nth-child(4),
+  .tlist__head .tlist__hcell:nth-child(5) { display: none; }
+  .trow { grid-template-columns: var(--tc-status) 1fr var(--tc-actions); }
+  .tlist__head { grid-template-columns: var(--tc-status) 1fr var(--tc-actions); }
   .topbar { padding: 14px 22px; }
   .content { padding: 24px 22px 48px; }
   .searchbar input { width: 180px; }
