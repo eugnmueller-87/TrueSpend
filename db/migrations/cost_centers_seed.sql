@@ -11,51 +11,54 @@
 
 -- ── 1. Cost centers ──────────────────────────────────────────────────────────
 
-insert into cost_centers (id, code, name, branch_id, gl_account, erp_reference, annual_budget) values
+-- Live DB cost_centers columns: id, code, name, branch_id, gl_account, budget_owner_id, created_at
+-- (no erp_reference, no annual_budget in live schema)
+
+insert into cost_centers (id, code, name, branch_id, gl_account) values
 
   -- Global HQ (b1)
-  ('cc100000-0000-0000-0000-000000000001', 'CC-HQ-IT',      'HQ Information Technology',  'b1000000-0000-0000-0000-000000000001', '6100', 'HQ-IT',   4800000),
-  ('cc100000-0000-0000-0000-000000000002', 'CC-HQ-OPS',     'HQ Operations',               'b1000000-0000-0000-0000-000000000001', '6200', 'HQ-OPS',  3200000),
-  ('cc100000-0000-0000-0000-000000000003', 'CC-HQ-FIN',     'HQ Finance & Controlling',    'b1000000-0000-0000-0000-000000000001', '6300', 'HQ-FIN',  1800000),
-  ('cc100000-0000-0000-0000-000000000004', 'CC-HQ-HR',      'HQ People & Culture',         'b1000000-0000-0000-0000-000000000001', '6400', 'HQ-HR',   1200000),
-  ('cc100000-0000-0000-0000-000000000005', 'CC-HQ-MKT',     'HQ Marketing',                'b1000000-0000-0000-0000-000000000001', '6500', 'HQ-MKT',   900000),
-  ('cc100000-0000-0000-0000-000000000006', 'CC-HQ-LEGAL',   'HQ Legal & Compliance',       'b1000000-0000-0000-0000-000000000001', '6600', 'HQ-LEG',   600000),
+  ('cc100000-0000-0000-0000-000000000001', 'CC-HQ-IT',      'HQ Information Technology',  'b1000000-0000-0000-0000-000000000001', '6100'),
+  ('cc100000-0000-0000-0000-000000000002', 'CC-HQ-OPS',     'HQ Operations',               'b1000000-0000-0000-0000-000000000001', '6200'),
+  ('cc100000-0000-0000-0000-000000000003', 'CC-HQ-FIN',     'HQ Finance & Controlling',    'b1000000-0000-0000-0000-000000000001', '6300'),
+  ('cc100000-0000-0000-0000-000000000004', 'CC-HQ-HR',      'HQ People & Culture',         'b1000000-0000-0000-0000-000000000001', '6400'),
+  ('cc100000-0000-0000-0000-000000000005', 'CC-HQ-MKT',     'HQ Marketing',                'b1000000-0000-0000-0000-000000000001', '6500'),
+  ('cc100000-0000-0000-0000-000000000006', 'CC-HQ-LEGAL',   'HQ Legal & Compliance',       'b1000000-0000-0000-0000-000000000001', '6600'),
 
   -- DACH (b2)
-  ('cc200000-0000-0000-0000-000000000001', 'CC-DACH-IT',    'DACH Information Technology', 'b1000000-0000-0000-0000-000000000002', '6100', 'DACH-IT',  3200000),
-  ('cc200000-0000-0000-0000-000000000002', 'CC-DACH-OPS',   'DACH Operations',             'b1000000-0000-0000-0000-000000000002', '6200', 'DACH-OPS', 2400000),
-  ('cc200000-0000-0000-0000-000000000003', 'CC-DACH-SALES', 'DACH Sales',                  'b1000000-0000-0000-0000-000000000002', '6700', 'DACH-SAL', 1800000),
-  ('cc200000-0000-0000-0000-000000000004', 'CC-DACH-FIN',   'DACH Finance',                'b1000000-0000-0000-0000-000000000002', '6300', 'DACH-FIN',  900000),
+  ('cc200000-0000-0000-0000-000000000001', 'CC-DACH-IT',    'DACH Information Technology', 'b1000000-0000-0000-0000-000000000002', '6100'),
+  ('cc200000-0000-0000-0000-000000000002', 'CC-DACH-OPS',   'DACH Operations',             'b1000000-0000-0000-0000-000000000002', '6200'),
+  ('cc200000-0000-0000-0000-000000000003', 'CC-DACH-SALES', 'DACH Sales',                  'b1000000-0000-0000-0000-000000000002', '6700'),
+  ('cc200000-0000-0000-0000-000000000004', 'CC-DACH-FIN',   'DACH Finance',                'b1000000-0000-0000-0000-000000000002', '6300'),
 
   -- UK & Ireland (b3)
-  ('cc300000-0000-0000-0000-000000000001', 'CC-UKIE-IT',    'UK&IE Information Technology','b1000000-0000-0000-0000-000000000003', '6100', 'UKIE-IT',  1800000),
-  ('cc300000-0000-0000-0000-000000000002', 'CC-UKIE-OPS',   'UK&IE Operations',            'b1000000-0000-0000-0000-000000000003', '6200', 'UKIE-OPS', 1400000),
-  ('cc300000-0000-0000-0000-000000000003', 'CC-UKIE-SALES', 'UK&IE Sales',                 'b1000000-0000-0000-0000-000000000003', '6700', 'UKIE-SAL', 1100000),
+  ('cc300000-0000-0000-0000-000000000001', 'CC-UKIE-IT',    'UK&IE Information Technology','b1000000-0000-0000-0000-000000000003', '6100'),
+  ('cc300000-0000-0000-0000-000000000002', 'CC-UKIE-OPS',   'UK&IE Operations',            'b1000000-0000-0000-0000-000000000003', '6200'),
+  ('cc300000-0000-0000-0000-000000000003', 'CC-UKIE-SALES', 'UK&IE Sales',                 'b1000000-0000-0000-0000-000000000003', '6700'),
 
   -- Benelux (b4)
-  ('cc400000-0000-0000-0000-000000000001', 'CC-BNL-IT',     'Benelux Information Technology','b1000000-0000-0000-0000-000000000004', '6100', 'BNL-IT',  1400000),
-  ('cc400000-0000-0000-0000-000000000002', 'CC-BNL-OPS',    'Benelux Operations',            'b1000000-0000-0000-0000-000000000004', '6200', 'BNL-OPS',  900000),
+  ('cc400000-0000-0000-0000-000000000001', 'CC-BNL-IT',     'Benelux Information Technology','b1000000-0000-0000-0000-000000000004', '6100'),
+  ('cc400000-0000-0000-0000-000000000002', 'CC-BNL-OPS',    'Benelux Operations',            'b1000000-0000-0000-0000-000000000004', '6200'),
 
   -- France (b5)
-  ('cc500000-0000-0000-0000-000000000001', 'CC-FR-IT',      'France Information Technology','b1000000-0000-0000-0000-000000000005', '6100', 'FR-IT',   1600000),
-  ('cc500000-0000-0000-0000-000000000002', 'CC-FR-OPS',     'France Operations',            'b1000000-0000-0000-0000-000000000005', '6200', 'FR-OPS',  1200000),
-  ('cc500000-0000-0000-0000-000000000003', 'CC-FR-SALES',   'France Sales',                 'b1000000-0000-0000-0000-000000000005', '6700', 'FR-SAL',   800000)
+  ('cc500000-0000-0000-0000-000000000001', 'CC-FR-IT',      'France Information Technology','b1000000-0000-0000-0000-000000000005', '6100'),
+  ('cc500000-0000-0000-0000-000000000002', 'CC-FR-OPS',     'France Operations',            'b1000000-0000-0000-0000-000000000005', '6200'),
+  ('cc500000-0000-0000-0000-000000000003', 'CC-FR-SALES',   'France Sales',                 'b1000000-0000-0000-0000-000000000005', '6700')
 
 on conflict (code) do update set
-  name         = excluded.name,
-  annual_budget = excluded.annual_budget;
+  name      = excluded.name,
+  gl_account = excluded.gl_account;
 
 -- ── 2. Budget positions by cost center ──────────────────────────────────────
--- Split the existing branch-level positions across cost centers.
--- Values are realistic splits (IT gets the biggest hardware/hyperscaler slice).
--- Using ON CONFLICT DO NOTHING so re-runs are safe.
+-- Live column: "budget" (not "planned"). "available" is generated — don't insert it.
+-- No unique constraint on (branch_id, cost_center_id, category, period) in live DB
+-- → use WHERE NOT EXISTS pattern to prevent duplicates on re-run.
 
-insert into budget_positions (branch_id, cost_center_id, category, period, planned, committed, spent)
-values
-
+insert into budget_positions (branch_id, cost_center_id, category, period, budget, committed, spent)
+select v.branch_id, v.cost_center_id, v.category::contract_category, v.period, v.budget, v.committed, v.spent
+from (values
   -- ── Global HQ ──
-  -- HQ-IT: hardware + hyperscaler + saas (primary consumer)
-  ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000001', 'hardware',    '2026-Q2',  4800000, 3720000,  840000),
+  -- HQ-IT: hardware + hyperscaler + saas
+  ('b1000000-0000-0000-0000-000000000001'::uuid, 'cc100000-0000-0000-0000-000000000001'::uuid, 'hardware',    '2026-Q2',  4800000::numeric, 3720000::numeric,  840000::numeric),
   ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000001', 'hyperscaler', '2026-Q2',  2800000, 2170000,  546000),
   ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000001', 'saas_license','2026-Q2',  1600000, 1400000,  155000),
   -- HQ-OPS: hardware + services
@@ -64,27 +67,23 @@ values
   -- HQ-FIN: saas + services
   ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000003', 'saas_license','2026-Q2',   960000,  840000,   93000),
   ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000003', 'services',    '2026-Q2',   600000,  475000,   95000),
-  -- HQ-HR: saas + services
+  -- HQ-HR
   ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000004', 'saas_license','2026-Q2',   480000,  420000,   46500),
   ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000004', 'services',    '2026-Q2',   280000,  222000,   38000),
-  -- HQ-MKT: saas + services
+  -- HQ-MKT
   ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000005', 'saas_license','2026-Q2',   160000,  140000,   15500),
-  ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000005', 'services',    '2026-Q2',   480000,  380000,   76000),  -- agencies
-  -- HQ-LEGAL: services
-  ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000006', 'services',    '2026-Q2',   600000,  475000,   95000),  -- external counsel
-  ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000006', 'saas_license','2026-Q2',    80000,   70000,    7800),   -- CLM/e-sign tools
+  ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000005', 'services',    '2026-Q2',   480000,  380000,   76000),
+  -- HQ-LEGAL
+  ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000006', 'services',    '2026-Q2',   600000,  475000,   95000),
+  ('b1000000-0000-0000-0000-000000000001', 'cc100000-0000-0000-0000-000000000006', 'saas_license','2026-Q2',    80000,   70000,    7800),
 
   -- ── DACH ──
-  -- DACH-IT: hardware + hyperscaler + saas
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000001', 'hardware',    '2026-Q2',  3000000, 2460000,  372000),
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000001', 'hyperscaler', '2026-Q2',  1260000,  840000,  203000),
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000001', 'saas_license','2026-Q2',   840000,  630000,  108000),
-  -- DACH-OPS: hardware + facilities
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000002', 'hardware',    '2026-Q2',  1200000,  984000,  148800),
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000002', 'facilities',  '2026-Q2',   336000,  252000,   62300),
-  -- DACH-SALES: saas
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000003', 'saas_license','2026-Q2',   420000,  315000,   54000),
-  -- DACH-FIN: saas + facilities
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000004', 'saas_license','2026-Q2',   140000,  105000,   18000),
   ('b1000000-0000-0000-0000-000000000002', 'cc200000-0000-0000-0000-000000000004', 'facilities',  '2026-Q2',   144000,  108000,   26700),
 
@@ -107,23 +106,15 @@ values
   ('b1000000-0000-0000-0000-000000000005', 'cc500000-0000-0000-0000-000000000001', 'saas_license','2026-Q2',   540000,  432000,   66000),
   ('b1000000-0000-0000-0000-000000000005', 'cc500000-0000-0000-0000-000000000002', 'hardware',    '2026-Q2',   480000,  330000,   72000),
   ('b1000000-0000-0000-0000-000000000005', 'cc500000-0000-0000-0000-000000000002', 'saas_license','2026-Q2',   270000,  216000,   33000),
-  ('b1000000-0000-0000-0000-000000000005', 'cc500000-0000-0000-0000-000000000003', 'saas_license','2026-Q2',    90000,   72000,   11000),
-
-  -- ── Smaller branches (no CC drill-down, branch-level only already exists) ──
-  -- Nordics, Iberia, Italy, CEE, Nordics East — kept at branch level (null CC in seed 06)
-  -- Add at least one CC per branch so the UI isn't empty when switching to those branches:
-  -- (Nordics) b6
-  ('b1000000-0000-0000-0000-000000000006', null, 'hardware',    '2026-Q2',  1200000,  890000, 180000),
-  -- (Iberia) b7
-  ('b1000000-0000-0000-0000-000000000007', null, 'hardware',    '2026-Q2',   900000,  640000, 140000),
-  -- (Italy) b8
-  ('b1000000-0000-0000-0000-000000000008', null, 'hardware',    '2026-Q2',  1100000,  780000, 160000),
-  -- (CEE) b9
-  ('b1000000-0000-0000-0000-000000000009', null, 'hardware',    '2026-Q2',   800000,  560000, 120000),
-  -- (Nordics East) b10
-  ('b1000000-0000-0000-0000-000000000010', null, 'hardware',    '2026-Q2',   600000,  420000,  88000)
-
-on conflict (branch_id, cost_center_id, category, period) do nothing;
+  ('b1000000-0000-0000-0000-000000000005', 'cc500000-0000-0000-0000-000000000003', 'saas_license','2026-Q2',    90000,   72000,   11000)
+) as v(branch_id, cost_center_id, category, period, budget, committed, spent)
+where not exists (
+  select 1 from budget_positions bp
+  where bp.branch_id      = v.branch_id
+    and bp.cost_center_id = v.cost_center_id
+    and bp.category::text = v.category
+    and bp.period         = v.period
+);
 
 -- ── 3. Verify ────────────────────────────────────────────────────────────────
 select
@@ -132,10 +123,10 @@ select
   b.name as branch,
   bp.category,
   bp.period,
-  bp.planned,
+  bp.budget,
   bp.committed,
   bp.spent,
-  bp.planned - bp.committed - bp.spent as available
+  bp.available
 from budget_positions bp
 join cost_centers cc on cc.id = bp.cost_center_id
 join branches b on b.id = bp.branch_id

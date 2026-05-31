@@ -3366,9 +3366,10 @@ const BudgetScreen = ({ user }) => {
   const load = useCallback(async () => {
     try {
       // Always join cost_center name + code via select
-      let path = '/budget_positions?select=id,branch_id,cost_center_id,category,period,planned,committed,spent&order=period.desc,branch_id.asc,cost_center_id.asc,category.asc&limit=500'
+      // Live DB column is "budget" (not "planned"); "available" is generated
+      let path = '/budget_positions?select=id,branch_id,cost_center_id,category,period,budget,committed,spent,available&order=period.desc,branch_id.asc,cost_center_id.asc,category.asc&limit=500'
       if (!isFullAccess && user?.costCenterId) {
-        path = `/budget_positions?cost_center_id=eq.${user.costCenterId}&select=id,branch_id,cost_center_id,category,period,planned,committed,spent&order=period.desc,category.asc&limit=200`
+        path = `/budget_positions?cost_center_id=eq.${user.costCenterId}&select=id,branch_id,cost_center_id,category,period,budget,committed,spent,available&order=period.desc,category.asc&limit=200`
       }
       const [data, ccs] = await Promise.all([
         pgFetch(path),
@@ -3398,7 +3399,7 @@ const BudgetScreen = ({ user }) => {
     return true
   })
 
-  const totalPlanned = displayed.reduce((s, b) => s + Number(b.planned || 0), 0)
+  const totalPlanned = displayed.reduce((s, b) => s + Number(b.budget || 0), 0)
   const totalCommit  = displayed.reduce((s, b) => s + Number(b.committed || 0), 0)
   const totalSpent   = displayed.reduce((s, b) => s + Number(b.spent || 0), 0)
   const totalAvail   = totalPlanned - totalCommit - totalSpent
@@ -3421,7 +3422,7 @@ const BudgetScreen = ({ user }) => {
         cost_center_id: form.cost_center_id || null,
         category:       form.category,
         period:         form.period,
-        planned:        parseFloat(form.planned) || 0,
+        budget:         parseFloat(form.planned) || 0,
         committed:      0,
         spent:          0,
       }
@@ -3442,7 +3443,7 @@ const BudgetScreen = ({ user }) => {
       await fetch(`${POSTGREST_URL}/budget_positions?id=eq.${row.id}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planned: parseFloat(editRow.planned) || 0 })
+        body: JSON.stringify({ budget: parseFloat(editRow.planned) || 0 })
       })
       setEditRow(null); await load()
     } catch {}
@@ -3591,7 +3592,7 @@ const BudgetScreen = ({ user }) => {
 
             {Object.entries(ccGroups).map(([ccKey, rows]) => {
               const cc = ccKey === '__none__' ? null : ccMap[ccKey]
-              const ccPlanned  = rows.reduce((s, r) => s + Number(r.planned || 0), 0)
+              const ccPlanned  = rows.reduce((s, r) => s + Number(r.budget || 0), 0)
               const ccCommit   = rows.reduce((s, r) => s + Number(r.committed || 0), 0)
               const ccSpent    = rows.reduce((s, r) => s + Number(r.spent || 0), 0)
               const ccAvail    = ccPlanned - ccCommit - ccSpent
@@ -3635,8 +3636,8 @@ const BudgetScreen = ({ user }) => {
                       <div style={{ textAlign: 'right' }}>Available</div>
                     </div>
                     {rows.map((b, i) => {
-                      const avail  = Number(b.planned || 0) - Number(b.committed || 0) - Number(b.spent || 0)
-                      const util   = Number(b.planned) > 0 ? Math.round((Number(b.committed) + Number(b.spent)) / Number(b.planned) * 100) : 0
+                      const avail  = b.available != null ? Number(b.available) : Number(b.budget || 0) - Number(b.committed || 0) - Number(b.spent || 0)
+                      const util   = Number(b.budget) > 0 ? Math.round((Number(b.committed) + Number(b.spent)) / Number(b.budget) * 100) : 0
                       const isEdit = editRow?.id === b.id
                       return (
                         <div key={i} className="trow" style={{ gridTemplateColumns: '80px 1fr 130px 130px 100px 130px', cursor: 'default' }}>
@@ -3656,8 +3657,8 @@ const BudgetScreen = ({ user }) => {
                                   onBlur={() => handleEditSave(b)} />
                               : <span style={{ cursor: isFullAccess ? 'pointer' : 'default', borderBottom: isFullAccess ? '1px dashed #C9BFAE' : 'none' }}
                                   title={isFullAccess ? 'Click to edit' : ''}
-                                  onClick={() => isFullAccess && setEditRow({ id: b.id, planned: b.planned })}>
-                                  {fmt(b.planned)}
+                                  onClick={() => isFullAccess && setEditRow({ id: b.id, planned: b.budget })}>
+                                  {fmt(b.budget)}
                                 </span>
                             }
                           </div>
