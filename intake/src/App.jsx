@@ -171,37 +171,40 @@ const useAgentFeed = () => {
 }
 
 // ─── Role config ──────────────────────────────────────────────────────────────
-// Six roles:
-//   procurement — full access (ops board, orders, suppliers, catalogues)
-//   it          — IT scope (orders, catalogues, my requests)
-//   user        — self-service (catalogues, my requests, new request)
-//   controlling — budget oversight (budget screen, ops board read-only)
-//   legal       — legal review queue (ops board filtered to legal flags)
-//   admin       — platform admin (users, ops board, suppliers)
+// Role groups:
+//   procurement  — Procurement Manager (one per branch): full board, all requests, can sign
+//   it           — IT Manager: board (IT categories only), all request types, can't sign
+//   user         — Ops Manager / Requester: submit requests, see own requests
+//   controlling  — Controlling (one per branch): read-only board + budget, no action buttons
+//   admin        — Platform admin: user management, board, suppliers
+// Removed:
+//   cfo          — report only, no tool access (deactivated in DB)
+//   legal        — works in Jira, not in this tool
 const ROLE_LABEL = {
   procurement: 'Procurement',
   it:          'IT',
   user:        'User',
   controlling: 'Controlling',
-  legal:       'Legal',
   admin:       'Admin',
 }
 
-// Map any legacy DB role values → one of the canonical groups
+// Map DB role strings → canonical group
 const ROLE_GROUP = {
-  procurement:         'procurement',
-  head_of_procurement: 'procurement',
-  category_manager:    'procurement',
-  cfo:                 'procurement',
+  procurement_manager: 'procurement',
+  head_of_procurement: 'procurement', // legacy — keep mapping
+  category_manager:    'procurement', // legacy — keep mapping
   it:                  'it',
   it_manager:          'it',
   user:                'user',
   ops_manager:         'user',
   requester:           'user',
   controlling:         'controlling',
-  legal:               'legal',
   admin:               'admin',
+  // cfo and legal removed — no tool access
 }
+
+// IT categories — IT Manager only sees board tickets in these categories
+const IT_CATEGORIES = new Set(['hardware', 'saas_license', 'hyperscaler', 'other', 'telecoms'])
 
 // Nav items per role group
 const NAV_BY_GROUP = {
@@ -214,6 +217,7 @@ const NAV_BY_GROUP = {
     { id: 'home',      label: 'New request', Icon: IconPlus },
   ],
   it: [
+    { id: 'board',     label: 'IT Requests', Icon: IconBoard,    countKey: 'open' },
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
     { id: 'catalog',   label: 'Catalogues',  Icon: IconCatalog },
     { id: 'mine',      label: 'My requests', Icon: IconList },
@@ -228,10 +232,6 @@ const NAV_BY_GROUP = {
     { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
     { id: 'budget',    label: 'Budget',      Icon: IconShield },
     { id: 'orders',    label: 'Orders',      Icon: IconTruck,    countKey: 'orders' },
-  ],
-  legal: [
-    { id: 'board',     label: 'Operations',  Icon: IconBoard,   countKey: 'open' },
-    { id: 'suppliers', label: 'Suppliers',   Icon: IconBuilding },
   ],
   admin: [
     { id: 'board',     label: 'Operations',  Icon: IconBoard,    countKey: 'open' },
@@ -312,7 +312,7 @@ const RoleSwitcher = ({ currentUser, onSwitch, onSignOut }) => {
             <div style={{ padding: '10px 14px', fontSize: 12, color: '#A89B8B' }}>Loading…</div>
           )}
 
-          {['procurement','it','controlling','legal','user','admin'].map(group => {
+          {['procurement','it','controlling','user','admin'].map(group => {
             const members = grouped[group] || []
             if (!members.length) return null
             return (
@@ -889,7 +889,11 @@ const ConfBar = ({ score }) => {
   )
 }
 
-const TicketRow = ({ ticket, isOpen, onToggle, onAction, isLegal }) => {
+const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
+  const canAct        = roleGroup === 'procurement'           // only procurement managers act
+  const canSign       = roleGroup === 'procurement'           // only procurement managers sign
+  const readOnly      = roleGroup === 'controlling' || roleGroup === 'it' || roleGroup === 'admin'
+
   return (
     <>
       <div className={'trow' + (isOpen ? ' trow--open' : '')} onClick={() => onToggle(ticket.id)}>
@@ -915,24 +919,23 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction, isLegal }) => {
           {ticket.confidence_score && <ConfBar score={ticket.confidence_score} />}
         </div>
         <div className="trow__actions" onClick={e => e.stopPropagation()}>
-          {ticket.status === 'signature_required' && (<>
-            <button className="btn btn--ink btn--sm" onClick={() => onAction(ticket.id, 'sign')}>Sign &amp; send</button>
+          {/* Read-only roles: no action buttons */}
+          {readOnly && (
+            <span style={{ fontSize: 11, color: '#A89B8B', fontStyle: 'italic' }}>view only</span>
+          )}
+          {/* Procurement managers: full action buttons */}
+          {canAct && ticket.status === 'signature_required' && (<>
+            {canSign && <button className="btn btn--ink btn--sm" onClick={() => onAction(ticket.id, 'sign')}>Sign &amp; send</button>}
             <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'decline')}>Decline</button>
           </>)}
-          {ticket.status === 'pending_review' && (isLegal ? (<>
-            <button className="btn btn--success btn--sm" onClick={() => onAction(ticket.id, 'approve')} style={{ background: '#5A3E7A', borderColor: '#5A3E7A' }}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              Approve document
-            </button>
-            <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'reject')}>Request changes</button>
-          </>) : (<>
+          {canAct && ticket.status === 'pending_review' && (<>
             <button className="btn btn--success btn--sm" onClick={() => onAction(ticket.id, 'approve')}>Approve</button>
             <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'reject')}>Reject</button>
-          </>))}
-          {ticket.status === 'escalated' && (
+          </>)}
+          {canAct && ticket.status === 'escalated' && (
             <button className="btn btn--secondary btn--sm" onClick={() => onAction(ticket.id, 'ack')}>Acknowledge</button>
           )}
-          {ticket.status === 'pending_confirm' && (
+          {canAct && ticket.status === 'pending_confirm' && (
             <button className="btn btn--primary btn--sm" onClick={() => onAction(ticket.id, 'confirm')}>Confirm</button>
           )}
         </div>
@@ -965,21 +968,29 @@ const isLegalTicket = (t) =>
   )
 
 // ─── Operations Board ─────────────────────────────────────────────────────────
-const OperationsBoard = ({ sectionJump, onCountChange, roleGroup }) => {
+const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
   const [tickets, setTickets] = useState(null)
   const [openId, setOpenId]   = useState(null)
-  const isLegal = roleGroup === 'legal'
+  const isIT           = roleGroup === 'it'
+  const isControlling  = roleGroup === 'controlling'
+  const isProcurement  = roleGroup === 'procurement'
 
   const load = useCallback(async () => {
     try {
       const data = await pgFetch('/open_tickets_board?order=created_at.asc')
-      const filtered = isLegal ? data.filter(isLegalTicket) : data
+      let filtered = data
+      // IT Manager: only IT-category tickets
+      if (isIT) filtered = data.filter(t => IT_CATEGORIES.has(t.category))
+      // Controlling: scoped to their own branch
+      if (isControlling && user?.branchId) filtered = data.filter(t => !t.branch_id || t.branch_id === user.branchId)
+      // Procurement Manager: scoped to their own branch (all statuses)
+      if (isProcurement && user?.branchId) filtered = data.filter(t => !t.branch_id || t.branch_id === user.branchId)
       setTickets(filtered)
       onCountChange(filtered.length)
     } catch {
       setTickets([])
     }
-  }, [onCountChange, isLegal])
+  }, [onCountChange, isIT, isControlling, isProcurement, user?.branchId])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -1039,9 +1050,9 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup }) => {
         <div>
           <div className="pagehead">
             <div>
-              <div className="pagehead__eyebrow">{isLegal ? 'Legal review' : 'Operations'} · {today}</div>
-              <h1 className="pagehead__title">{isLegal ? 'No legal items.' : 'All clear.'}</h1>
-              <div className="pagehead__sub">{isLegal ? 'No contracts, NDAs, or DPAs require your review right now.' : 'Nothing needs you right now. The agent is handling everything in the queue.'}</div>
+              <div className="pagehead__eyebrow">{isIT ? 'IT Requests' : 'Operations'} · {today}</div>
+              <h1 className="pagehead__title">{isIT ? 'No IT requests.' : 'All clear.'}</h1>
+              <div className="pagehead__sub">{isIT ? 'No hardware, software or infrastructure requests need attention.' : 'Nothing needs you right now. The agent is handling everything in the queue.'}</div>
             </div>
             <div className="pagehead__actions">
               <button className="btn btn--tertiary" onClick={load}><IconRotateCw size={14}/> Refresh</button>
@@ -1050,10 +1061,10 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup }) => {
           <div style={{ background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 8, padding: '80px 24px', textAlign: 'center' }}>
             <IconCheck size={44} color="#3D7A5A" strokeWidth={1.25} />
             <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 32, letterSpacing: '-0.025em', color: '#161413', margin: '18px 0 6px' }}>
-              {isLegal ? <>No documents <em style={{ fontStyle: 'normal', color: '#8F5C12' }}>pending review</em>.</> : <>Nothing <em style={{ fontStyle: 'normal', color: '#8F5C12' }}>needs you</em>.</>}
+              Nothing <em style={{ fontStyle: 'normal', color: '#8F5C12' }}>needs you</em>.
             </h2>
             <p style={{ fontSize: 13.5, color: '#75695F', maxWidth: 360, margin: '0 auto', lineHeight: 1.6 }}>
-              {isLegal ? 'All contracts and compliance documents are up to date.' : 'Come back when there\'s something worth your attention.'}
+              Come back when there&apos;s something worth your attention.
             </p>
           </div>
         </div>
@@ -1069,31 +1080,37 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup }) => {
       <div>
         <div className="pagehead">
           <div>
-            <div className="pagehead__eyebrow">{isLegal ? 'Legal review' : 'Operations'} · {today}</div>
+            <div className="pagehead__eyebrow">{isIT ? 'IT Requests' : 'Operations'} · {today}</div>
             <h1 className="pagehead__title">
-              {isLegal
-                ? <>{tickets.length} {tickets.length === 1 ? 'document' : 'documents'} <em>for review</em>.</>
-                : <>{tickets.length} {tickets.length === 1 ? 'thing' : 'things'} <em>need you</em>.</>}
+              {tickets.length} {tickets.length === 1 ? 'item' : 'items'} <em>need you</em>.
             </h1>
             <div className="pagehead__sub">
-              {isLegal ? 'Contracts, NDAs, DPAs and compliance items requiring legal sign-off.' : 'Everything else, the agent closed. Expand any row for the brief.'}
+              {isIT ? 'Hardware, software and infrastructure requests in your queue.' : isControlling ? 'Your branch requests — read-only view. Approve budgets from the Budget screen.' : 'Everything else, the agent closed. Expand any row for the brief.'}
             </div>
           </div>
           <div className="pagehead__actions">
             <button className="btn btn--tertiary" onClick={load}><IconRotateCw size={14}/> Refresh</button>
-            {!isLegal && <button className="btn btn--secondary">Export</button>}
+            {isProcurement && <button className="btn btn--secondary">Export</button>}
           </div>
         </div>
 
-        {/* Legal filter badge */}
-        {isLegal && (
-          <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#F0EBF6', border: '1px solid #D4C3E5', borderRadius: 6, fontSize: 12, color: '#5A3E7A', fontWeight: 600 }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            Filtered to legal-relevant items only — contracts, NDAs, DPAs, compliance flags, signature requests
+        {/* IT filter badge */}
+        {isIT && (
+          <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#E6EEF2', border: '1px solid #C3D5E0', borderRadius: 6, fontSize: 12, color: '#2B5F7A', fontWeight: 600 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M2 20h20"/></svg>
+            Filtered to IT categories — hardware, software, hyperscaler, telecoms
           </div>
         )}
 
-        {!isLegal && <StatsStrip tickets={tickets} />}
+        {/* Controlling read-only badge */}
+        {isControlling && (
+          <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#F0EBF6', border: '1px solid #D4C3E5', borderRadius: 6, fontSize: 12, color: '#5A3E7A', fontWeight: 600 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Read-only view — your branch requests. Procurement managers handle approvals.
+          </div>
+        )}
+
+        <StatsStrip tickets={tickets} />
 
         {BOARD_SECTIONS.map(sec => {
           const inSec = tickets.filter(t => t.status === sec.status)
@@ -1114,7 +1131,7 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup }) => {
                     isOpen={openId === t.id}
                     onToggle={(id) => setOpenId(openId === id ? null : id)}
                     onAction={handleAction}
-                    isLegal={isLegal}
+                    roleGroup={roleGroup}
                   />
                 ))}
               </div>
@@ -3152,7 +3169,7 @@ const UsersScreen = () => {
     } catch {}
   }
 
-  const GROUP_ORDER = ['procurement', 'it', 'user', 'controlling', 'legal', 'admin']
+  const GROUP_ORDER = ['procurement', 'it', 'user', 'controlling', 'admin']
   const byGroup = {}
   for (const u of filtered) {
     const g = ROLE_GROUP[u.role] || 'user'
@@ -3269,16 +3286,11 @@ const UsersScreen = () => {
                           onChange={e => changeRole(u, e.target.value)}
                           style={{ fontSize: 12, padding: '3px 8px', height: 'auto' }}
                         >
-                          <option value="head_of_procurement">Head of Procurement</option>
-                          <option value="procurement">Procurement</option>
-                          <option value="category_manager">Category Manager</option>
-                          <option value="cfo">CFO / Controlling</option>
+                          <option value="procurement_manager">Procurement Manager</option>
                           <option value="it_manager">IT Manager</option>
-                          <option value="it">IT</option>
-                          <option value="user">User</option>
-                          <option value="requester">Requester</option>
                           <option value="ops_manager">Ops Manager</option>
-                          <option value="legal">Legal</option>
+                          <option value="requester">Requester</option>
+                          <option value="controlling">Controlling</option>
                           <option value="admin">Admin</option>
                         </select>
                       ) : (
@@ -3338,11 +3350,11 @@ const UsersScreen = () => {
               <div className="field">
                 <label className="field__label">Role</label>
                 <select className="select" value={form.role} onChange={e => setForm(f=>({...f,role:e.target.value}))}>
-                  <option value="procurement">Procurement</option>
-                  <option value="it">IT</option>
-                  <option value="user">User</option>
+                  <option value="procurement_manager">Procurement Manager</option>
+                  <option value="it_manager">IT Manager</option>
+                  <option value="ops_manager">Ops Manager</option>
+                  <option value="requester">Requester</option>
                   <option value="controlling">Controlling</option>
-                  <option value="legal">Legal</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
@@ -3389,17 +3401,15 @@ const PERSONA_GROUP_LABEL = {
   it:          'IT',
   user:        'User',
   controlling: 'Controlling',
-  legal:       'Legal',
   admin:       'Admin',
 }
 
 const PERSONA_GROUP_DESC = {
-  procurement: 'Full access — Operations Board, Orders, Suppliers, Catalogues',
-  it:          'IT scope — Orders, Catalogues, My Requests, New Request',
-  user:        'Self-service — Browse Catalogue, submit requests',
-  controlling: 'Budget oversight — Budget upload, spend vs. plan, Operations Board',
-  legal:       'Legal review — Flags on new vendors, ad hoc & high-value purchases',
-  admin:       'Platform admin — Users, Operations Board, Supplier onboarding',
+  procurement: 'Ops Board (branch scope), Orders, Suppliers, Catalogues — can approve & sign',
+  it:          'IT Requests board (hardware/software only), Orders, Catalogues, New Request',
+  user:        'Self-service — browse catalogue, submit requests, track own requests',
+  controlling: 'Read-only board (branch scope) + Budget screen — no approval buttons',
+  admin:       'User management, Operations Board, Supplier onboarding',
 }
 
 const PERSONA_GROUP_COLOR = {
@@ -3407,7 +3417,6 @@ const PERSONA_GROUP_COLOR = {
   it:          '#2B5F7A',
   user:        '#3D7A5A',
   controlling: '#5A3E7A',
-  legal:       '#7A3E3E',
   admin:       '#6B4F8A',
 }
 
@@ -3619,7 +3628,7 @@ const DemoHint = ({ users, grouped, onPick }) => {
           padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 2,
           maxHeight: 320, overflowY: 'auto',
         }}>
-          {['procurement','it','controlling','legal','user','admin'].map(group => {
+          {['procurement','it','controlling','user','admin'].map(group => {
             const members = grouped[group] || []
             if (!members.length) return null
             return (
@@ -3667,19 +3676,18 @@ const DemoHint = ({ users, grouped, onPick }) => {
 // by UserSetupModal; this stub just gets the user past the modal on first visit.
 const DEFAULT_USER = {
   id:       'e1000000-0000-0000-0000-000000000001',
-  name:     'Head of Procurement',
-  email:    'head.of.procurement@truespend.com',
-  role:     'head_of_procurement',
+  name:     'Procurement Manager (HQ)',
+  email:    'procurement.hq@truespend.com',
+  role:     'procurement_manager',
   branchId: 'b1000000-0000-0000-0000-000000000001',
-  title:    'Head of Procurement',
+  title:    'Procurement Manager',
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  // Upgrade any cached user-role persona to procurement so the demo always
-  // opens on the full Operations Board. Users can still switch via ˅ chevron.
   const [user, setUser] = useLocalStorage('truespend_user', DEFAULT_USER)
-  const resolvedUser = (user && ROLE_GROUP[user.role] === 'user') ? DEFAULT_USER : user
+  // resolvedUser: if cached role has no group mapping (e.g. stale 'cfo' or 'legal'), fall back to default
+  const resolvedUser = (user && !ROLE_GROUP[user.role]) ? DEFAULT_USER : user
 
   const [tab,         setTab]         = useState('board')
   const [reqType,     setReqType]     = useState(null)
@@ -3691,9 +3699,9 @@ export default function App() {
   const [cart,        setCart]        = useState([])   // [{ item, qty }]
   const [cartOpen,    setCartOpen]    = useState(false)
 
-  // Persist the upgrade so it sticks after reload
+  // Clear stale cached sessions with removed roles (cfo, legal, head_of_procurement)
   useEffect(() => {
-    if (user && ROLE_GROUP[user.role] === 'user') setUser(DEFAULT_USER)
+    if (user && !ROLE_GROUP[user.role]) setUser(DEFAULT_USER)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const navigate = (t) => { setTab(t); setReqType(null); setSuccess(null); setSectionJump(null) }
@@ -3769,7 +3777,7 @@ export default function App() {
         setUser(u)
         // Land on the right default tab for the role
         const group = ROLE_GROUP[u.role] || 'user'
-        if (group === 'admin' || group === 'procurement' || group === 'controlling' || group === 'legal') setTab('board')
+        if (group === 'admin' || group === 'procurement' || group === 'controlling' || group === 'it') setTab('board')
         else if (group === 'it') setTab('catalog')
         else setTab('catalog')
       }} />}
@@ -3787,7 +3795,7 @@ export default function App() {
             setUser(u)
             setSuccess(null)
             const group = ROLE_GROUP[u.role] || 'user'
-            if (group === 'admin' || group === 'procurement' || group === 'controlling' || group === 'legal') setTab('board')
+            if (group === 'admin' || group === 'procurement' || group === 'controlling' || group === 'it') setTab('board')
             else if (group === 'it') setTab('catalog')
             else setTab('catalog')
           }}
@@ -3805,6 +3813,7 @@ export default function App() {
               sectionJump={sectionJump}
               onCountChange={handleCountChange}
               roleGroup={ROLE_GROUP[resolvedUser?.role] || 'procurement'}
+              user={resolvedUser}
             />
           )}
           {!success && tab === 'orders'    && <OrdersBoard onCountChange={setOrdersCount} />}

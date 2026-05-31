@@ -11,7 +11,10 @@
       "name": "Intake Form Submitted",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
@@ -21,7 +24,10 @@
       "name": "Create Ticket in PostgREST",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -32,7 +38,10 @@
       "name": "Respond to UI — Received",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [440, 100]
+      "position": [
+        440,
+        100
+      ]
     },
     {
       "parameters": {
@@ -57,7 +66,10 @@
       "name": "Fetch Supplier Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
@@ -82,7 +94,10 @@
       "name": "Fetch Contract Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [660, 300]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
@@ -107,7 +122,10 @@
       "name": "Fetch Budget Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [880, 300]
+      "position": [
+        880,
+        300
+      ]
     },
     {
       "parameters": {
@@ -132,14 +150,20 @@
       "name": "Fetch Responsible Manager",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [880, 480]
+      "position": [
+        880,
+        480
+      ]
     },
     {
       "id": "pre_check_gate",
       "name": "Pre-Check Gate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [990, 300],
+      "position": [
+        990,
+        300
+      ],
       "parameters": {
         "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst budget = $node['Fetch Budget Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nconst amount = parseFloat(intake.value_eur || intake.amount || 0);\nconst costCenterId = intake.cost_center_id || null;\nconst branchId = intake.branch_id || null;\nconst period = new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3);\nconst category = intake.category || 'other';\n\n// Fetch CC-level budget position if cost_center_id provided\nlet budgetCC = null;\nif (costCenterId && branchId) {\n  try {\n    const ccBudget = await this.helpers.httpRequest({\n      method: 'GET',\n      url: POSTGREST + '/budget_positions?branch_id=eq.' + branchId + '&cost_center_id=eq.' + costCenterId + '&period=eq.' + period,\n      headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n    });\n    budgetCC = ccBudget[0] || null;\n  } catch(e) { budgetCC = null; }\n}\n\n// Spend authority check\nconst managerAuthority = parseFloat(manager[0]?.spend_authority || 0);\nlet forceDisposition = null;\nlet blockReason = null;\n\nif (amount > 100000) {\n  forceDisposition = 'escalate';\n} else if (managerAuthority > 0 && amount > managerAuthority) {\n  forceDisposition = 'one_touch';\n}\n\n// CC budget check: block if no budget position exists for this CC+category\nlet budgetWarning = null;\nif (costCenterId && !budgetCC) {\n  budgetWarning = 'No budget position found for cost centre + category ' + category + ' in ' + period + '. Request requires budget allocation before approval.';\n  if (!forceDisposition) forceDisposition = 'one_touch'; // flag for review\n} else if (budgetCC) {\n  const remaining = (budgetCC.budget - budgetCC.committed - budgetCC.spent);\n  if (amount > remaining) {\n    budgetWarning = 'Request amount EUR ' + amount + ' exceeds remaining CC budget of EUR ' + remaining + ' (budget: ' + budgetCC.budget + ', committed: ' + budgetCC.committed + ', spent: ' + budgetCC.spent + ')';\n    if (!forceDisposition) forceDisposition = 'one_touch';\n  }\n}\n\n// New supplier check\nconst supplierFound = Array.isArray(supplier) && supplier.length > 0;\nconst supplierApproved = supplierFound && supplier[0].compliance_status === 'approved';\nconst needsCompliance = !supplierApproved;\n\nreturn [{ json: {\n  forceDisposition,\n  budgetCC,\n  budgetWarning,\n  needsCompliance,\n  supplierFound,\n  supplierApproved,\n  managerAuthority,\n  amount\n} }];"
       }
@@ -152,7 +176,10 @@
       "name": "Claude — Reason on Intake",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 300]
+      "position": [
+        1100,
+        300
+      ]
     },
     {
       "parameters": {
@@ -162,7 +189,10 @@
       "name": "Write Decision to PostgREST",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 300]
+      "position": [
+        1320,
+        300
+      ]
     },
     {
       "parameters": {
@@ -170,9 +200,18 @@
         "value1": "={{ $json.disposition }}",
         "rules": {
           "rules": [
-            { "value2": "auto_execute", "outputIndex": 0 },
-            { "value2": "one_touch",    "outputIndex": 1 },
-            { "value2": "escalate",     "outputIndex": 2 }
+            {
+              "value2": "auto_execute",
+              "outputIndex": 0
+            },
+            {
+              "value2": "one_touch",
+              "outputIndex": 1
+            },
+            {
+              "value2": "escalate",
+              "outputIndex": 2
+            }
           ]
         }
       },
@@ -180,7 +219,10 @@
       "name": "Route by Disposition",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
-      "position": [1540, 300]
+      "position": [
+        1540,
+        300
+      ]
     },
     {
       "parameters": {
@@ -190,7 +232,10 @@
       "name": "RPC — Approve & Create PO",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 100]
+      "position": [
+        1760,
+        100
+      ]
     },
     {
       "parameters": {
@@ -200,7 +245,10 @@
       "name": "Update Ticket — Pending Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 300]
+      "position": [
+        1760,
+        300
+      ]
     },
     {
       "parameters": {
@@ -210,7 +258,10 @@
       "name": "Update Ticket — Escalated",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 500]
+      "position": [
+        1760,
+        500
+      ]
     },
     {
       "parameters": {
@@ -220,7 +271,10 @@
       "name": "Close Ticket & Fetch Branch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1980, 100]
+      "position": [
+        1980,
+        100
+      ]
     },
     {
       "parameters": {
@@ -233,7 +287,10 @@
       "name": "Send PO to Supplier",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2,
-      "position": [2200, 100]
+      "position": [
+        2200,
+        100
+      ]
     },
     {
       "parameters": {
@@ -246,70 +303,220 @@
       "name": "Notify Submitter — Done",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2,
-      "position": [2200, 280]
+      "position": [
+        2200,
+        280
+      ]
     },
     {
       "id": "write-trace-signals-001",
       "name": "Write Trace Signals",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1430, 300],
+      "position": [
+        1430,
+        300
+      ],
       "parameters": {
         "jsCode": "const result = $input.first().json;\nconst decisionId = result.decision_id;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nif (!decisionId) {\n  console.log('No decision_id — skipping trace write');\n  return [{ json: result }];\n}\n\n// Parse the signals from Claude's output\nconst signals = result.signals || [];\n\nif (signals.length === 0) {\n  const fallback = [\n    { signal: 'contract',    value: result.contract_signal    || 'checked', weight: result.contract_weight    || 0.8, green: result.contract_green    ?? true, notes: result.contract_notes    || '' },\n    { signal: 'policy',      value: result.budget_signal      || 'checked', weight: result.budget_weight      || 0.8, green: result.budget_green      ?? true, notes: result.budget_notes      || '' },\n    { signal: 'supplier',    value: result.supplier_signal    || 'checked', weight: result.supplier_weight    || 0.8, green: result.supplier_green    ?? true, notes: result.supplier_notes    || '' },\n    { signal: 'request',     value: result.request_signal     || 'checked', weight: result.request_weight     || 0.8, green: result.request_green     ?? true, notes: result.request_notes     || '' },\n    { signal: 'consumption', value: result.consumption_signal || 'checked', weight: result.consumption_weight || 0.8, green: result.consumption_green ?? true, notes: result.consumption_notes || '' }\n  ];\n  signals.push(...fallback);\n}\n\nconst rows = signals.slice(0, 5).map(s => ({\n  decision_id: decisionId,\n  signal:      s.signal,\n  value:       typeof s.value === 'object' ? JSON.stringify(s.value) : String(s.value || ''),\n  weight:      Math.min(Math.max(parseFloat(s.weight) || 0.8, 0), 0.9999),\n  green:       s.green === true || s.green === 'true',\n  notes:       s.notes || ''\n}));\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: POSTGREST + '/trace_log',\n    headers: {\n      'Authorization': 'Bearer ' + JWT,\n      'Content-Type': 'application/json',\n      'Prefer': 'return=minimal'\n    },\n    body: JSON.stringify(rows)\n  });\n} catch(e) {\n  console.error('Trace write failed (non-fatal):', e.message);\n}\n\nreturn [{ json: result }];"
+      }
+    },
+    {
+      "id": "jira_all_requests",
+      "name": "Jira — Log PR for Legal",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        1430,
+        520
+      ],
+      "parameters": {
+        "operation": "create",
+        "project": "PROC",
+        "issueType": "Task",
+        "summary": "={{ \"[\" + $node[\"Write Decision to PostgREST\"].json.disposition.toUpperCase() + \"] \" + $node[\"Intake Form Submitted\"].json.body.title + \" — \" + $node[\"Create Ticket in PostgREST\"].json.reference }}",
+        "description": "=*PR Reference:* {{ $node[\"Create Ticket in PostgREST\"].json.reference }}\n*Supplier:* {{ $node[\"Intake Form Submitted\"].json.body.supplier_name || \"Not specified\" }}\n*Category:* {{ $node[\"Intake Form Submitted\"].json.body.category || \"other\" }}\n*Amount:* EUR {{ $node[\"Intake Form Submitted\"].json.body.value_eur || 0 }}\n*Submitted by:* {{ $node[\"Intake Form Submitted\"].json.body.submitted_by }} ({{ $node[\"Intake Form Submitted\"].json.body.submitted_by_email }})\n*Branch:* {{ $node[\"Intake Form Submitted\"].json.body.branch_id }}\n\n*Disposition:* {{ $node[\"Write Decision to PostgREST\"].json.disposition }}\n*Confidence:* {{ $node[\"Write Decision to PostgREST\"].json.confidence }}\n\n*Agent Reasoning:*\n{{ $node[\"Write Decision to PostgREST\"].json.reasoning }}\n\n*Recommendation:*\n{{ $node[\"Write Decision to PostgREST\"].json.recommendation }}\n\n---\n_Supplier compliance status: {{ $node[\"Fetch Supplier Context\"].json[0]?.compliance_status || \"unknown\" }}_\n_NDA status: {{ $node[\"Fetch Supplier Context\"].json[0]?.nda_status || \"not on file\" }}_\n_DPA signed: {{ $node[\"Fetch Supplier Context\"].json[0]?.gdpr_dpa_signed ? \"Yes\" : \"No\" }}_",
+        "priority": "={{ $node[\"Write Decision to PostgREST\"].json.disposition === \"escalate\" ? \"High\" : $node[\"Write Decision to PostgREST\"].json.disposition === \"one_touch\" ? \"Medium\" : \"Low\" }}",
+        "labels": [
+          "procurement",
+          "truespend",
+          "{{ $node[\"Intake Form Submitted\"].json.body.category || \"other\" }}"
+        ]
       }
     }
   ],
   "connections": {
     "Intake Form Submitted": {
-      "main": [[{ "node": "Create Ticket in PostgREST", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Create Ticket in PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Create Ticket in PostgREST": {
-      "main": [[
-        { "node": "Respond to UI — Received", "type": "main", "index": 0 },
-        { "node": "Fetch Supplier Context",   "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Respond to UI — Received",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Supplier Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Supplier Context": {
-      "main": [[{ "node": "Fetch Contract Context", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Fetch Contract Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Contract Context": {
-      "main": [[{ "node": "Fetch Budget Context", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Fetch Budget Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Budget Context": {
-      "main": [[
-        { "node": "Fetch Responsible Manager",  "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Fetch Responsible Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Responsible Manager": {
-      "main": [[{ "node": "Pre-Check Gate", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Pre-Check Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Pre-Check Gate": {
-      "main": [[{ "node": "Claude — Reason on Intake", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Claude — Reason on Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Claude — Reason on Intake": {
-      "main": [[{ "node": "Write Decision to PostgREST", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Write Decision to PostgREST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Write Decision to PostgREST": {
-      "main": [[{ "node": "Write Trace Signals", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Write Trace Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Write Trace Signals": {
-      "main": [[{ "node": "Route by Disposition", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Route by Disposition",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Jira — Log PR for Legal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Route by Disposition": {
       "main": [
-        [{ "node": "RPC — Approve & Create PO",    "type": "main", "index": 0 }],
-        [{ "node": "Update Ticket — Pending Review","type": "main", "index": 0 }],
-        [{ "node": "Update Ticket — Escalated",     "type": "main", "index": 0 }]
+        [
+          {
+            "node": "RPC — Approve & Create PO",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Ticket — Pending Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Ticket — Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "RPC — Approve & Create PO": {
-      "main": [[{ "node": "Close Ticket & Fetch Branch", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Close Ticket & Fetch Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Close Ticket & Fetch Branch": {
-      "main": [[
-        { "node": "Send PO to Supplier",      "type": "main", "index": 0 },
-        { "node": "Notify Submitter — Done",  "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Send PO to Supplier",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Submitter — Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
