@@ -1,6 +1,0 @@
-# Build intake SPA and serve via static file server
-[phases.build]
-cmds = ["npm ci", "npm run build"]
-
-[start]
-cmd = "npm start"
