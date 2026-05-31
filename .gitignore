@@ -50,3 +50,4 @@ intake/dist/
 
 # Private docs (demo credentials, internal notes)
 ROLES.md
+WORKFLOW_DESIGN.md
