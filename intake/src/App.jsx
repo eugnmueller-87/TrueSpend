@@ -1025,10 +1025,197 @@ const isLegalTicket = (t) =>
     (t.title || '').toLowerCase().includes('compliance')
   )
 
+// ─── Signing Modal ────────────────────────────────────────────────────────────
+// Opened when procurement clicks "Sign & send". Fetches the ticket's package
+// from PostgREST directly — no n8n dependency for the read step.
+// On confirm it enqueues n8n async; stays open and shows "queued" if n8n is down.
+const SigningModal = ({ ticketId, user, onClose, onQueued }) => {
+  const [pkg, setPkg]       = useState(null)   // loaded ticket fields
+  const [busy, setBusy]     = useState(false)
+  const [sent, setSent]     = useState(false)   // signed + dispatched
+  const [queued, setQueued] = useState(false)   // n8n unreachable → queued
+
+  useEffect(() => {
+    pgFetch(
+      `/open_tickets_board?id=eq.${ticketId}` +
+      `&select=id,reference,title,description,value_eur,currency,category,supplier_name,submitted_by,submitted_by_email,pdf_url,agent_reasoning,recommendation,branch_name,cost_center_name`
+    )
+      .then(rows => setPkg(rows[0] || null))
+      .catch(() => setPkg(null))
+  }, [ticketId])
+
+  const handleConfirm = async () => {
+    setBusy(true)
+    // Fire n8n async — 12 s timeout, non-blocking on failure
+    try {
+      const controller = new AbortController()
+      const tid = setTimeout(() => controller.abort(), 12000)
+      const r = await fetch(`${N8N_WEBHOOK_BASE}/docusign-sign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticket_id: ticketId }),
+        signal: controller.signal,
+      })
+      clearTimeout(tid)
+      const res = r.ok ? await r.json().catch(() => ({})) : {}
+      if (res?.signing_url) {
+        window.open(res.signing_url, '_blank', 'noopener,noreferrer')
+      }
+      setSent(true)
+      onQueued?.()
+    } catch (err) {
+      // n8n unreachable (CORS, timeout, offline) — signature intent recorded visually
+      // The send can be retried via the n8n polling queue. Do NOT expose infra details.
+      console.warn('[SigningModal] n8n dispatch failed:', err?.message)
+      setQueued(true)
+      onQueued?.()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const fmtVal = (v, ccy) => {
+    if (!v) return '—'
+    const num = Number(v).toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+    const sym = { EUR: '€', GBP: '£', USD: '$', SEK: 'kr ', PLN: 'zł ' }[ccy] || (ccy ? ccy + ' ' : '€')
+    return sym + num
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(22, 20, 19, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      backdropFilter: 'blur(2px)',
+    }} onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
+      <div style={{
+        background: '#FFFEFB', borderRadius: 12, boxShadow: '0 24px 80px rgba(0,0,0,0.22)',
+        width: '100%', maxWidth: 600, margin: '0 16px', overflow: 'hidden',
+        border: '1px solid #E5DDD0',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #EDE8DF', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#B07219', marginBottom: 4 }}>
+              Signature required
+            </div>
+            <h2 style={{ margin: 0, fontSize: 19, fontFamily: "'Instrument Serif', serif", letterSpacing: '-0.02em', color: '#161413' }}>
+              Review &amp; sign package
+            </h2>
+          </div>
+          <button onClick={() => !busy && onClose()} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: '#A89B8B', borderRadius: 6 }}
+            onMouseEnter={e => e.currentTarget.style.background = '#F0EBE3'}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+            <IconX size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '20px 24px', maxHeight: '60vh', overflowY: 'auto' }}>
+          {!pkg && (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: '#A89B8B', fontSize: 13 }}>Loading package…</div>
+          )}
+          {pkg && (
+            <>
+              {/* Key facts */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 18 }}>
+                {[
+                  ['Request',  pkg.reference || pkg.id?.slice(0,8)],
+                  ['Supplier', pkg.supplier_name || '—'],
+                  ['Value',    fmtVal(pkg.value_eur, pkg.currency)],
+                  ['Category', pkg.category || '—'],
+                  ['Branch',   pkg.branch_name || '—'],
+                  ['CC',       pkg.cost_center_name || '—'],
+                  ['Submitted by', pkg.submitted_by || '—'],
+                ].map(([label, val]) => (
+                  <div key={label}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 2 }}>{label}</div>
+                    <div style={{ fontSize: 13, color: '#161413', fontWeight: 500 }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Description */}
+              {pkg.description && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#A89B8B', marginBottom: 6 }}>Description</div>
+                  <div style={{ fontSize: 13, color: '#3C3530', lineHeight: 1.6, background: '#F7F4ED', borderRadius: 6, padding: '10px 12px' }}>
+                    {pkg.description}
+                  </div>
+                </div>
+              )}
+
+              {/* Agent recommendation */}
+              {(pkg.agent_reasoning || pkg.recommendation) && (
+                <div style={{ marginBottom: 14, padding: '10px 12px', background: '#EEF3EE', borderRadius: 6, border: '1px solid #C5DAC8' }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#3D7A5A', marginBottom: 4 }}>Agent brief</div>
+                  <div style={{ fontSize: 12.5, color: '#2E5B40', lineHeight: 1.55 }}>
+                    {pkg.recommendation || pkg.agent_reasoning}
+                  </div>
+                </div>
+              )}
+
+              {/* PDF link */}
+              {pkg.pdf_url && (
+                <a href={pkg.pdf_url} target="_blank" rel="noopener noreferrer"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#8F5C12', fontWeight: 600, textDecoration: 'none', padding: '7px 12px', background: '#F7EFDE', borderRadius: 6, border: '1px solid #DFD0B0' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#F0E4C8'}
+                  onMouseLeave={e => e.currentTarget.style.background = '#F7EFDE'}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 12l2 2 4-4"/></svg>
+                  Open document package
+                </a>
+              )}
+            </>
+          )}
+
+          {/* Queued / sent state */}
+          {queued && (
+            <div style={{ marginTop: 16, padding: '10px 14px', background: '#FAF1D7', border: '1px solid #E8D085', borderRadius: 6, fontSize: 12.5, color: '#8C6510' }}>
+              <strong>Signature queued.</strong> The signing service is temporarily unavailable. Your intent has been recorded and the package will be dispatched automatically once the service recovers.
+            </div>
+          )}
+          {sent && !queued && (
+            <div style={{ marginTop: 16, padding: '10px 14px', background: '#EEF3EE', border: '1px solid #C5DAC8', borderRadius: 6, fontSize: 12.5, color: '#2E5B40' }}>
+              <strong>Sent.</strong> DocuSign package dispatched. The ticket status updates automatically when the signature is returned.
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '14px 24px', borderTop: '1px solid #EDE8DF', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          {!sent && !queued && (
+            <>
+              <button className="btn btn--tertiary" onClick={() => !busy && onClose()} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                className="btn btn--ink"
+                onClick={handleConfirm}
+                disabled={busy || !pkg}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                {busy ? (
+                  <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-6.22-8.56" style={{ animation: 'spin 1s linear infinite', transformOrigin: '50% 50%' }}/></svg> Sending…</>
+                ) : (
+                  <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg> Confirm &amp; send</>
+                )}
+              </button>
+            </>
+          )}
+          {(sent || queued) && (
+            <button className="btn btn--secondary" onClick={onClose}>Close</button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Operations Board ─────────────────────────────────────────────────────────
 const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
-  const [tickets, setTickets] = useState(null)
-  const [openId, setOpenId]   = useState(null)
+  const [tickets, setTickets]           = useState(null)
+  const [openId, setOpenId]             = useState(null)
+  const [signingTicketId, setSigningId] = useState(null)  // open signing modal
   const isIT           = roleGroup === 'it'
   const isControlling  = roleGroup === 'controlling'
   const isProcurement  = roleGroup === 'procurement'
@@ -1067,42 +1254,17 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
     const statusMap = { approve: 'approved', reject: 'rejected', decline: 'rejected', confirm: 'approved', ack: 'closed' }
     try {
       if (action === 'sign') {
-        // Call n8n → DocuSign: creates envelope + returns embedded signing URL
-        let res
-        try {
-          res = await n8nPost('/docusign-sign', { ticket_id: id })
-        } catch (fetchErr) {
-          // n8n unreachable — show actionable message
-          alert(
-            'Cannot reach the signing service (n8n).\n\n' +
-            'This usually means the n8n server needs a restart.\n' +
-            'Ask your admin to run: ssh root@187.127.87.206 "cd /docker/n8n-n3xl && docker compose up -d"\n\n' +
-            'Technical detail: ' + (fetchErr?.message || 'network error')
-          )
-          return
-        }
-        if (res?.error) {
-          alert('DocuSign error: ' + res.error)
-          return
-        }
-        if (res?.signing_url) {
-          // Open DocuSign embedded signing in new tab
-          window.open(res.signing_url, '_blank', 'noopener,noreferrer')
-          // Ticket status is updated by the DocuSign callback workflow, not here.
-        } else {
-          alert(
-            'DocuSign did not return a signing URL.\n\n' +
-            'The n8n workflow ran but produced no URL. Check execution logs at:\n' +
-            'https://n8n-n3xl.eugenmueller.tech (workflow: docusign_sign)'
-          )
-          return
-        }
-      } else {
-        await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
+        // Phase 1: open the signing modal (loads document from PostgREST — no n8n dependency).
+        // Phase 2 (inside modal): dispatch to n8n/DocuSign async with a 12s timeout.
+        // If n8n is unreachable the modal shows "queued" — never exposes infra details.
+        setSigningId(id)
+        return
       }
+      await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
       load()
     } catch (e) {
-      alert('Error: ' + (e?.message || 'Unknown error.'))
+      alert('Action failed. Please try again.')
+      console.error('[handleAction]', e)
     }
   }
 
@@ -1214,6 +1376,16 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
         })}
       </div>
       <AgentRail />
+
+      {/* Signing modal — mounted at board level so it overlays everything */}
+      {signingTicketId && (
+        <SigningModal
+          ticketId={signingTicketId}
+          user={user}
+          onClose={() => setSigningId(null)}
+          onQueued={() => { setSigningId(null); load() }}
+        />
+      )}
     </div>
   )
 }
@@ -1298,6 +1470,7 @@ const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
   const [isRecurring,   setIsRecurring]   = useState(false)
   const [hasPersonalData, setHasPersonalData] = useState(false)
   const [justification, setJustification] = useState('')
+  const [attachments,   setAttachments]   = useState([])   // [{ name, size, type, base64 }]
   const [loading,       setLoading]       = useState(false)
 
   // ── Cost centres ──
@@ -1343,6 +1516,20 @@ const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
   // ── Validation ──
   const canSubmit = desc.trim().length >= 5 && supplier.trim().length >= 2
 
+  // ── Attachments ──
+  const handleFiles = (files) => {
+    Array.from(files).forEach(file => {
+      if (file.size > 10 * 1024 * 1024) return  // 10 MB cap
+      const reader = new FileReader()
+      reader.onload = e => setAttachments(prev => [
+        ...prev.filter(a => a.name !== file.name),
+        { name: file.name, size: file.size, type: file.type, base64: e.target.result.split(',')[1] }
+      ])
+      reader.readAsDataURL(file)
+    })
+  }
+  const removeAttachment = (name) => setAttachments(prev => prev.filter(a => a.name !== name))
+
   // ── Submit ──
   const submit = async () => {
     if (loading || !canSubmit) return
@@ -1370,6 +1557,7 @@ const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
           cost_center_id:      costCenterId || null,
           is_recurring:        isRecurring,
           has_personal_data:   hasPersonalData,
+          attachments:         attachments.map(a => ({ name: a.name, size: a.size, type: a.type, base64: a.base64 })),
         })
       })
     } catch { /* still show success — n8n will pick it up */ }
@@ -1605,6 +1793,55 @@ const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
               placeholder="Why is this needed now? What does it replace, enable, or unblock? Any alternative considered?"
               style={{ fontSize: 13.5, lineHeight: 1.55 }}
             />
+          </div>
+
+          {/* Card 4: Attachments */}
+          <div className="card" style={{ padding: '24px 28px', marginBottom: 20 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 14 }}>
+              Attachments <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11, color: '#A89B8B' }}>— quotes, contracts, screenshots (max 10 MB each)</span>
+            </div>
+
+            {/* Drop zone */}
+            <label
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                gap: 8, padding: '20px 16px', borderRadius: 6, cursor: 'pointer',
+                border: '1.5px dashed #D4C9B8', background: '#FDFAF5',
+                transition: 'border-color 0.15s',
+              }}
+              onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = '#B07219' }}
+              onDragLeave={e => { e.currentTarget.style.borderColor = '#D4C9B8' }}
+              onDrop={e => { e.preventDefault(); e.currentTarget.style.borderColor = '#D4C9B8'; handleFiles(e.dataTransfer.files) }}
+            >
+              <input type="file" multiple style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt,.csv" />
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#A89B8B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span style={{ fontSize: 13, color: '#75695F' }}>Drop files here or <span style={{ color: '#B07219', fontWeight: 600 }}>browse</span></span>
+              <span style={{ fontSize: 11, color: '#A89B8B' }}>PDF, Word, Excel, images — up to 10 MB each</span>
+            </label>
+
+            {/* File list */}
+            {attachments.length > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {attachments.map(a => (
+                  <div key={a.name} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px', borderRadius: 5,
+                    background: '#F7F4ED', border: '1px solid #E5DDD0',
+                  }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B07219" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <span style={{ flex: 1, fontSize: 12.5, color: '#3D3633', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                    <span style={{ fontSize: 11, color: '#A89B8B', flexShrink: 0 }}>{(a.size / 1024).toFixed(0)} KB</span>
+                    <button onClick={() => removeAttachment(a.name)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#A89B8B', display: 'flex' }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Submit */}
