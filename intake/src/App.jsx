@@ -8,17 +8,19 @@ const N8N_WEBHOOK_BASE = import.meta.env.VITE_N8N_WEBHOOK_BASE || 'https://n8n-n
 
 // ─── Branches ─────────────────────────────────────────────────────────────────
 const BRANCHES = [
-  { label: 'Global HQ',    id: 'b1000000-0000-0000-0000-000000000001', currency: 'EUR' },
-  { label: 'DACH',         id: 'b1000000-0000-0000-0000-000000000002', currency: 'EUR' },
-  { label: 'UK & Ireland', id: 'b1000000-0000-0000-0000-000000000003', currency: 'GBP' },
-  { label: 'Benelux',      id: 'b1000000-0000-0000-0000-000000000004', currency: 'EUR' },
-  { label: 'France',       id: 'b1000000-0000-0000-0000-000000000005', currency: 'EUR' },
-  { label: 'Nordics',      id: 'b1000000-0000-0000-0000-000000000006', currency: 'SEK' },
-  { label: 'Iberia',       id: 'b1000000-0000-0000-0000-000000000007', currency: 'EUR' },
-  { label: 'Italy',        id: 'b1000000-0000-0000-0000-000000000008', currency: 'EUR' },
-  { label: 'CEE',          id: 'b1000000-0000-0000-0000-000000000009', currency: 'PLN' },
-  { label: 'Nordics East', id: 'b1000000-0000-0000-0000-000000000010', currency: 'EUR' },
+  { label: 'Global HQ',    id: 'b1000000-0000-0000-0000-000000000001', currency: 'EUR', code: 'HQ'   },
+  { label: 'DACH',         id: 'b1000000-0000-0000-0000-000000000002', currency: 'EUR', code: 'DACH' },
+  { label: 'UK & Ireland', id: 'b1000000-0000-0000-0000-000000000003', currency: 'GBP', code: 'UKI'  },
+  { label: 'Benelux',      id: 'b1000000-0000-0000-0000-000000000004', currency: 'EUR', code: 'BNL'  },
+  { label: 'France',       id: 'b1000000-0000-0000-0000-000000000005', currency: 'EUR', code: 'FR'   },
+  { label: 'Nordics',      id: 'b1000000-0000-0000-0000-000000000006', currency: 'SEK', code: 'NOR'  },
+  { label: 'Iberia',       id: 'b1000000-0000-0000-0000-000000000007', currency: 'EUR', code: 'IB'   },
+  { label: 'Italy',        id: 'b1000000-0000-0000-0000-000000000008', currency: 'EUR', code: 'IT'   },
+  { label: 'CEE',          id: 'b1000000-0000-0000-0000-000000000009', currency: 'PLN', code: 'CEE'  },
+  { label: 'Nordics East', id: 'b1000000-0000-0000-0000-000000000010', currency: 'EUR', code: 'NE'   },
 ]
+// branch_id → short PO code (used by next_po_number RPC)
+const BRANCH_CODE = Object.fromEntries(BRANCHES.map(b => [b.id, b.code]))
 
 // Supported currencies for intake form
 const CURRENCIES = [
@@ -72,6 +74,24 @@ async function pgPatch(path, body) {
   })
   if (!r.ok) throw new Error(`PostgREST PATCH ${r.status}`)
   return r.json()
+}
+
+async function pgRpc(fn, body) {
+  const r = await fetch(`${POSTGREST_URL}/rpc/${fn}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    body: JSON.stringify(body),
+  })
+  const payload = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(payload?.message || payload?.hint || `RPC ${fn} ${r.status}`)
+  return payload
+}
+
+// Returns the current fiscal quarter string, e.g. '2026-Q2'
+function currentPeriod() {
+  const now = new Date()
+  const q = Math.ceil((now.getMonth() + 1) / 3)
+  return `${now.getFullYear()}-Q${q}`
 }
 
 async function n8nPost(path, body) {
@@ -1254,20 +1274,75 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
   }, [sectionJump])
 
   const handleAction = async (id, action) => {
-    const statusMap = { approve: 'approved', reject: 'rejected', decline: 'rejected', confirm: 'approved', ack: 'closed' }
     try {
       if (action === 'sign') {
-        // Phase 1: open the signing modal (loads document from PostgREST — no n8n dependency).
-        // Phase 2 (inside modal): dispatch to n8n/DocuSign async with a 12s timeout.
-        // If n8n is unreachable the modal shows "queued" — never exposes infra details.
+        // Phase 1: open signing modal. n8n/DocuSign dispatch happens inside the modal
+        // with a timeout — no synchronous dependency here.
         setSigningId(id)
         return
       }
-      await pgPatch(`/tickets?id=eq.${id}`, { status: statusMap[action] || 'approved' })
+
+      if (action === 'approve' || action === 'confirm') {
+        // ── INVARIANT I-1: money writes go through approve_and_commit RPC only ──
+        // Fetch the fields that open_tickets_board doesn't expose
+        const [full] = await pgFetch(
+          `/tickets?id=eq.${id}&select=id,supplier_id,contract_id,owner_id,branch_id,cost_center_id,category,description,amount,amount_eur,value_eur,currency`
+        )
+        if (!full) throw new Error('Ticket not found')
+
+        // Find the board row we already have for context (branch_name etc.)
+        const boardRow = tickets?.find(t => t.id === id) || {}
+
+        const amountEur = Number(full.amount_eur || full.value_eur || full.amount || 0)
+        const branchId  = full.branch_id
+        const branchCode = BRANCH_CODE[branchId] || 'HQ'
+        const period    = currentPeriod()
+
+        await pgRpc('approve_and_commit', {
+          p_ticket_id:        full.id,
+          p_branch_id:        branchId,
+          p_branch_code:      branchCode,
+          p_cost_center_id:   full.cost_center_id || null,
+          p_category:         full.category,
+          p_period:           period,
+          p_supplier_id:      full.supplier_id || null,
+          p_contract_id:      full.contract_id || null,
+          p_description:      full.description || boardRow.title || '',
+          p_amount:           Number(full.amount || full.amount_eur || full.value_eur || 0),
+          p_currency:         full.currency || 'EUR',
+          p_amount_eur:       amountEur,
+          p_raised_by:        full.owner_id || null,
+          p_expected_delivery: null,
+          p_line_items:       null,
+        })
+
+      } else if (action === 'reject' || action === 'decline') {
+        // Release any committed budget before marking rejected
+        const [full] = await pgFetch(
+          `/tickets?id=eq.${id}&select=branch_id,cost_center_id,category,amount_eur,value_eur`
+        )
+        const boardRow = tickets?.find(t => t.id === id) || {}
+        const committed = Number(boardRow.bucket_committed || 0)
+        if (full && committed > 0) {
+          await pgRpc('release_budget', {
+            p_branch_id:      full.branch_id,
+            p_cost_center_id: full.cost_center_id || null,
+            p_category:       full.category,
+            p_period:         currentPeriod(),
+            p_amount:         Number(full.amount_eur || full.value_eur || 0),
+          })
+        }
+        // Still need to update the ticket status — the RPC only handles budget
+        await pgPatch(`/tickets?id=eq.${id}`, { status: 'rejected' })
+
+      } else if (action === 'ack') {
+        await pgPatch(`/tickets?id=eq.${id}`, { status: 'closed' })
+      }
+
       load()
     } catch (e) {
-      alert('Action failed. Please try again.')
-      console.error('[handleAction]', e)
+      alert('Action failed: ' + (e?.message || 'Unknown error'))
+      console.error('[handleAction]', action, e)
     }
   }
 
