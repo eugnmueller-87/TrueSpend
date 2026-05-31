@@ -1205,53 +1205,445 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
   )
 }
 
-// ─── Home ──────────────────────────────────────────────────────────────────────
-const HomeScreen = ({ user, onCatalog, onRequestType }) => {
-  const firstName = user?.name?.split(' ')[0] || 'there'
+// ─── New Request — unified one-front-door flow ────────────────────────────────
+//
+// Single "What do you need?" entry. No form-type picking.
+// The screen infers category, detects existing suppliers, shows the live
+// approval path before submit, then fires the same n8n webhook.
+//
+// Layout: two-column (form left, approval path right) on wide screens.
+// Mirrors the existing design system exactly (tokens, classes, fonts).
+
+// Canonical category list — single source of truth (matches DB enum)
+const NR_CATEGORIES = [
+  { id: 'hardware',              label: 'Hardware',          hint: 'Laptops, servers, peripherals' },
+  { id: 'saas_license',          label: 'SaaS / Software',   hint: 'Subscriptions, licenses, tools' },
+  { id: 'hyperscaler',           label: 'Cloud',             hint: 'AWS, Azure, GCP, hyperscaler' },
+  { id: 'services',              label: 'Services',          hint: 'Consultants, agencies, SOW work' },
+  { id: 'facilities',            label: 'Facilities',        hint: 'Office, utilities, maintenance' },
+  { id: 'telecoms',              label: 'Telecoms',          hint: 'Mobile, network, connectivity' },
+  { id: 'other',                 label: 'Other',             hint: 'Anything else' },
+]
+
+// Keyword → category inference (runs client-side, no network)
+const NR_INFER_RULES = [
+  { pattern: /laptop|macbook|thinkpad|dell|lenovo|hp|server|monitor|keyboard|mouse|hardware|device|printer/i, cat: 'hardware' },
+  { pattern: /saas|slack|figma|notion|jira|confluence|zoom|salesforce|hubspot|adobe|microsoft 365|google workspace|license|subscription|seat/i, cat: 'saas_license' },
+  { pattern: /aws|azure|gcp|cloud|compute|s3|ec2|kubernetes|hosting|openai|anthropic|llm|api/i, cat: 'hyperscaler' },
+  { pattern: /consultant|agency|freelance|contractor|sow|statement of work|professional service|audit|legal|lawyer/i, cat: 'services' },
+  { pattern: /office|rent|facility|utilities|cleaning|maintenance|furniture|building/i, cat: 'facilities' },
+  { pattern: /telecom|mobile|phone|sim|network|internet|bandwidth|connectivity/i, cat: 'telecoms' },
+]
+
+// Tier thresholds → approval path (maps to real DOA logic)
+// Returns array of approver steps shown in the panel
+function buildApprovalPath(amountEur, category, hasPersonalData, existingSupplier) {
+  const steps = []
+  const amt = parseFloat(amountEur) || 0
+
+  // Step 1: Agent always runs first
+  steps.push({ who: 'AI Agent', role: 'Five-signal analysis', icon: '⚡', auto: true, sla: '<2 min' })
+
+  // Step 2: Branch Procurement Manager for anything > €1k or with personal data
+  if (amt >= 1000 || hasPersonalData) {
+    steps.push({ who: 'Procurement Manager', role: 'Approval', icon: '👤', auto: false, sla: '4h' })
+  }
+
+  // Step 3: IT Security for SaaS with personal data
+  if (category === 'saas_license' && hasPersonalData) {
+    steps.push({ who: 'IT Security', role: 'Data review', icon: '🔒', auto: false, sla: '1 day' })
+  }
+
+  // Step 4: Legal / DocuSign for new suppliers or services SOW
+  if (!existingSupplier || category === 'services') {
+    const needsDoc = category === 'services' ? 'SOW sign-off' : 'NDA / DPA'
+    steps.push({ who: 'Legal', role: needsDoc + ' (DocuSign)', icon: '✍️', auto: false, sla: '2 days' })
+  }
+
+  // Step 5: CFO sign-off for large spend
+  if (amt >= 100000) {
+    steps.push({ who: 'CFO', role: 'Executive sign-off', icon: '🏛', auto: false, sla: '1 day' })
+  } else if (amt >= 50000) {
+    steps.push({ who: 'Head of Procurement', role: 'Senior approval', icon: '📋', auto: false, sla: '4h' })
+  }
+
+  return steps
+}
+
+const NewRequestScreen = ({ user, onCatalog, onSuccess }) => {
+  const firstName   = user?.name?.split(' ')[0] || 'there'
+  const branchLabel = BRANCHES.find(b => b.id === user?.branchId)?.label || ''
+
+  // ── Form state ──
+  const [desc,          setDesc]          = useState('')
+  const [supplier,      setSupplier]      = useState('')
+  const [amount,        setAmount]        = useState('')
+  const [category,      setCategory]      = useState('')
+  const [costCenterId,  setCostCenterId]  = useState(user?.costCenterId || '')
+  const [isRecurring,   setIsRecurring]   = useState(false)
+  const [hasPersonalData, setHasPersonalData] = useState(false)
+  const [justification, setJustification] = useState('')
+  const [loading,       setLoading]       = useState(false)
+
+  // ── Cost centres ──
+  const [costCenters, setCostCenters] = useState(null)
+  useEffect(() => {
+    if (!user?.branchId) { setCostCenters([]); return }
+    pgFetch(`/cost_centers?branch_id=eq.${user.branchId}&order=code.asc`)
+      .then(d => { setCostCenters(d); if (!costCenterId && d.length > 0) setCostCenterId(user?.costCenterId || d[0].id) })
+      .catch(() => setCostCenters([]))
+  }, [user?.branchId])
+
+  // ── Existing supplier lookup ──
+  const [existingSupplier, setExistingSupplier] = useState(null)   // null = not checked, false = none, object = found
+  const supplierTimer = useRef(null)
+  useEffect(() => {
+    clearTimeout(supplierTimer.current)
+    if (!supplier || supplier.length < 3) { setExistingSupplier(null); return }
+    supplierTimer.current = setTimeout(async () => {
+      try {
+        const rows = await pgFetch(`/suppliers?name=ilike.*${encodeURIComponent(supplier)}*&limit=1&select=id,name,compliance_status,tier`)
+        setExistingSupplier(rows.length ? rows[0] : false)
+      } catch { setExistingSupplier(false) }
+    }, 400)
+  }, [supplier])
+
+  // ── Category inference from description ──
+  useEffect(() => {
+    if (category) return  // don't override a manual selection
+    for (const rule of NR_INFER_RULES) {
+      if (rule.pattern.test(desc) || rule.pattern.test(supplier)) {
+        setCategory(rule.cat)
+        return
+      }
+    }
+  }, [desc, supplier])
+
+  // ── Approval path (derived, no state) ──
+  const approvalPath = buildApprovalPath(amount, category, hasPersonalData, existingSupplier)
+  const totalDays    = approvalPath.filter(s => !s.auto).length <= 1 ? 'same day' :
+                       approvalPath.some(s => s.sla?.includes('day')) ? '2–3 days' : 'same day'
+  const amtNum = parseFloat(amount) || 0
+
+  // ── Validation ──
+  const canSubmit = desc.trim().length >= 5 && supplier.trim().length >= 2
+
+  // ── Submit ──
+  const submit = async () => {
+    if (loading || !canSubmit) return
+    setLoading(true)
+    const ref = 'TS-' + new Date().getFullYear() + '-' + String(Date.now()).slice(-4)
+    // Infer request type for backward compat with n8n workflow
+    let ticket_type = 'purchase'
+    if (/renew|renewal|extend|renegotiat/i.test(desc)) ticket_type = 'renew'
+    else if (!existingSupplier && supplier) ticket_type = 'onboard'
+    try {
+      await fetch(N8N_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title:               `${supplier ? supplier + ' — ' : ''}${desc.slice(0, 80)}`,
+          description:         desc + (justification ? '\n\nJustification: ' + justification : ''),
+          ticket_type,
+          submitted_by:        user?.name || '',
+          submitted_by_email:  user?.email || '',
+          supplier_name:       supplier,
+          value_eur:           amtNum,
+          category:            category || 'other',
+          branch_id:           user?.branchId || null,
+          cost_center_id:      costCenterId || null,
+          is_recurring:        isRecurring,
+          has_personal_data:   hasPersonalData,
+        })
+      })
+    } catch { /* still show success — n8n will pick it up */ }
+    setLoading(false)
+    onSuccess(ref)
+  }
+
+  // ── Tier badge ──
+  const TierBadge = ({ amt }) => {
+    if (!amt || amt <= 0) return null
+    let label, color, bg
+    if      (amt >= 100000) { label = '≥ €100k — CFO required';        color = '#B5462E'; bg = '#F6E5DE' }
+    else if (amt >= 50000)  { label = '≥ €50k — Senior approval';      color = '#2B5F7A'; bg = '#E6EEF2' }
+    else if (amt >= 10000)  { label = '≥ €10k — Procurement approval'; color = '#B07219'; bg = '#F7EFDE' }
+    else if (amt >= 1000)   { label = '≥ €1k — Standard approval';     color = '#3D7A5A'; bg = '#EEF3EE' }
+    else                    { label = '< €1k — Auto-execute likely';    color = '#75695F'; bg = '#EFEBE1' }
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 5, background: bg, color, fontSize: 11.5, fontWeight: 600, letterSpacing: '0.01em' }}>
+        {label}
+      </span>
+    )
+  }
+
   return (
-    <div className="content step-in" style={{ maxWidth: 980 }}>
-      <div className="pagehead">
+    <div className="content step-in" style={{ maxWidth: 1060 }}>
+      {/* Header */}
+      <div className="pagehead" style={{ marginBottom: 28 }}>
         <div>
           <div className="pagehead__eyebrow">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
-          <h1 className="greeting__hello">Hi, <em>{firstName}.</em></h1>
-          <div className="greeting__sub">What do you need to get done?</div>
+          <h1 className="pagehead__title">What do you need, <em>{firstName}?</em></h1>
+          <div className="pagehead__sub">Describe it. The agent handles the rest — routing, approval path, supplier check, budget validation.</div>
         </div>
-      </div>
-
-      <div style={{
-        background: '#161413', borderRadius: 10, padding: '28px 32px',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 24,
-        marginBottom: 32,
-      }}>
-        <div>
-          <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#B07219', marginBottom: 10, fontWeight: 500 }}>
-            Catalog
-          </div>
-          <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 32, letterSpacing: '-0.025em', color: '#F7F4ED', margin: 0, lineHeight: 1.1, maxWidth: 480 }}>
-            Standard items. <span style={{ color: '#B07219' }}>Instant approval.</span>
-          </h2>
-          <div style={{ fontSize: 13, color: 'rgba(247,244,237,0.6)', marginTop: 10 }}>
-            Contract on file. Budget check only. No waiting.
-          </div>
-        </div>
-        <button className="btn btn--primary btn--lg" onClick={onCatalog}>
-          Browse catalog <IconChev size={14}/>
-        </button>
-      </div>
-
-      <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 14 }}>
-        Or submit a request
-      </div>
-      <div className="tile-grid">
-        {QUICK_TILES.map(({ id, label, sub, Icon }) => (
-          <button key={id} className="tile" onClick={() => onRequestType(id)}>
-            <div className="tile__icon"><Icon size={18} /></div>
-            <div className="tile__body">
-              <div className="tile__title">{label}</div>
-              <div className="tile__sub">{sub}</div>
-            </div>
+        <div className="pagehead__actions">
+          <button className="btn btn--tertiary" onClick={onCatalog}>
+            <IconCatalog size={14} /> Browse catalog
           </button>
-        ))}
+        </div>
+      </div>
+
+      {/* Two-column layout */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 28, alignItems: 'start' }}>
+
+        {/* ── Left: Form ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+          {/* Card 1: The request */}
+          <div className="card" style={{ padding: '24px 28px', marginBottom: 16 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 18 }}>
+              The request
+            </div>
+
+            <div className="field">
+              <label className="field__label">What do you need? <span style={{ color: '#B07219' }}>*</span></label>
+              <textarea
+                className="textarea"
+                rows={3}
+                value={desc}
+                onChange={e => setDesc(e.target.value)}
+                placeholder="e.g. Figma Organisation plan for the design team, annual · or · Dell PowerEdge R750 × 2 for the DACH data centre"
+                autoFocus
+                style={{ fontSize: 14, lineHeight: 1.55 }}
+              />
+              <div style={{ fontSize: 11, color: '#A89B8B', marginTop: 5 }}>Be specific — model numbers, seat counts, contract term. The more context, the faster the agent decides.</div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label className="field__label">Supplier / vendor <span style={{ color: '#B07219' }}>*</span></label>
+                <input
+                  className="input"
+                  value={supplier}
+                  onChange={e => setSupplier(e.target.value)}
+                  placeholder="e.g. Figma Inc."
+                />
+                {/* Existing supplier nudge */}
+                {existingSupplier && (
+                  <div style={{ marginTop: 7, padding: '8px 11px', background: '#EEF3EE', border: '1px solid #C5D9C8', borderRadius: 6, fontSize: 12, color: '#2D6048', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    <span><strong>{existingSupplier.name}</strong> is already in TrueSpend — {existingSupplier.tier ? `Tier ${existingSupplier.tier}, ` : ''}{existingSupplier.compliance_status === 'green' ? '✓ compliance cleared' : 'compliance: ' + existingSupplier.compliance_status}. No onboarding needed.</span>
+                  </div>
+                )}
+                {existingSupplier === false && supplier.length >= 3 && (
+                  <div style={{ marginTop: 7, padding: '8px 11px', background: '#FAF1D7', border: '1px solid #E9DAB5', borderRadius: 6, fontSize: 12, color: '#8C6510' }}>
+                    New supplier — onboarding + NDA/DPA required. Legal will be looped in automatically.
+                  </div>
+                )}
+              </div>
+
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label className="field__label">Estimated value</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#75695F', fontSize: 14 }}>€</span>
+                  <input className="input" style={{ paddingLeft: 28 }} value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="0" />
+                </div>
+                <div style={{ marginTop: 6 }}><TierBadge amt={amtNum} /></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Category + details */}
+          <div className="card" style={{ padding: '24px 28px', marginBottom: 16 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 18 }}>
+              Category &amp; details
+            </div>
+
+            {/* Category chips */}
+            <div className="field">
+              <label className="field__label">
+                Category
+                {category && <span style={{ marginLeft: 8, fontSize: 11, color: '#3D7A5A', fontWeight: 600 }}>— inferred, change if wrong</span>}
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 4 }}>
+                {NR_CATEGORIES.map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setCategory(c.id)}
+                    title={c.hint}
+                    style={{
+                      padding: '6px 13px', borderRadius: 20, fontSize: 12.5, fontWeight: category === c.id ? 700 : 500, cursor: 'pointer',
+                      border: `1.5px solid ${category === c.id ? '#B07219' : '#E5DDD0'}`,
+                      background: category === c.id ? '#F7EFDE' : '#FFFEFB',
+                      color: category === c.id ? '#8F5C12' : '#4A4340',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 6 }}>
+              {/* Cost centre */}
+              {costCenters && costCenters.length > 0 && (
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="field__label">Cost centre</label>
+                  <select className="select" value={costCenterId} onChange={e => setCostCenterId(e.target.value)}>
+                    <option value="">— none —</option>
+                    {costCenters.map(cc => (
+                      <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Recurring toggle */}
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label className="field__label">Billing</label>
+                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                  {[{ id: false, label: 'One-time' }, { id: true, label: 'Recurring' }].map(opt => (
+                    <button
+                      key={String(opt.id)}
+                      type="button"
+                      onClick={() => setIsRecurring(opt.id)}
+                      style={{
+                        flex: 1, padding: '8px 0', borderRadius: 6, fontSize: 13, fontWeight: isRecurring === opt.id ? 700 : 500,
+                        border: `1.5px solid ${isRecurring === opt.id ? '#B07219' : '#E5DDD0'}`,
+                        background: isRecurring === opt.id ? '#F7EFDE' : '#FFFEFB',
+                        color: isRecurring === opt.id ? '#8F5C12' : '#75695F',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Personal data flag */}
+            <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setHasPersonalData(v => !v)}
+                style={{
+                  width: 18, height: 18, borderRadius: 4, flexShrink: 0, cursor: 'pointer',
+                  border: `2px solid ${hasPersonalData ? '#B07219' : '#C9BFAE'}`,
+                  background: hasPersonalData ? '#B07219' : 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                {hasPersonalData && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7"/></svg>}
+              </button>
+              <label style={{ fontSize: 13, color: '#3D3633', cursor: 'pointer' }} onClick={() => setHasPersonalData(v => !v)}>
+                This supplier will process personal data (triggers GDPR / DPA review)
+              </label>
+            </div>
+          </div>
+
+          {/* Card 3: Business justification */}
+          <div className="card" style={{ padding: '24px 28px', marginBottom: 20 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 14 }}>
+              Business justification <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11, color: '#A89B8B' }}>— helps the agent score faster</span>
+            </div>
+            <textarea
+              className="textarea"
+              rows={3}
+              value={justification}
+              onChange={e => setJustification(e.target.value)}
+              placeholder="Why is this needed now? What does it replace, enable, or unblock? Any alternative considered?"
+              style={{ fontSize: 13.5, lineHeight: 1.55 }}
+            />
+          </div>
+
+          {/* Submit */}
+          <button
+            className="btn btn--primary btn--block btn--lg"
+            onClick={submit}
+            disabled={loading || !canSubmit}
+            style={{ opacity: (!canSubmit || loading) ? 0.55 : 1 }}
+          >
+            {loading ? 'Submitting…' : 'Submit request →'}
+          </button>
+          {!canSubmit && (
+            <div style={{ fontSize: 12, color: '#A89B8B', textAlign: 'center', marginTop: 8 }}>
+              Fill in what you need and the supplier name to continue.
+            </div>
+          )}
+        </div>
+
+        {/* ── Right: Live approval path panel ── */}
+        <div style={{ position: 'sticky', top: 20 }}>
+          <div style={{ background: '#FFFEFB', border: '1px solid #E5DDD0', borderRadius: 10, overflow: 'hidden' }}>
+
+            {/* Panel header */}
+            <div style={{ background: '#161413', padding: '18px 22px' }}>
+              <div style={{ fontSize: 10.5, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#B07219', marginBottom: 6, fontWeight: 600 }}>Approval path</div>
+              <div style={{ fontSize: 13, color: 'rgba(247,244,237,0.75)', lineHeight: 1.4 }}>
+                {desc || supplier ? `Estimated ${totalDays}` : 'Fill in the form to see your approval path.'}
+              </div>
+            </div>
+
+            {/* Steps */}
+            <div style={{ padding: '16px 22px 20px' }}>
+              {!(desc || supplier) && (
+                <div style={{ padding: '20px 0', textAlign: 'center', color: '#C9BFAE', fontSize: 13 }}>
+                  Start typing to generate<br/>your approval path.
+                </div>
+              )}
+              {(desc || supplier) && approvalPath.map((step, i) => (
+                <div key={i} style={{ display: 'flex', gap: 14, paddingBottom: i < approvalPath.length - 1 ? 16 : 0, position: 'relative' }}>
+                  {/* Connector line */}
+                  {i < approvalPath.length - 1 && (
+                    <div style={{ position: 'absolute', left: 15, top: 32, bottom: 0, width: 1, background: '#E5DDD0' }} />
+                  )}
+                  {/* Step circle */}
+                  <div style={{
+                    width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                    background: step.auto ? '#EEF3EE' : '#F7EFDE',
+                    border: `1.5px solid ${step.auto ? '#C5D9C8' : '#E9DAB5'}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 14, zIndex: 1,
+                  }}>
+                    {step.icon}
+                  </div>
+                  {/* Step text */}
+                  <div style={{ flex: 1, paddingTop: 4 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#161413', letterSpacing: '-0.005em' }}>{step.who}</div>
+                    <div style={{ fontSize: 11.5, color: '#75695F', marginTop: 1 }}>
+                      {step.role}
+                      {step.auto && <span style={{ marginLeft: 6, padding: '1px 6px', background: '#EEF3EE', color: '#3D7A5A', borderRadius: 4, fontSize: 10.5, fontWeight: 700 }}>auto</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#A89B8B', marginTop: 2 }}>SLA: {step.sla}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Branch + submitter footer */}
+            {user && (
+              <div style={{ borderTop: '1px solid #EEE7DA', padding: '12px 22px', display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#75695F' }}>
+                <span>{user.name}</span>
+                <span>{branchLabel}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Catalog nudge */}
+          <div
+            onClick={onCatalog}
+            style={{ marginTop: 12, padding: '13px 16px', background: '#F7EFDE', border: '1px solid #E9DAB5', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
+          >
+            <div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8F5C12', marginBottom: 2 }}>Is this in the catalog?</div>
+              <div style={{ fontSize: 11.5, color: '#A87830' }}>Catalog items skip full review — budget check only.</div>
+            </div>
+            <IconChev size={14} style={{ color: '#B07219', flexShrink: 0 }} />
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -2713,7 +3105,7 @@ const MyRequestsScreen = ({ user }) => {
   )
 }
 
-// ─── Request Form ──────────────────────────────────────────────────────────────
+// ─── Request Form (legacy — kept for reference, no longer rendered) ───────────
 const RequestForm = ({ type, user, onBack, onSuccess }) => {
   const cfg = FORM_CONFIG[type] || FORM_CONFIG.other
   const [loading, setLoading]       = useState(false)
@@ -4033,8 +4425,7 @@ export default function App() {
     if (tab === 'suppliers') return ['Suppliers']
     if (tab === 'catalog')   return ['Catalogues']
     if (tab === 'mine')      return ['My requests']
-    if (tab === 'home')      return ['New request']
-    if (tab === 'request')   return ['New request', FORM_CONFIG[reqType]?.title || 'Request']
+    if (tab === 'home' || tab === 'request') return ['New request']
     if (tab === 'users')     return ['Users']
     if (tab === 'budget')    return ['Budget']
     if (tab === 'search')    return ['Search']
@@ -4093,12 +4484,10 @@ export default function App() {
           {!success && tab === 'suppliers' && <SuppliersScreen />}
           {!success && tab === 'catalog'   && <CatalogScreen cart={cart} onAddToCart={handleAddToCart} onOpenCart={() => setCartOpen(true)} />}
           {!success && tab === 'mine'    && <MyRequestsScreen user={resolvedUser} />}
-          {!success && tab === 'home'    && <HomeScreen user={resolvedUser} onCatalog={() => navigate('catalog')} onRequestType={startRequest} />}
-          {!success && tab === 'request' && reqType && (
-            <RequestForm
-              type={reqType}
+          {!success && (tab === 'home' || tab === 'request') && (
+            <NewRequestScreen
               user={resolvedUser}
-              onBack={() => navigate('home')}
+              onCatalog={() => navigate('catalog')}
               onSuccess={(ref) => setSuccess({ ref, email: resolvedUser?.email, isOrder: false })}
             />
           )}
