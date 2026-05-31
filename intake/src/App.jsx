@@ -146,6 +146,38 @@ const IconSearch   = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><line x1
 const IconContract = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></Icon>
 const IconPieChart = (p) => <Icon {...p}><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></Icon>
 
+// ─── Status enums — single source of truth ────────────────────────────────────
+// These match db/schema.sql ticket_status and purchase_orders.status exactly.
+// Use TS.* and POS.* in comparisons — never inline string literals.
+const TS = Object.freeze({
+  OPEN:               'open',
+  REASONING:          'reasoning',
+  PENDING_CONFIRM:    'pending_confirm',
+  PENDING_REVIEW:     'pending_review',
+  SIGNATURE_REQUIRED: 'signature_required',
+  ESCALATED:          'escalated',
+  AUTO_EXECUTED:      'auto_executed',
+  APPROVED:           'approved',
+  REJECTED:           'rejected',
+  CLOSED:             'closed',
+})
+
+const POS = Object.freeze({
+  DRAFT:        'draft',
+  SENT:         'sent',
+  ACKNOWLEDGED: 'acknowledged',
+  DELIVERED:    'delivered',
+  INVOICED:     'invoiced',
+  PAID:         'paid',
+  CLOSED:       'closed',
+  CANCELLED:    'cancelled',
+})
+
+// Active board sections — tickets visible on the ops board
+const TS_ACTIVE = [TS.SIGNATURE_REQUIRED, TS.PENDING_REVIEW, TS.ESCALATED, TS.PENDING_CONFIRM]
+// PO statuses considered "in flight"
+const POS_LIVE  = [POS.SENT, POS.ACKNOWLEDGED, POS.DELIVERED, POS.INVOICED]
+
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS = {
   signature_required: { label: 'Signature required', dot: '#B5462E', bg: '#F6E5DE', fg: '#B5462E' },
@@ -788,12 +820,12 @@ const RequestDetail = ({ ticket }) => {
               { key: 'done',      label: 'Closed',           sub: 'Approved, rejected, or executed' },
             ]
             const STATUS_STEP = {
-              reasoning: 1,
-              pending_review: 3, pending_confirm: 3, signature_required: 3, escalated: 3,
-              approved: 4, rejected: 4, auto_executed: 4, closed: 4,
+              [TS.REASONING]: 1,
+              [TS.PENDING_REVIEW]: 3, [TS.PENDING_CONFIRM]: 3, [TS.SIGNATURE_REQUIRED]: 3, [TS.ESCALATED]: 3,
+              [TS.APPROVED]: 4, [TS.REJECTED]: 4, [TS.AUTO_EXECUTED]: 4, [TS.CLOSED]: 4,
             }
             const currentStep = STATUS_STEP[ticket.status] ?? 1
-            const isStuck = ticket.status === 'reasoning'
+            const isStuck = ticket.status === TS.REASONING
             const stuckMin = Math.round((Date.now() - new Date(ticket.created_at)) / 60000)
 
             return (
@@ -901,7 +933,7 @@ const StatsStrip = ({ tickets }) => {
       </div>
       <div className="stat">
         <div className="stat__label">Escalated</div>
-        <div className="stat__val">{tickets.filter(t => t.status === 'escalated').length}</div>
+        <div className="stat__val">{tickets.filter(t => t.status === TS.ESCALATED).length}</div>
         <div className="stat__hint">Require CFO or Legal sign-off</div>
       </div>
       <div className="stat">
@@ -929,15 +961,15 @@ const ConfBar = ({ score }) => {
 
 // Flow step labels per status: 4 steps in the P2I/approval journey
 const FLOW_STEPS = {
-  reasoning:          { step: '1 of 4', label: 'Agent reviewing' },
-  pending_review:     { step: '2 of 4', label: 'Awaiting your decision' },
-  pending_confirm:    { step: '2 of 4', label: 'Quick confirm needed' },
-  signature_required: { step: '3 of 4', label: 'Awaiting your signature' },
-  escalated:          { step: '3 of 4', label: 'Needs CFO / Legal' },
-  approved:           { step: '4 of 4', label: 'Approved — PO issued' },
-  auto_executed:      { step: '4 of 4', label: 'Auto-executed' },
-  closed:             { step: '4 of 4', label: 'Closed' },
-  rejected:           { step: '—',      label: 'Rejected' },
+  [TS.REASONING]:          { step: '1 of 4', label: 'Agent reviewing' },
+  [TS.PENDING_REVIEW]:     { step: '2 of 4', label: 'Awaiting your decision' },
+  [TS.PENDING_CONFIRM]:    { step: '2 of 4', label: 'Quick confirm needed' },
+  [TS.SIGNATURE_REQUIRED]: { step: '3 of 4', label: 'Awaiting your signature' },
+  [TS.ESCALATED]:          { step: '3 of 4', label: 'Needs CFO / Legal' },
+  [TS.APPROVED]:           { step: '4 of 4', label: 'Approved — PO issued' },
+  [TS.AUTO_EXECUTED]:      { step: '4 of 4', label: 'Auto-executed' },
+  [TS.CLOSED]:             { step: '4 of 4', label: 'Closed' },
+  [TS.REJECTED]:           { step: '—',      label: 'Rejected' },
 }
 
 // Column header row — rendered once above each tlist
@@ -1005,18 +1037,18 @@ const TicketRow = ({ ticket, isOpen, onToggle, onAction, roleGroup }) => {
           {readOnly && (
             <span style={{ fontSize: 11, color: '#A89B8B', fontStyle: 'italic' }}>view only</span>
           )}
-          {canAct && ticket.status === 'signature_required' && (<>
+          {canAct && ticket.status === TS.SIGNATURE_REQUIRED && (<>
             {canSign && <button className="btn btn--ink btn--sm" onClick={() => onAction(ticket.id, 'sign')}>Sign &amp; send</button>}
             <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'decline')}>Decline</button>
           </>)}
-          {canAct && ticket.status === 'pending_review' && (<>
+          {canAct && ticket.status === TS.PENDING_REVIEW && (<>
             <button className="btn btn--success btn--sm" onClick={() => onAction(ticket.id, 'approve')}>Approve</button>
             <button className="btn btn--danger btn--sm" onClick={() => onAction(ticket.id, 'reject')}>Reject</button>
           </>)}
-          {canAct && ticket.status === 'escalated' && (
+          {canAct && ticket.status === TS.ESCALATED && (
             <button className="btn btn--secondary btn--sm" onClick={() => onAction(ticket.id, 'ack')}>Acknowledge</button>
           )}
-          {canAct && ticket.status === 'pending_confirm' && (
+          {canAct && ticket.status === TS.PENDING_CONFIRM && (
             <button className="btn btn--primary btn--sm" onClick={() => onAction(ticket.id, 'confirm')}>Confirm</button>
           )}
         </div>
@@ -1036,7 +1068,7 @@ const isLegalTicket = (t) =>
   t.review_type === 'infrastructure' === false && (  // exclude VPS alerts
     t.source === 'compliance' ||
     t.source === 'renewal' ||
-    t.status === 'signature_required' ||
+    t.status === TS.SIGNATURE_REQUIRED ||
     (t.description || '').toLowerCase().includes('nda') ||
     (t.description || '').toLowerCase().includes('dpa') ||
     (t.description || '').toLowerCase().includes('contract') ||
@@ -2278,7 +2310,7 @@ const OrdersBoard = ({ onCountChange, user }) => {
     try {
       const data = await pgFetch('/purchase_orders_board?order=sort_order.asc,created_at.desc')
       setPos(data)
-      const live = data.filter(p => ['sent','acknowledged','delivered','invoiced'].includes(p.po_status))
+      const live = data.filter(p => POS_LIVE.includes(p.po_status))
       onCountChange(live.length)
     } catch {
       setPos([])
@@ -2371,7 +2403,7 @@ const OrdersBoard = ({ onCountChange, user }) => {
   )
 
   const displayed = filter === 'active'
-    ? pos.filter(p => ['sent','acknowledged','delivered','invoiced'].includes(p.po_status))
+    ? pos.filter(p => POS_LIVE.includes(p.po_status))
     : pos
 
   const totalValue = displayed.reduce((s, p) => s + parseFloat(p.amount_eur || 0), 0)
@@ -2401,12 +2433,12 @@ const OrdersBoard = ({ onCountChange, user }) => {
       <div className="stats" style={{ marginBottom: 24 }}>
         <div className="stat">
           <div className="stat__label">In flight</div>
-          <div className="stat__val">{pos.filter(p=>['sent','acknowledged'].includes(p.po_status)).length}</div>
+          <div className="stat__val">{pos.filter(p=>[POS.SENT, POS.ACKNOWLEDGED].includes(p.po_status)).length}</div>
           <div className="stat__hint">Sent, awaiting delivery</div>
         </div>
         <div className="stat">
           <div className="stat__label">Pending invoice</div>
-          <div className="stat__val">{pos.filter(p=>p.po_status==='delivered').length}</div>
+          <div className="stat__val">{pos.filter(p=>p.po_status === POS.DELIVERED).length}</div>
           <div className="stat__hint">Delivered, invoice due</div>
         </div>
         <div className="stat">
@@ -2417,7 +2449,7 @@ const OrdersBoard = ({ onCountChange, user }) => {
         <div className="stat">
           <div className="stat__label">Overdue</div>
           <div className="stat__val stat__val--gold">
-            {pos.filter(p => p.expected_delivery && new Date(p.expected_delivery) < new Date() && ['sent','acknowledged'].includes(p.po_status)).length}
+            {pos.filter(p => p.expected_delivery && new Date(p.expected_delivery) < new Date() && [POS.SENT, POS.ACKNOWLEDGED].includes(p.po_status)).length}
           </div>
           <div className="stat__hint">Past expected delivery</div>
         </div>
@@ -2446,7 +2478,7 @@ const OrdersBoard = ({ onCountChange, user }) => {
               </div>
               {inSec.map(po => {
                 const isOpen = openId === po.id
-                const overdue = po.expected_delivery && new Date(po.expected_delivery) < new Date() && ['sent','acknowledged'].includes(po.po_status)
+                const overdue = po.expected_delivery && new Date(po.expected_delivery) < new Date() && [POS.SENT, POS.ACKNOWLEDGED].includes(po.po_status)
                 return (
                   <div key={po.id}>
                     <div className="trow" style={{ gridTemplateColumns: '150px 1fr 160px 110px 200px', cursor: 'pointer' }} onClick={() => setOpenId(isOpen ? null : po.id)}>
@@ -2477,7 +2509,7 @@ const OrdersBoard = ({ onCountChange, user }) => {
                         {po.currency && po.currency !== 'EUR' && <div style={{ fontSize: 11, color: '#A89B8B' }}>{po.currency}</div>}
                       </div>
                       <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
-                        {['sent','acknowledged'].includes(po.po_status) ? (
+                        {[POS.SENT, POS.ACKNOWLEDGED].includes(po.po_status) ? (
                           <button
                             className="btn btn--success btn--sm"
                             style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }}
@@ -2567,12 +2599,12 @@ const OrdersBoard = ({ onCountChange, user }) => {
                             )}
 
                             {/* ── Invoice actions — shown for delivered / invoiced POs ── */}
-                            {['delivered','invoiced'].includes(po.po_status) && (
+                            {[POS.DELIVERED, POS.INVOICED].includes(po.po_status) && (
                               <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #E5DDD0' }}>
                                 <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 10 }}>Invoice processing</div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                                   {/* Match invoice — available when PO is delivered and no matched invoice yet */}
-                                  {po.po_status === 'delivered' && (
+                                  {po.po_status === POS.DELIVERED && (
                                     <button
                                       className="btn btn--sm"
                                       style={{ fontSize: 12, padding: '5px 12px', background: '#2B5F7A', color: '#fff', border: 'none', borderRadius: 5 }}
@@ -2583,7 +2615,7 @@ const OrdersBoard = ({ onCountChange, user }) => {
                                     </button>
                                   )}
                                   {/* Create payment instruction — available when invoice is matched (status = invoiced) */}
-                                  {po.po_status === 'invoiced' && (
+                                  {po.po_status === POS.INVOICED && (
                                     <button
                                       className="btn btn--sm"
                                       style={{ fontSize: 12, padding: '5px 12px', background: '#3D7A5A', color: '#fff', border: 'none', borderRadius: 5 }}
@@ -2595,7 +2627,7 @@ const OrdersBoard = ({ onCountChange, user }) => {
                                   )}
                                 </div>
                                 <div style={{ fontSize: 11, color: '#A89B8B', marginTop: 8, lineHeight: 1.5 }}>
-                                  {po.po_status === 'delivered'
+                                  {po.po_status === POS.DELIVERED
                                     ? 'Invoice must be received at truespend.ops@gmx.de — n8n extracts it automatically. Then click Match.'
                                     : 'Invoice matched. Payment instruction creates an ERP sync entry and records the spend in budget.'}
                                 </div>
