@@ -8,6 +8,7 @@
 Agentic procurement operating system. n8n orchestrates Claude (Sonnet 4.6) + PostgreSQL + Email/Jira.
 No Slack. One clean Operations Board is the only human interface.
 **Live and fully seeded.** All 12 workflows active, all 28 tables populated with 41 mock tickets.
+100 suppliers · 70 contracts · 63 legal docs (NDAs/DPAs) · 300 compliance checks · 138 RAG-indexed documents.
 
 ## Stack
 | Layer | Tech | URL |
@@ -230,11 +231,33 @@ Decisions table has no `budget_available_eur`/`budget_bucket_pct` columns — re
 - **DocuSign IF node** ✓ — `$env.VAR` doesn't evaluate in IF node conditions; removed IF node, made straight-line flow
 - **Webhook conflict** ✓ — old `womQsMmOTTD78LYq` workflow deleted; `docusign-sign` path now owned by `D4aWf18qlGfxL4Qm`
 - **Mock data** ✓ — all 28 tables seeded; 41 tickets including `signature_required` tickets for DocuSign testing
+- **Expanded data** ✓ — 100 suppliers, 70 contracts, 63 legal docs, 300 compliance checks (seed files 13–16)
+- **RAG layer** ✓ — `document_embeddings` + `rag_policies` + `search_documents_text()` RPC applied to Railway DB; 138 docs indexed; Search tab in App.jsx for all roles
 - **Branch scoping** ✓ — `open_tickets_board` now exposes `branch_id`; all tickets have branch_id set; all branches have demo tickets
 - **Supplier compliance** ✓ — all 17 suppliers set to `compliance_status='green'`; Pre-Check Gate checks `'green'` not `'approved'`
 - **Traefik routing** ✓ — n8n external URL fixed; `COMPOSE_PROJECT_NAME` + `TRAEFIK_HOST` added to VPS `/docker/n8n-n3xl/.env`
 - **PO query column** ✓ — `purchase_orders.value_eur` → `amount_eur` in App.jsx analytics and supplier overview
 - **Submitted by email** ✓ — all mock tickets backfilled with `submitted_by_email` from owner
+
+## RAG Document Search Layer (2026-05-31)
+- **Tables**: `document_embeddings` (text embedding + FTS), `rag_policies` (procurement policy docs), `rag_search_log`
+- **Search function**: `search_documents_text(query_text, filter_doc_type, filter_supplier, result_limit)` — full-text search via tsvector; PostgREST endpoint `/rpc/search_documents_text`
+- **pgvector status**: NOT available on Railway standard plan. `rag_schema.sql` has the full vector(1536) version for when it becomes available. Currently using text column for embeddings.
+- **Embedder workflow**: `workflows/automatic/rag_embedder.json` — runs every 6h, calls OpenAI text-embedding-3-small, stores in `document_embeddings`. Requires `OPENAI_API_KEY` env var on n8n server.
+- **Search UI**: "Search docs" tab in App.jsx for procurement, it, controlling, admin roles. Debounced keyword search with type filter + result detail pane. Falls back to PostgREST `ilike` if RPC unavailable.
+- **Indexed documents (138 total)**: 63 legal docs (NDAs/DPAs) + 70 contracts + 5 policy docs
+- **Seed files**: `db/migrations/rag_tables_only.sql` (schema), `db/migrations/rag_seed_data.sql` (data), `db/migrations/apply_expanded_seed.js` (runner)
+
+## Mock Data Inventory (2026-05-31)
+| Table | Count | Notes |
+|---|---|---|
+| suppliers | 100 | All categories, all regions, realistic compliance mix |
+| contracts | 70 | All renewal states, staggered expiry for contract_watcher |
+| legal_documents | 63 | NDAs, DPAs, LkSG declarations — signed/draft/pending mix |
+| compliance_checks | 300 | 4 domains × 25 suppliers — green/amber/red realistic mix |
+| tickets | 41+ | All branches, all demo personas covered |
+| document_embeddings | 138 | FTS-indexed for search; vector upgradeable when pgvector available |
+| rag_policies | 5 | Spend authority, supplier approval, contract renewal, GDPR, AI policy |
 
 ## Stability improvements (2026-05-27)
 - All 9 Claude httpRequest nodes: 120,000ms timeout, retry 3× with 2s backoff
