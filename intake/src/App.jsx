@@ -322,13 +322,14 @@ const NAV_PRIMARY = NAV_BY_GROUP.procurement // default — overridden at runtim
 const RoleSwitcher = ({ currentUser, onSwitch, onSignOut }) => {
   const [open, setOpen]       = useState(false)
   const [users, setUsers]     = useState(null)
+  const [fetchErr, setFetchErr] = useState(null)
   const ref = useRef(null)
 
   // Load users once on mount
   useEffect(() => {
     pgFetch('/users?active=eq.true&order=role.asc,name.asc&limit=50')
-      .then(d => setUsers(d))
-      .catch(() => setUsers([]))
+      .then(d => { setUsers(d); setFetchErr(null) })
+      .catch(e => { setUsers([]); setFetchErr(e?.message || 'Failed to load users') })
   }, [])
 
   // Close on outside click
@@ -384,6 +385,16 @@ const RoleSwitcher = ({ currentUser, onSwitch, onSignOut }) => {
 
           {users === null && (
             <div style={{ padding: '10px 14px', fontSize: 12, color: '#A89B8B' }}>Loading…</div>
+          )}
+
+          {fetchErr && (
+            <div style={{ padding: '8px 14px', fontSize: 11, color: '#9B3A2A', background: '#FFF5F3', margin: '0 8px 4px', borderRadius: 6, border: '1px solid #F5C5BC' }}>
+              ⚠ {fetchErr}
+            </div>
+          )}
+
+          {!fetchErr && users !== null && users.length === 0 && (
+            <div style={{ padding: '10px 14px', fontSize: 12, color: '#A89B8B' }}>No users found</div>
           )}
 
           {['procurement','it','controlling','user','admin'].map(group => {
