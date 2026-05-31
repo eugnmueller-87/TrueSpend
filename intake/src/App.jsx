@@ -2266,11 +2266,13 @@ const PO_SECTIONS = [
   { id: 'closed',    label: 'Closed',          statuses: ['closed','draft'],       hint: 'Completed or draft POs.' },
 ]
 
-const OrdersBoard = ({ onCountChange }) => {
+const OrdersBoard = ({ onCountChange, user }) => {
   const [pos,         setPos]         = useState(null)
   const [openId,      setOpenId]      = useState(null)
   const [filter,      setFilter]      = useState('active')  // 'active' | 'all'
   const [delivering,  setDelivering]  = useState(null)      // po_id being confirmed
+  const [invoicing,   setInvoicing]   = useState(null)      // po_id being matched
+  const [paying,      setPaying]      = useState(null)      // po_id getting payment instruction
 
   const load = useCallback(async () => {
     try {
@@ -2284,36 +2286,77 @@ const OrdersBoard = ({ onCountChange }) => {
     }
   }, [onCountChange])
 
+  // ── Confirm delivery — always goes through confirm_delivery RPC (SECURITY DEFINER).
+  // n8n webhook is dispatched for notifications only — delivery state is written by RPC regardless.
   const handleMarkDelivered = async (po) => {
     setDelivering(po.id)
     try {
-      // Call the delivery_confirmation webhook — it runs confirm_delivery RPC
-      const res = await fetch(`${N8N_WEBHOOK_BASE}/delivery-confirmation`, {
+      // Primary: confirm_delivery RPC (SECURITY DEFINER — the only path that writes po.status)
+      await pgRpc('confirm_delivery', {
+        p_po_id:         po.id,
+        p_confirmed_by:  user?.email || '',
+      })
+      // Fire n8n notification async — failure does not affect delivery confirmation
+      fetch(`${N8N_WEBHOOK_BASE}/delivery-confirmation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ po_id: po.id, po_number: po.po_number, delivered_at: new Date().toISOString() }),
-      })
-      // Regardless of n8n response, also directly PATCH the PO status as fallback
-      if (!res.ok) {
-        await fetch(`${POSTGREST_URL}/purchase_orders?id=eq.${po.id}`, {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'delivered', delivered_at: new Date().toISOString() }),
-        })
-      }
+      }).catch(() => {})
       await load()
-    } catch {
-      // Fallback: direct PATCH if n8n is down
-      try {
-        await fetch(`${POSTGREST_URL}/purchase_orders?id=eq.${po.id}`, {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${POSTGREST_JWT}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'delivered', delivered_at: new Date().toISOString() }),
-        })
-        await load()
-      } catch {}
+    } catch (e) {
+      alert('Delivery confirmation failed: ' + (e?.message || 'Unknown error'))
+      console.error('[handleMarkDelivered]', e)
     } finally {
       setDelivering(null)
+    }
+  }
+
+  // ── Match invoice — calls match_invoice RPC, which runs 3-way match logic.
+  // Expects an invoice linked to this PO (created by invoice_processor workflow).
+  const handleMatchInvoice = async (po) => {
+    setInvoicing(po.id)
+    try {
+      // Fetch the linked invoice
+      const invRows = await pgFetch(`/invoices?po_id=eq.${po.id}&order=created_at.desc&limit=1`)
+      if (!invRows?.length) throw new Error('No invoice found for this PO — upload the invoice first via email to truespend.ops@gmx.de')
+      const inv = invRows[0]
+      const result = await pgRpc('match_invoice', { p_invoice_id: inv.id })
+      const matchLabel = result?.match_result || 'unknown'
+      if (matchLabel === 'matched') {
+        alert(`✓ Invoice matched — ${inv.invoice_number || inv.id}. You can now create the payment instruction.`)
+      } else {
+        alert(`Invoice match result: ${matchLabel}. ${result?.notes || 'Check invoice amount vs PO value.'}`)
+      }
+      await load()
+    } catch (e) {
+      alert('Invoice match failed: ' + (e?.message || 'Unknown error'))
+      console.error('[handleMatchInvoice]', e)
+    } finally {
+      setInvoicing(null)
+    }
+  }
+
+  // ── Create payment instruction — calls create_payment_instruction RPC.
+  // Also internally calls record_spend (releases committed, increments spent).
+  const handleCreatePayment = async (po) => {
+    setPaying(po.id)
+    try {
+      const invRows = await pgFetch(`/invoices?po_id=eq.${po.id}&match_result=eq.matched&order=created_at.desc&limit=1`)
+      if (!invRows?.length) throw new Error('No matched invoice found — run invoice match first')
+      const inv = invRows[0]
+      // Default due date: net-30 from today
+      const dueDate = new Date(Date.now() + 30 * 86400 * 1000).toISOString().slice(0, 10)
+      await pgRpc('create_payment_instruction', {
+        p_invoice_id: inv.id,
+        p_due_date:   dueDate,
+      })
+      alert(`✓ Payment instruction created — due ${dueDate}. ERP sync queued.`)
+      await load()
+    } catch (e) {
+      alert('Payment instruction failed: ' + (e?.message || 'Unknown error'))
+      console.error('[handleCreatePayment]', e)
+    } finally {
+      setPaying(null)
     }
   }
 
@@ -2520,6 +2563,42 @@ const OrdersBoard = ({ onCountChange }) => {
                             ) : (
                               <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 6, background: '#F5F1EA', border: '1px solid #E5DDD0', fontSize: 12, color: '#A89B8B' }}>
                                 PDF not yet generated — available once PO is sent to supplier.
+                              </div>
+                            )}
+
+                            {/* ── Invoice actions — shown for delivered / invoiced POs ── */}
+                            {['delivered','invoiced'].includes(po.po_status) && (
+                              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #E5DDD0' }}>
+                                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#75695F', marginBottom: 10 }}>Invoice processing</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                  {/* Match invoice — available when PO is delivered and no matched invoice yet */}
+                                  {po.po_status === 'delivered' && (
+                                    <button
+                                      className="btn btn--sm"
+                                      style={{ fontSize: 12, padding: '5px 12px', background: '#2B5F7A', color: '#fff', border: 'none', borderRadius: 5 }}
+                                      disabled={invoicing === po.id}
+                                      onClick={(e) => { e.stopPropagation(); handleMatchInvoice(po) }}
+                                    >
+                                      {invoicing === po.id ? 'Matching…' : '⚡ Match invoice'}
+                                    </button>
+                                  )}
+                                  {/* Create payment instruction — available when invoice is matched (status = invoiced) */}
+                                  {po.po_status === 'invoiced' && (
+                                    <button
+                                      className="btn btn--sm"
+                                      style={{ fontSize: 12, padding: '5px 12px', background: '#3D7A5A', color: '#fff', border: 'none', borderRadius: 5 }}
+                                      disabled={paying === po.id}
+                                      onClick={(e) => { e.stopPropagation(); handleCreatePayment(po) }}
+                                    >
+                                      {paying === po.id ? 'Creating…' : '💳 Create payment instruction'}
+                                    </button>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#A89B8B', marginTop: 8, lineHeight: 1.5 }}>
+                                  {po.po_status === 'delivered'
+                                    ? 'Invoice must be received at truespend.ops@gmx.de — n8n extracts it automatically. Then click Match.'
+                                    : 'Invoice matched. Payment instruction creates an ERP sync entry and records the spend in budget.'}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -5269,7 +5348,7 @@ export default function App() {
               user={resolvedUser}
             />
           )}
-          {!success && tab === 'orders'    && <OrdersBoard onCountChange={setOrdersCount} />}
+          {!success && tab === 'orders'    && <OrdersBoard onCountChange={setOrdersCount} user={resolvedUser} />}
           {!success && tab === 'suppliers' && <SuppliersScreen />}
           {!success && tab === 'catalog'   && <CatalogScreen cart={cart} onAddToCart={handleAddToCart} onOpenCart={() => setCartOpen(true)} />}
           {!success && tab === 'mine'    && <MyRequestsScreen user={resolvedUser} />}
