@@ -26,11 +26,12 @@ FROM nginx:1.27-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY intake/nginx.conf /etc/nginx/conf.d/default.conf.template
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-RUN rm -f /etc/nginx/conf.d/default.conf
-RUN apk add --no-cache gettext
+RUN rm -f /etc/nginx/conf.d/default.conf \
+ && apk add --no-cache gettext \
+ && chmod +x /docker-entrypoint.sh
 
 EXPOSE 80
 
-# Substitute $PORT at runtime, then start nginx
-CMD ["/bin/sh", "-c", "envsubst '${PORT}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
