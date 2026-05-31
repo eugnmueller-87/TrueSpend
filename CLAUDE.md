@@ -74,11 +74,31 @@ See: `scripts/quality-gate.sh:30–73`
 If a change alters an invariant, write an ADR in `docs/decisions/` first.
 See: `docs/decisions/`
 
+**I-8 — A db/migrations change is only "done" once applied to prod and recorded in schema_migrations.**
+Writing a SQL file and pushing it is NOT done. The file must be run through `scripts/db-migrate.sh`
+against `$DATABASE_URL` and appear in the `schema_migrations` table. CI (`.github/workflows/db-migrate.yml`)
+does this automatically on push when migration files change. For manual apply:
+```bash
+DATABASE_URL=postgresql://truespend:...@zephyr.proxy.rlwy.net:24934/truespend \
+  bash scripts/db-migrate.sh
+```
+Never re-edit a migration file to "fix" something — add a new migration instead.
+See: `scripts/db-migrate.sh`, `.github/workflows/db-migrate.yml`
+
 ## Commands
 
 ```bash
 # Quality gate (run before every push)
 bash scripts/quality-gate.sh
+
+# Apply pending DB migrations to prod (requires DATABASE_URL in env)
+bash scripts/db-migrate.sh
+
+# Check which migrations are applied / pending
+bash scripts/db-migrate.sh --status
+
+# Dry run — print plan without applying
+bash scripts/db-migrate.sh --dry-run
 
 # Local dev
 cd intake && npm run dev
@@ -86,7 +106,7 @@ cd intake && npm run dev
 # Build intake (Vite)
 cd intake && npm run build
 
-# Apply schema to Railway DB
+# Apply schema to Railway DB (first-time setup only — use db-migrate.sh for incremental)
 psql $DATABASE_URL -f db/schema.sql
 
 # Apply seeds

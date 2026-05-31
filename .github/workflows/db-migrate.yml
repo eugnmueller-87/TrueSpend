@@ -1,0 +1,48 @@
+name: Apply DB Migrations
+
+on:
+  # Run automatically when migration files change
+  push:
+    branches: [main]
+    paths:
+      - 'db/migrations/**'
+      - 'scripts/db-migrate.sh'
+
+  # Manual trigger (run from GitHub Actions UI — no code change needed)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run only (print plan, apply nothing)'
+        type: boolean
+        default: false
+
+jobs:
+  migrate:
+    name: Apply DB Migrations to Production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install psql
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+
+      - name: Check migration status
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: bash scripts/db-migrate.sh --status
+
+      - name: Apply migrations
+        if: ${{ !inputs.dry_run }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: bash scripts/db-migrate.sh
+
+      - name: Dry run only
+        if: ${{ inputs.dry_run }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: bash scripts/db-migrate.sh --dry-run
