@@ -2485,7 +2485,7 @@ const SuppliersScreen = () => {
       {/* Table */}
       {suppliers && (
         <div className="tlist">
-          <div className="trow" style={{ background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
+          <div className="trow" style={{ gridTemplateColumns: '90px 1fr 130px 160px 150px 100px', background: '#EFEBE1', cursor: 'default', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#75695F' }}>
             <div>Tier</div>
             <div>Supplier</div>
             <div>Category</div>
@@ -2506,7 +2506,7 @@ const SuppliersScreen = () => {
             const risk  = riskFlag(s, rag)
 
             return (
-              <div key={s.id} className="trow" style={{ cursor: 'pointer' }} onClick={() => setSelected(s)}>
+              <div key={s.id} className="trow" style={{ gridTemplateColumns: '90px 1fr 130px 160px 150px 100px', cursor: 'pointer' }} onClick={() => setSelected(s)}>
                 {/* Tier — primary classification */}
                 <div>
                   {tier ? (
