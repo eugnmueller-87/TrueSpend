@@ -1317,26 +1317,26 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
         })
 
       } else if (action === 'reject' || action === 'decline') {
-        // Release any committed budget before marking rejected
+        // reject_ticket RPC: releases committed budget (if any) + sets status='rejected'
+        // SECURITY DEFINER — the only path that can now write tickets.status
         const [full] = await pgFetch(
           `/tickets?id=eq.${id}&select=branch_id,cost_center_id,category,amount_eur,value_eur`
         )
+        if (!full) throw new Error('Ticket not found')
         const boardRow = tickets?.find(t => t.id === id) || {}
         const committed = Number(boardRow.bucket_committed || 0)
-        if (full && committed > 0) {
-          await pgRpc('release_budget', {
-            p_branch_id:      full.branch_id,
-            p_cost_center_id: full.cost_center_id || null,
-            p_category:       full.category,
-            p_period:         currentPeriod(),
-            p_amount:         Number(full.amount_eur || full.value_eur || 0),
-          })
-        }
-        // Still need to update the ticket status — the RPC only handles budget
-        await pgPatch(`/tickets?id=eq.${id}`, { status: 'rejected' })
+        await pgRpc('reject_ticket', {
+          p_ticket_id:       id,
+          p_branch_id:       full.branch_id || null,
+          p_cost_center_id:  full.cost_center_id || null,
+          p_category:        full.category,
+          p_period:          currentPeriod(),
+          p_committed_amount: committed,
+        })
 
       } else if (action === 'ack') {
-        await pgPatch(`/tickets?id=eq.${id}`, { status: 'closed' })
+        // close_ticket RPC: sets status='closed' — SECURITY DEFINER
+        await pgRpc('close_ticket', { p_ticket_id: id })
       }
 
       load()
