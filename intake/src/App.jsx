@@ -275,12 +275,13 @@ const RoleSwitcher = ({ currentUser, onSwitch, onSignOut }) => {
   const pick = (u) => {
     setOpen(false)
     onSwitch({
-      id:       u.id,
-      name:     u.name,
-      email:    u.email || '',
-      role:     u.role,
-      branchId: u.branch_id || BRANCHES[0].id,
-      title:    u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role,
+      id:           u.id,
+      name:         u.name,
+      email:        u.email || '',
+      role:         u.role,
+      branchId:     u.branch_id || BRANCHES[0].id,
+      costCenterId: u.cost_center_id || null,
+      title:        u.title || ROLE_LABEL[ROLE_GROUP[u.role] || u.role] || u.role,
     })
   }
 
@@ -2637,12 +2638,22 @@ const MyRequestsScreen = ({ user }) => {
 // ─── Request Form ──────────────────────────────────────────────────────────────
 const RequestForm = ({ type, user, onBack, onSuccess }) => {
   const cfg = FORM_CONFIG[type] || FORM_CONFIG.other
-  const [loading, setLoading] = useState(false)
-  const [supplier, setSupplier] = useState('')
-  const [amount,   setAmount]   = useState('')
-  const [desc,     setDesc]     = useState('')
-  const [notes,    setNotes]    = useState('')
-  const [category, setCategory] = useState('hardware')
+  const [loading, setLoading]       = useState(false)
+  const [supplier, setSupplier]     = useState('')
+  const [amount,   setAmount]       = useState('')
+  const [desc,     setDesc]         = useState('')
+  const [notes,    setNotes]        = useState('')
+  const [category, setCategory]     = useState('hardware')
+  const [costCenterId, setCostCenterId] = useState(user?.costCenterId || '')
+  const [costCenters, setCostCenters]   = useState(null)
+
+  // Fetch cost centres for the user's branch
+  useEffect(() => {
+    if (!user?.branchId) { setCostCenters([]); return }
+    pgFetch(`/cost_centers?branch_id=eq.${user.branchId}&order=code.asc`)
+      .then(d => { setCostCenters(d); if (!costCenterId && d.length > 0) setCostCenterId(user?.costCenterId || d[0].id) })
+      .catch(() => setCostCenters([]))
+  }, [user?.branchId])
 
   const submit = async () => {
     if (loading) return
@@ -2662,6 +2673,7 @@ const RequestForm = ({ type, user, onBack, onSuccess }) => {
           value_eur: parseFloat(amount) || 0,
           category,
           branch_id: user?.branchId || null,
+          cost_center_id: costCenterId || null,
         })
       })
       onSuccess(ref)
@@ -2708,6 +2720,17 @@ const RequestForm = ({ type, user, onBack, onSuccess }) => {
               <option value="other">Other</option>
             </select>
           </div>
+          {costCenters && costCenters.length > 0 && (
+            <div className="field">
+              <label className="field__label">Cost centre</label>
+              <select className="select" value={costCenterId} onChange={e => setCostCenterId(e.target.value)}>
+                <option value="">— none —</option>
+                {costCenters.map(cc => (
+                  <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label className="field__label">What's it for? <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
             <input className="input" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Brief description" />
@@ -2730,6 +2753,17 @@ const RequestForm = ({ type, user, onBack, onSuccess }) => {
               <input className="input" style={{ paddingLeft: 28 }} value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="0" />
             </div>
           </div>
+          {costCenters && costCenters.length > 0 && (
+            <div className="field">
+              <label className="field__label">Cost centre</label>
+              <select className="select" value={costCenterId} onChange={e => setCostCenterId(e.target.value)}>
+                <option value="">— none —</option>
+                {costCenters.map(cc => (
+                  <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label className="field__label">Notes</label>
             <textarea className="textarea" rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Expiry, key terms, requested changes…" />
@@ -2755,6 +2789,17 @@ const RequestForm = ({ type, user, onBack, onSuccess }) => {
               <option value="other">Other</option>
             </select>
           </div>
+          {costCenters && costCenters.length > 0 && (
+            <div className="field">
+              <label className="field__label">Cost centre</label>
+              <select className="select" value={costCenterId} onChange={e => setCostCenterId(e.target.value)}>
+                <option value="">— none —</option>
+                {costCenters.map(cc => (
+                  <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label className="field__label">Justification <span style={{ color: '#B07219', marginLeft: 2 }}>*</span></label>
             <textarea className="textarea" rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Why do we need this vendor?" />
@@ -2827,7 +2872,7 @@ const BUDGET_PERIODS = (() => {
   return out
 })()
 
-const BudgetScreen = () => {
+const BudgetScreen = ({ user }) => {
   const [buckets, setBuckets]     = useState(null)
   const [adding, setAdding]       = useState(false)
   const [saving, setSaving]       = useState(false)
@@ -2837,12 +2882,20 @@ const BudgetScreen = () => {
   const EMPTY_FORM = { branch_id: BRANCHES[0].id, category: 'hardware', period: `${new Date().getFullYear()}-Q${Math.ceil((new Date().getMonth()+1)/3)}`, planned: '' }
   const [form, setForm]           = useState(EMPTY_FORM)
 
+  // Roles that see ALL positions; others see only their own CC
+  const isFullAccess = !user || ['controlling', 'cfo', 'head_of_procurement', 'admin'].includes(user.role) ||
+    ['controlling', 'procurement'].includes(ROLE_GROUP[user.role])
+
   const load = useCallback(async () => {
     try {
-      const data = await pgFetch('/budget_positions?order=period.desc,category.asc&limit=200')
+      let path = '/budget_positions?order=period.desc,category.asc&limit=400'
+      if (!isFullAccess && user?.costCenterId) {
+        path = `/budget_positions?cost_center_id=eq.${user.costCenterId}&order=period.desc,category.asc&limit=400`
+      }
+      const data = await pgFetch(path)
       setBuckets(data)
     } catch { setBuckets([]) }
-  }, [])
+  }, [isFullAccess, user])
 
   useEffect(() => { load() }, [load])
 
@@ -2891,13 +2944,19 @@ const BudgetScreen = () => {
         <div>
           <div className="pagehead__eyebrow">Controlling</div>
           <h1 className="pagehead__title">Budget overview</h1>
-          <div className="pagehead__sub">Live spend vs. plan. Set planned budgets per branch, category, and quarter.</div>
+          <div className="pagehead__sub">
+            {isFullAccess
+              ? 'Live spend vs. plan — all branches and cost centres. Set planned budgets per branch, category, and quarter.'
+              : `Showing your cost centre budget only. Contact Controlling to update planned figures.`}
+          </div>
         </div>
         <div className="pagehead__actions">
           <button className="btn btn--tertiary btn--sm" onClick={load}><IconRotateCw size={14}/></button>
-          <button className="btn btn--primary btn--sm" onClick={() => { setAdding(true); setSaved(false); setSaveErr('') }}>
-            <IconPlus size={14}/> Set budget
-          </button>
+          {isFullAccess && (
+            <button className="btn btn--primary btn--sm" onClick={() => { setAdding(true); setSaved(false); setSaveErr('') }}>
+              <IconPlus size={14}/> Set budget
+            </button>
+          )}
         </div>
       </div>
 
@@ -3391,12 +3450,13 @@ const UserSetupModal = ({ onSave }) => {
   const signIn = () => {
     if (!found) return
     onSave({
-      id:       found.id,
-      name:     found.name,
-      email:    found.email || '',
-      role:     found.role,
-      branchId: found.branch_id || BRANCHES[0].id,
-      title:    found.title || ROLE_LABEL[ROLE_GROUP[found.role] || found.role] || found.role,
+      id:            found.id,
+      name:          found.name,
+      email:         found.email || '',
+      role:          found.role,
+      branchId:      found.branch_id || BRANCHES[0].id,
+      costCenterId:  found.cost_center_id || null,
+      title:         found.title || ROLE_LABEL[ROLE_GROUP[found.role] || found.role] || found.role,
     })
   }
 
@@ -3761,7 +3821,7 @@ export default function App() {
             />
           )}
           {!success && tab === 'users'   && <UsersScreen />}
-          {!success && tab === 'budget'  && <BudgetScreen />}
+          {!success && tab === 'budget'  && <BudgetScreen user={resolvedUser} />}
         </main>
       </div>
 
