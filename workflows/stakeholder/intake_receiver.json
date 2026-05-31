@@ -1,5 +1,5 @@
-{
-  "name": "TrueSpend — Intake Receiver",
+﻿{
+  "name": "TrueSpend â€” Intake Receiver",
   "nodes": [
     {
       "parameters": {
@@ -35,7 +35,7 @@
         "responseBody": "={{ JSON.stringify({ status: 'received', reference: $json.reference, message: 'Your request is being reviewed.' }) }}"
       },
       "id": "respond_immediately",
-      "name": "Respond to UI — Received",
+      "name": "Respond to UI â€” Received",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
@@ -165,15 +165,15 @@
         300
       ],
       "parameters": {
-        "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst budget = $node['Fetch Budget Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nconst amount = parseFloat(intake.value_eur || intake.amount || 0);\nconst costCenterId = intake.cost_center_id || null;\nconst branchId = intake.branch_id || null;\nconst period = new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3);\nconst category = intake.category || 'other';\n\n// Fetch CC-level budget position if cost_center_id provided\nlet budgetCC = null;\nif (costCenterId && branchId) {\n  try {\n    const ccBudget = await this.helpers.httpRequest({\n      method: 'GET',\n      url: POSTGREST + '/budget_positions?branch_id=eq.' + branchId + '&cost_center_id=eq.' + costCenterId + '&period=eq.' + period,\n      headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n    });\n    budgetCC = ccBudget[0] || null;\n  } catch(e) { budgetCC = null; }\n}\n\n// Spend authority check\nconst managerAuthority = parseFloat(manager[0]?.spend_authority || 0);\nlet forceDisposition = null;\nlet blockReason = null;\n\nif (amount > 100000) {\n  forceDisposition = 'escalate';\n} else if (managerAuthority > 0 && amount > managerAuthority) {\n  forceDisposition = 'one_touch';\n}\n\n// CC budget check: block if no budget position exists for this CC+category\nlet budgetWarning = null;\nif (costCenterId && !budgetCC) {\n  budgetWarning = 'No budget position found for cost centre + category ' + category + ' in ' + period + '. Request requires budget allocation before approval.';\n  if (!forceDisposition) forceDisposition = 'one_touch'; // flag for review\n} else if (budgetCC) {\n  const remaining = (budgetCC.budget - budgetCC.committed - budgetCC.spent);\n  if (amount > remaining) {\n    budgetWarning = 'Request amount EUR ' + amount + ' exceeds remaining CC budget of EUR ' + remaining + ' (budget: ' + budgetCC.budget + ', committed: ' + budgetCC.committed + ', spent: ' + budgetCC.spent + ')';\n    if (!forceDisposition) forceDisposition = 'one_touch';\n  }\n}\n\n// New supplier check\nconst supplierFound = Array.isArray(supplier) && supplier.length > 0;\nconst supplierApproved = supplierFound && supplier[0].compliance_status === 'approved';\nconst needsCompliance = !supplierApproved;\n\nreturn [{ json: {\n  forceDisposition,\n  budgetCC,\n  budgetWarning,\n  needsCompliance,\n  supplierFound,\n  supplierApproved,\n  managerAuthority,\n  amount\n} }];"
+        "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst budget = $node['Fetch Budget Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nconst amount = parseFloat(intake.value_eur || intake.amount || 0);\nconst costCenterId = intake.cost_center_id || null;\nconst branchId = intake.branch_id || null;\nconst period = new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3);\nconst category = intake.category || 'other';\n\n// Fetch CC-level budget position if cost_center_id provided\nlet budgetCC = null;\nif (costCenterId && branchId) {\n  try {\n    const ccBudget = await this.helpers.httpRequest({\n      method: 'GET',\n      url: POSTGREST + '/budget_positions?branch_id=eq.' + branchId + '&cost_center_id=eq.' + costCenterId + '&period=eq.' + period,\n      headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n    });\n    budgetCC = ccBudget[0] || null;\n  } catch(e) { budgetCC = null; }\n}\n\n// Spend authority check\nconst managerAuthority = parseFloat(manager[0]?.spend_authority || 0);\nlet forceDisposition = null;\nlet blockReason = null;\n\nif (amount > 100000) {\n  forceDisposition = 'escalate';\n} else if (managerAuthority > 0 && amount > managerAuthority) {\n  forceDisposition = 'one_touch';\n}\n\n// CC budget check: block if no budget position exists for this CC+category\nlet budgetWarning = null;\nif (costCenterId && !budgetCC) {\n  budgetWarning = 'No budget position found for cost centre + category ' + category + ' in ' + period + '. Request requires budget allocation before approval.';\n  if (!forceDisposition) forceDisposition = 'one_touch'; // flag for review\n} else if (budgetCC) {\n  const remaining = (budgetCC.budget - budgetCC.committed - budgetCC.spent);\n  if (amount > remaining) {\n    budgetWarning = 'Request amount EUR ' + amount + ' exceeds remaining CC budget of EUR ' + remaining + ' (budget: ' + budgetCC.budget + ', committed: ' + budgetCC.committed + ', spent: ' + budgetCC.spent + ')';\n    if (!forceDisposition) forceDisposition = 'one_touch';\n  }\n}\n\n// New supplier check\nconst supplierFound = Array.isArray(supplier) && supplier.length > 0;\nconst supplierApproved = supplierFound && supplier[0].compliance_status === 'green';\nconst needsCompliance = !supplierApproved;\n\nreturn [{ json: {\n  forceDisposition,\n  budgetCC,\n  budgetWarning,\n  needsCompliance,\n  supplierFound,\n  supplierApproved,\n  managerAuthority,\n  amount\n} }];"
       }
     },
     {
       "parameters": {
-        "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst contract = $node['Fetch Contract Context'].json;\nconst budget = $node['Fetch Budget Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\nconst preCheck = $node['Pre-Check Gate'].json;\n\nconst ANTHROPIC_KEY = $env.ANTHROPIC_API_KEY;\n\nconst forceNote = preCheck.forceDisposition\n  ? `\\nFORCED DISPOSITION: The system has pre-determined this must be \"${preCheck.forceDisposition}\". Reason: ${preCheck.budgetWarning || (preCheck.forceDisposition === 'escalate' ? 'Amount exceeds €100,000' : 'Amount exceeds manager spend authority')}. You MUST return this disposition.`\n  : '';\n\nconst ccBudgetNote = preCheck.budgetCC\n  ? `\\nCC BUDGET: ${JSON.stringify(preCheck.budgetCC)} — remaining: EUR ${preCheck.budgetCC.budget - preCheck.budgetCC.committed - preCheck.budgetCC.spent}`\n  : (preCheck.budgetWarning ? `\\nCC BUDGET WARNING: ${preCheck.budgetWarning}` : '');\n\nconst complianceNote = preCheck.needsCompliance\n  ? '\\nCOMPLIANCE FLAG: Supplier is new or not yet compliance-approved. If disposition is auto_execute, downgrade to one_touch. A compliance review is required before PO issuance.'\n  : '';\n\nconst prompt = `Reason on this procurement intake request and return a disposition.\n\nREQUEST:\n${JSON.stringify(intake)}\n\nSIGNAL 1 - CONTRACT:\n${JSON.stringify(contract)}\n\nSIGNAL 2 - BUDGET:\n${JSON.stringify(budget)}\n\nSIGNAL 3 - SUPPLIER:\n${JSON.stringify(supplier)}\n\nSIGNAL 4 - REQUEST: ${intake.ticket_type || 'purchase'} for EUR ${intake.value_eur || intake.amount || 0} by ${intake.submitted_by || 'unknown'}\n\nSIGNAL 5 - POLICY:\n- CATALOG ITEMS (description contains SKU codes like APPMBP14M3PRO, GHENT, MS365E3 etc): These are pre-approved catalog items with contracts already on file. If budget is available, ALWAYS return auto_execute with confidence >= 0.95. Do not route catalog items to one_touch under any circumstance unless the budget bucket is completely exhausted.\n- Auto-execute if all 5 signals green and confidence >= 0.85.\n- One-touch if any signal uncertain or confidence < 0.85.\n- Escalate if amount > EUR 100000 OR compliance blocker detected.${forceNote}${ccBudgetNote}${complianceNote}\n\nReturn ONLY valid JSON (no markdown, no explanation outside JSON):\n{\n  \"disposition\": \"auto_execute\" or \"one_touch\" or \"escalate\",\n  \"confidence\": 0.0 to 1.0,\n  \"reasoning\": \"string — explain each of the 5 signals\",\n  \"recommendation\": \"string — one sentence action\",\n  \"brief\": \"string — one sentence for the submitter\",\n  \"action_taken\": \"string\",\n  \"supplier_email_subject\": \"string or null\",\n  \"supplier_email_body\": \"string or null\",\n  \"requires_order\": true or false,\n  \"signals\": [\n    { \"signal\": \"contract\",    \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"policy\",      \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"supplier\",    \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"request\",     \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"consumption\", \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" }\n  ]\n}`;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.anthropic.com/v1/messages',\n  headers: {\n    'x-api-key': ANTHROPIC_KEY,\n    'anthropic-version': '2023-06-01',\n    'content-type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'claude-sonnet-4-6',\n    max_tokens: 1500,\n    messages: [{ role: 'user', content: prompt }]\n  })\n});\n\nconst text = response.content[0].text;\n// Strip markdown fences if Claude wraps in them\nconst clean = text.replace(/^```json\\n?/,'').replace(/\\n?```$/,'').trim();\nconst result = JSON.parse(clean);\n\n// Enforce force_disposition from pre-check gate — override Claude if it deviated\nif (preCheck.forceDisposition && result.disposition !== preCheck.forceDisposition) {\n  result.disposition = preCheck.forceDisposition;\n}\n\nreturn [{ json: result }];"
+        "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst contract = $node['Fetch Contract Context'].json;\nconst budget = $node['Fetch Budget Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\nconst preCheck = $node['Pre-Check Gate'].json;\n\nconst ANTHROPIC_KEY = $env.ANTHROPIC_API_KEY;\n\nconst forceNote = preCheck.forceDisposition\n  ? `\\nFORCED DISPOSITION: The system has pre-determined this must be \"${preCheck.forceDisposition}\". Reason: ${preCheck.budgetWarning || (preCheck.forceDisposition === 'escalate' ? 'Amount exceeds â‚¬100,000' : 'Amount exceeds manager spend authority')}. You MUST return this disposition.`\n  : '';\n\nconst ccBudgetNote = preCheck.budgetCC\n  ? `\\nCC BUDGET: ${JSON.stringify(preCheck.budgetCC)} â€” remaining: EUR ${preCheck.budgetCC.budget - preCheck.budgetCC.committed - preCheck.budgetCC.spent}`\n  : (preCheck.budgetWarning ? `\\nCC BUDGET WARNING: ${preCheck.budgetWarning}` : '');\n\nconst complianceNote = preCheck.needsCompliance\n  ? '\\nCOMPLIANCE FLAG: Supplier is new or not yet compliance-approved. If disposition is auto_execute, downgrade to one_touch. A compliance review is required before PO issuance.'\n  : '';\n\nconst prompt = `Reason on this procurement intake request and return a disposition.\n\nREQUEST:\n${JSON.stringify(intake)}\n\nSIGNAL 1 - CONTRACT:\n${JSON.stringify(contract)}\n\nSIGNAL 2 - BUDGET:\n${JSON.stringify(budget)}\n\nSIGNAL 3 - SUPPLIER:\n${JSON.stringify(supplier)}\n\nSIGNAL 4 - REQUEST: ${intake.ticket_type || 'purchase'} for EUR ${intake.value_eur || intake.amount || 0} by ${intake.submitted_by || 'unknown'}\n\nSIGNAL 5 - POLICY:\n- CATALOG ITEMS (description contains SKU codes like APPMBP14M3PRO, GHENT, MS365E3 etc): These are pre-approved catalog items with contracts already on file. If budget is available, ALWAYS return auto_execute with confidence >= 0.95. Do not route catalog items to one_touch under any circumstance unless the budget bucket is completely exhausted.\n- Auto-execute if all 5 signals green and confidence >= 0.85.\n- One-touch if any signal uncertain or confidence < 0.85.\n- Escalate if amount > EUR 100000 OR compliance blocker detected.${forceNote}${ccBudgetNote}${complianceNote}\n\nReturn ONLY valid JSON (no markdown, no explanation outside JSON):\n{\n  \"disposition\": \"auto_execute\" or \"one_touch\" or \"escalate\",\n  \"confidence\": 0.0 to 1.0,\n  \"reasoning\": \"string â€” explain each of the 5 signals\",\n  \"recommendation\": \"string â€” one sentence action\",\n  \"brief\": \"string â€” one sentence for the submitter\",\n  \"action_taken\": \"string\",\n  \"supplier_email_subject\": \"string or null\",\n  \"supplier_email_body\": \"string or null\",\n  \"requires_order\": true or false,\n  \"signals\": [\n    { \"signal\": \"contract\",    \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"policy\",      \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"supplier\",    \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"request\",     \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" },\n    { \"signal\": \"consumption\", \"value\": \"...\", \"weight\": 0.0-1.0, \"green\": true/false, \"notes\": \"...\" }\n  ]\n}`;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.anthropic.com/v1/messages',\n  headers: {\n    'x-api-key': ANTHROPIC_KEY,\n    'anthropic-version': '2023-06-01',\n    'content-type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'claude-sonnet-4-6',\n    max_tokens: 1500,\n    messages: [{ role: 'user', content: prompt }]\n  })\n});\n\nconst text = response.content[0].text;\n// Strip markdown fences if Claude wraps in them\nconst clean = text.replace(/^```json\\n?/,'').replace(/\\n?```$/,'').trim();\nconst result = JSON.parse(clean);\n\n// Enforce force_disposition from pre-check gate â€” override Claude if it deviated\nif (preCheck.forceDisposition && result.disposition !== preCheck.forceDisposition) {\n  result.disposition = preCheck.forceDisposition;\n}\n\nreturn [{ json: result }];"
       },
       "id": "call_claude",
-      "name": "Claude — Reason on Intake",
+      "name": "Claude â€” Reason on Intake",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -229,7 +229,7 @@
         "jsCode": "const intake = $node['Intake Form Submitted'].json.body;\nconst result = $node['Write Decision to PostgREST'].json;\nconst supplier = $node['Fetch Supplier Context'].json;\nconst contract = $node['Fetch Contract Context'].json;\nconst manager = $node['Fetch Responsible Manager'].json;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nconst po = await this.helpers.httpRequest({\n  method: 'POST',\n  url: POSTGREST + '/rpc/approve_and_commit',\n  headers: {\n    'Authorization': 'Bearer ' + JWT,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify({\n    p_ticket_id: result.ticket_id,\n    p_branch_id: intake.branch_id,\n    p_branch_code: intake.branch_code || 'HQ',\n    p_cost_center_id: intake.cost_center_id || null,\n    p_category: intake.category || 'other',\n    p_period: new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3),\n    p_supplier_id: supplier[0]?.id || null,\n    p_contract_id: contract[0]?.id || null,\n    p_description: intake.title || intake.description,\n    p_amount: parseFloat(intake.value_eur || intake.amount || 0),\n    p_currency: 'EUR',\n    p_amount_eur: parseFloat(intake.value_eur || intake.amount || 0),\n    p_raised_by: manager[0]?.id || null,\n    p_expected_delivery: new Date(Date.now() + 14*24*60*60*1000).toISOString().split('T')[0],\n    p_line_items: null\n  })\n});\n\nreturn [{ json: { po: po[0] || po, ticket_id: result.ticket_id } }];"
       },
       "id": "approve_and_commit",
-      "name": "RPC — Approve & Create PO",
+      "name": "RPC â€” Approve & Create PO",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -242,7 +242,7 @@
         "jsCode": "const ticketId = $node['Write Decision to PostgREST'].json.ticket_id;\nconst result = $node['Write Decision to PostgREST'].json;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nawait this.helpers.httpRequest({\n  method: 'PATCH',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId,\n  headers: {\n    'Authorization': 'Bearer ' + JWT,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify({\n    status: 'pending_review',\n    recommendation: result.recommendation,\n    brief: result.brief,\n    confidence: result.confidence\n  })\n});\n\nreturn [{ json: { ticket_id: ticketId, status: 'pending_review' } }];"
       },
       "id": "update_one_touch",
-      "name": "Update Ticket — Pending Review",
+      "name": "Update Ticket â€” Pending Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -255,7 +255,7 @@
         "jsCode": "const ticketId = $node['Write Decision to PostgREST'].json.ticket_id;\nconst result = $node['Write Decision to PostgREST'].json;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nawait this.helpers.httpRequest({\n  method: 'PATCH',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId,\n  headers: {\n    'Authorization': 'Bearer ' + JWT,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify({\n    status: 'escalated',\n    recommendation: result.recommendation,\n    brief: result.brief,\n    confidence: result.confidence\n  })\n});\n\nreturn [{ json: { ticket_id: ticketId, status: 'escalated' } }];"
       },
       "id": "update_escalated",
-      "name": "Update Ticket — Escalated",
+      "name": "Update Ticket â€” Escalated",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -280,7 +280,7 @@
       "parameters": {
         "fromEmail": "truespend.ops@gmx.de",
         "toEmail": "={{ $json.supplier?.contact_email || 'procurement@truespend.com' }}",
-        "subject": "=Purchase Order {{ $json.po?.po_number }} — {{ $json.intake?.title }}",
+        "subject": "=Purchase Order {{ $json.po?.po_number }} â€” {{ $json.intake?.title }}",
         "html": "=<div style=\"font-family:Arial,sans-serif;max-width:680px;margin:0 auto;color:#1a1a1a\">\n<div style=\"background:#1a1a1a;padding:24px 32px;\">\n  <span style=\"color:#D89E40;font-size:20px;font-weight:700;letter-spacing:0.05em\">TrueSpend</span>\n  <span style=\"color:#888;font-size:13px;margin-left:16px\">Purchase Order</span>\n</div>\n<div style=\"padding:32px\">\n  <table style=\"width:100%;border-collapse:collapse;margin-bottom:24px\">\n    <tr><td style=\"color:#666;font-size:12px;padding:4px 0\">FROM</td><td style=\"color:#666;font-size:12px;padding:4px 0\">TO</td></tr>\n    <tr>\n      <td style=\"padding:4px 0;font-size:14px;vertical-align:top\">\n        <strong>{{ $json.branch?.legal_name || $json.branch?.name || 'TrueSpend GmbH' }}</strong><br>\n        {{ $json.branch?.street_address || '' }}<br>\n        {{ $json.branch?.city_zip || '' }}<br>\n        VAT: {{ $json.branch?.vat_number || 'DE000000000' }}\n      </td>\n      <td style=\"padding:4px 0;font-size:14px;vertical-align:top\">\n        <strong>{{ $json.supplier?.legal_name || $json.supplier?.name || $json.intake?.supplier_name }}</strong><br>\n        {{ $json.supplier?.contact_email || '' }}\n      </td>\n    </tr>\n  </table>\n  <hr style=\"border:none;border-top:1px solid #e5e5e5;margin:0 0 24px\">\n  <table style=\"width:100%;border-collapse:collapse;margin-bottom:24px\">\n    <tr>\n      <td style=\"font-size:12px;color:#666\">PO NUMBER</td>\n      <td style=\"font-size:12px;color:#666\">DATE</td>\n      <td style=\"font-size:12px;color:#666\">EXPECTED DELIVERY</td>\n    </tr>\n    <tr>\n      <td style=\"font-size:16px;font-weight:700;color:#B07219;padding:4px 0\">{{ $json.po?.po_number }}</td>\n      <td style=\"font-size:14px;padding:4px 0\">{{ new Date().toLocaleDateString('en-GB') }}</td>\n      <td style=\"font-size:14px;padding:4px 0\">{{ new Date(Date.now()+14*24*60*60*1000).toLocaleDateString('en-GB') }}</td>\n    </tr>\n  </table>\n  <hr style=\"border:none;border-top:1px solid #e5e5e5;margin:0 0 24px\">\n  <table style=\"width:100%;border-collapse:collapse\">\n    <thead>\n      <tr style=\"background:#f5f5f5\">\n        <th style=\"text-align:left;padding:10px 12px;font-size:12px;color:#666;font-weight:600\">DESCRIPTION</th>\n        <th style=\"text-align:right;padding:10px 12px;font-size:12px;color:#666;font-weight:600\">QTY</th>\n        <th style=\"text-align:right;padding:10px 12px;font-size:12px;color:#666;font-weight:600\">UNIT PRICE</th>\n        <th style=\"text-align:right;padding:10px 12px;font-size:12px;color:#666;font-weight:600\">TOTAL</th>\n      </tr>\n    </thead>\n    <tbody>{{ (() => { const items = $json.intake?.line_items; if (items && items.length) { return items.map(i => `<tr style=\"border-bottom:1px solid #eee\"><td style=\"padding:10px 12px;font-size:13px\">${i.description || i.name || ''}</td><td style=\"padding:10px 12px;font-size:13px;text-align:right\">${i.quantity || i.qty || 1}</td><td style=\"padding:10px 12px;font-size:13px;text-align:right\">EUR ${Number(i.unit_price || i.price || 0).toLocaleString('de-DE',{minimumFractionDigits:2})}</td><td style=\"padding:10px 12px;font-size:13px;text-align:right\">EUR ${Number((i.unit_price || i.price || 0) * (i.quantity || i.qty || 1)).toLocaleString('de-DE',{minimumFractionDigits:2})}</td></tr>`).join(''); } else { return `<tr style=\"border-bottom:1px solid #eee\"><td style=\"padding:10px 12px;font-size:13px\">${$json.intake?.title || $json.intake?.description || 'Procurement request'}</td><td style=\"padding:10px 12px;font-size:13px;text-align:right\">1</td><td style=\"padding:10px 12px;font-size:13px;text-align:right\">EUR ${Number($json.intake?.value_eur || $json.intake?.amount || 0).toLocaleString('de-DE',{minimumFractionDigits:2})}</td><td style=\"padding:10px 12px;font-size:13px;text-align:right\">EUR ${Number($json.intake?.value_eur || $json.intake?.amount || 0).toLocaleString('de-DE',{minimumFractionDigits:2})}</td></tr>`; } })()} }}</tbody>\n  </table>\n  <div style=\"text-align:right;margin-top:16px;padding:16px 12px;background:#f9f9f9;border-radius:4px\">\n    <span style=\"font-size:15px;font-weight:700\">Total: EUR {{ Number($json.intake?.value_eur || $json.intake?.amount || 0).toLocaleString('de-DE',{minimumFractionDigits:2}) }}</span>\n  </div>\n  <p style=\"font-size:12px;color:#888;margin-top:32px\">Please reference PO number {{ $json.po?.po_number }} on your invoice.<br>Questions: truespend.ops@gmx.de</p>\n</div>\n</div>"
       },
       "id": "send_po_email",
@@ -296,11 +296,11 @@
       "parameters": {
         "fromEmail": "truespend.ops@gmx.de",
         "toEmail": "={{ $node['Intake Form Submitted'].json.body.submitted_by_email }}",
-        "subject": "=✅ Done: {{ $node['Intake Form Submitted'].json.body.title }} [{{ $node['Create Ticket in PostgREST'].json.reference }}]",
+        "subject": "=âœ… Done: {{ $node['Intake Form Submitted'].json.body.title }} [{{ $node['Create Ticket in PostgREST'].json.reference }}]",
         "text": "=Your request has been processed.\n\nReference: {{ $node['Create Ticket in PostgREST'].json.reference }}\nPO Number: {{ $node['Close Ticket & Fetch Branch'].json.po?.po_number }}\nAction: {{ $node['Write Decision to PostgREST'].json.action_taken }}\n\nNo further action needed."
       },
       "id": "notify_done",
-      "name": "Notify Submitter — Done",
+      "name": "Notify Submitter â€” Done",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2,
       "position": [
@@ -318,12 +318,12 @@
         300
       ],
       "parameters": {
-        "jsCode": "const result = $input.first().json;\nconst decisionId = result.decision_id;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nif (!decisionId) {\n  console.log('No decision_id — skipping trace write');\n  return [{ json: result }];\n}\n\n// Parse the signals from Claude's output\nconst signals = result.signals || [];\n\nif (signals.length === 0) {\n  const fallback = [\n    { signal: 'contract',    value: result.contract_signal    || 'checked', weight: result.contract_weight    || 0.8, green: result.contract_green    ?? true, notes: result.contract_notes    || '' },\n    { signal: 'policy',      value: result.budget_signal      || 'checked', weight: result.budget_weight      || 0.8, green: result.budget_green      ?? true, notes: result.budget_notes      || '' },\n    { signal: 'supplier',    value: result.supplier_signal    || 'checked', weight: result.supplier_weight    || 0.8, green: result.supplier_green    ?? true, notes: result.supplier_notes    || '' },\n    { signal: 'request',     value: result.request_signal     || 'checked', weight: result.request_weight     || 0.8, green: result.request_green     ?? true, notes: result.request_notes     || '' },\n    { signal: 'consumption', value: result.consumption_signal || 'checked', weight: result.consumption_weight || 0.8, green: result.consumption_green ?? true, notes: result.consumption_notes || '' }\n  ];\n  signals.push(...fallback);\n}\n\nconst rows = signals.slice(0, 5).map(s => ({\n  decision_id: decisionId,\n  signal:      s.signal,\n  value:       typeof s.value === 'object' ? JSON.stringify(s.value) : String(s.value || ''),\n  weight:      Math.min(Math.max(parseFloat(s.weight) || 0.8, 0), 0.9999),\n  green:       s.green === true || s.green === 'true',\n  notes:       s.notes || ''\n}));\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: POSTGREST + '/trace_log',\n    headers: {\n      'Authorization': 'Bearer ' + JWT,\n      'Content-Type': 'application/json',\n      'Prefer': 'return=minimal'\n    },\n    body: JSON.stringify(rows)\n  });\n} catch(e) {\n  console.error('Trace write failed (non-fatal):', e.message);\n}\n\nreturn [{ json: result }];"
+        "jsCode": "const result = $input.first().json;\nconst decisionId = result.decision_id;\n\nconst JWT = $env.POSTGREST_JWT;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\n\nif (!decisionId) {\n  console.log('No decision_id â€” skipping trace write');\n  return [{ json: result }];\n}\n\n// Parse the signals from Claude's output\nconst signals = result.signals || [];\n\nif (signals.length === 0) {\n  const fallback = [\n    { signal: 'contract',    value: result.contract_signal    || 'checked', weight: result.contract_weight    || 0.8, green: result.contract_green    ?? true, notes: result.contract_notes    || '' },\n    { signal: 'policy',      value: result.budget_signal      || 'checked', weight: result.budget_weight      || 0.8, green: result.budget_green      ?? true, notes: result.budget_notes      || '' },\n    { signal: 'supplier',    value: result.supplier_signal    || 'checked', weight: result.supplier_weight    || 0.8, green: result.supplier_green    ?? true, notes: result.supplier_notes    || '' },\n    { signal: 'request',     value: result.request_signal     || 'checked', weight: result.request_weight     || 0.8, green: result.request_green     ?? true, notes: result.request_notes     || '' },\n    { signal: 'consumption', value: result.consumption_signal || 'checked', weight: result.consumption_weight || 0.8, green: result.consumption_green ?? true, notes: result.consumption_notes || '' }\n  ];\n  signals.push(...fallback);\n}\n\nconst rows = signals.slice(0, 5).map(s => ({\n  decision_id: decisionId,\n  signal:      s.signal,\n  value:       typeof s.value === 'object' ? JSON.stringify(s.value) : String(s.value || ''),\n  weight:      Math.min(Math.max(parseFloat(s.weight) || 0.8, 0), 0.9999),\n  green:       s.green === true || s.green === 'true',\n  notes:       s.notes || ''\n}));\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: POSTGREST + '/trace_log',\n    headers: {\n      'Authorization': 'Bearer ' + JWT,\n      'Content-Type': 'application/json',\n      'Prefer': 'return=minimal'\n    },\n    body: JSON.stringify(rows)\n  });\n} catch(e) {\n  console.error('Trace write failed (non-fatal):', e.message);\n}\n\nreturn [{ json: result }];"
       }
     },
     {
       "id": "jira_all_requests",
-      "name": "Jira — Log PR for Legal",
+      "name": "Jira â€” Log PR for Legal",
       "type": "n8n-nodes-base.jira",
       "typeVersion": 1,
       "position": [
@@ -334,7 +334,7 @@
         "operation": "create",
         "project": "PROC",
         "issueType": "Task",
-        "summary": "={{ \"[\" + $node[\"Write Decision to PostgREST\"].json.disposition.toUpperCase() + \"] \" + $node[\"Intake Form Submitted\"].json.body.title + \" — \" + $node[\"Create Ticket in PostgREST\"].json.reference }}",
+        "summary": "={{ \"[\" + $node[\"Write Decision to PostgREST\"].json.disposition.toUpperCase() + \"] \" + $node[\"Intake Form Submitted\"].json.body.title + \" â€” \" + $node[\"Create Ticket in PostgREST\"].json.reference }}",
         "description": "=*PR Reference:* {{ $node[\"Create Ticket in PostgREST\"].json.reference }}\n*Supplier:* {{ $node[\"Intake Form Submitted\"].json.body.supplier_name || \"Not specified\" }}\n*Category:* {{ $node[\"Intake Form Submitted\"].json.body.category || \"other\" }}\n*Amount:* EUR {{ $node[\"Intake Form Submitted\"].json.body.value_eur || 0 }}\n*Submitted by:* {{ $node[\"Intake Form Submitted\"].json.body.submitted_by }} ({{ $node[\"Intake Form Submitted\"].json.body.submitted_by_email }})\n*Branch:* {{ $node[\"Intake Form Submitted\"].json.body.branch_id }}\n\n*Disposition:* {{ $node[\"Write Decision to PostgREST\"].json.disposition }}\n*Confidence:* {{ $node[\"Write Decision to PostgREST\"].json.confidence }}\n\n*Agent Reasoning:*\n{{ $node[\"Write Decision to PostgREST\"].json.reasoning }}\n\n*Recommendation:*\n{{ $node[\"Write Decision to PostgREST\"].json.recommendation }}\n\n---\n_Supplier compliance status: {{ $node[\"Fetch Supplier Context\"].json[0]?.compliance_status || \"unknown\" }}_\n_NDA status: {{ $node[\"Fetch Supplier Context\"].json[0]?.nda_status || \"not on file\" }}_\n_DPA signed: {{ $node[\"Fetch Supplier Context\"].json[0]?.gdpr_dpa_signed ? \"Yes\" : \"No\" }}_",
         "priority": "={{ $node[\"Write Decision to PostgREST\"].json.disposition === \"escalate\" ? \"High\" : $node[\"Write Decision to PostgREST\"].json.disposition === \"one_touch\" ? \"Medium\" : \"Low\" }}",
         "labels": [
@@ -361,7 +361,7 @@
       "main": [
         [
           {
-            "node": "Respond to UI — Received",
+            "node": "Respond to UI â€” Received",
             "type": "main",
             "index": 0
           },
@@ -421,14 +421,14 @@
       "main": [
         [
           {
-            "node": "Claude — Reason on Intake",
+            "node": "Claude â€” Reason on Intake",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Claude — Reason on Intake": {
+    "Claude â€” Reason on Intake": {
       "main": [
         [
           {
@@ -459,7 +459,7 @@
             "index": 0
           },
           {
-            "node": "Jira — Log PR for Legal",
+            "node": "Jira â€” Log PR for Legal",
             "type": "main",
             "index": 0
           }
@@ -470,28 +470,28 @@
       "main": [
         [
           {
-            "node": "RPC — Approve & Create PO",
+            "node": "RPC â€” Approve & Create PO",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Update Ticket — Pending Review",
+            "node": "Update Ticket â€” Pending Review",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Update Ticket — Escalated",
+            "node": "Update Ticket â€” Escalated",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "RPC — Approve & Create PO": {
+    "RPC â€” Approve & Create PO": {
       "main": [
         [
           {
@@ -511,7 +511,7 @@
             "index": 0
           },
           {
-            "node": "Notify Submitter — Done",
+            "node": "Notify Submitter â€” Done",
             "type": "main",
             "index": 0
           }

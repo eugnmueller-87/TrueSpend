@@ -1202,38 +1202,44 @@ select
   t.pdf_url,
   t.amount,
   t.amount_eur,
+  t.value_eur,
   t.currency,
   t.jira_key,
   t.po_id,
   po.po_number,
-  po.status          as po_status,
+  po.status            as po_status,
   po.expected_delivery as po_expected_delivery,
-  po.delivery_overdue  as po_delivery_overdue,
+  (po.expected_delivery is not null and po.expected_delivery < current_date and po.delivered_at is null) as po_delivery_overdue,
   t.created_at,
   t.target_close,
+  t.category,
+  -- UI scoping fields
+  t.branch_id,
+  t.cost_center_id,
+  t.submitted_by,
+  t.submitted_by_email,
+  t.confidence         as confidence_score,
   -- Supplier
-  s.name          as supplier_name,
-  s.health        as supplier_health,
-  s.compliance_status as supplier_compliance,
-  -- Branch & cost center
-  b.name          as branch_name,
-  cc.code         as cost_center_code,
-  cc.name         as cost_center_name,
+  s.name               as supplier_name,
+  s.health             as supplier_health,
+  s.compliance_status  as supplier_compliance,
+  -- Branch & cost center names
+  b.name               as branch_name,
+  cc.code              as cost_center_code,
+  cc.name              as cost_center_name,
   -- Owner
-  u.name          as owner_name,
-  u.email         as owner_email,
+  u.name               as owner_name,
+  u.email              as owner_email,
   -- Latest decision
   d.disposition,
   d.confidence,
   d.recommendation,
-  d.reasoning     as agent_reasoning,
-  d.budget_available_eur,
-  d.budget_bucket_pct,
+  d.reasoning          as agent_reasoning,
   -- Budget position context
-  bp.budget       as bucket_budget,
-  bp.committed    as bucket_committed,
-  bp.spent        as bucket_spent,
-  bp.available    as bucket_available,
+  bp.budget            as bucket_budget,
+  bp.committed         as bucket_committed,
+  bp.spent             as bucket_spent,
+  bp.available         as bucket_available,
   -- Priority sort: signature_required first, then pending_confirm, then others
   case t.status
     when 'signature_required' then 1
@@ -1243,16 +1249,16 @@ select
     else 5
   end as sort_priority
 from tickets t
-left join suppliers s  on s.id  = t.supplier_id
-left join branches b   on b.id  = t.branch_id
-left join cost_centers cc on cc.id = t.cost_center_id
-left join users u      on u.id  = t.owner_id
-left join decisions d  on d.ticket_id = t.id
-left join purchase_orders po on po.id = t.po_id
+left join suppliers s        on s.id   = t.supplier_id
+left join branches b         on b.id   = t.branch_id
+left join cost_centers cc    on cc.id  = t.cost_center_id
+left join users u            on u.id   = t.owner_id
+left join decisions d        on d.ticket_id = t.id
+left join purchase_orders po on po.id  = t.po_id
 left join budget_positions bp
-  on bp.branch_id = t.branch_id
+  on  bp.branch_id     = t.branch_id
   and bp.cost_center_id is not distinct from t.cost_center_id
-  and bp.category = t.category
+  and bp.category::text = t.category
   and bp.period = (
     extract(year from now())::text || '-Q' ||
     ceil(extract(month from now()) / 3.0)::text

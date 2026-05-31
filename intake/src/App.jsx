@@ -2211,7 +2211,7 @@ const SupplierDrawer = ({ supplier, spendMap, onClose, onAssess }) => {
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: '#161413' }}>{p.po_number || `PO #${i+1}`}</div>
                       <div style={{ fontSize: 11.5, color: '#75695F' }}>{p.created_at?.slice(0,10)} · {p.status}</div>
                     </div>
-                    <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#161413' }}>{fmt(p.value_eur)}</div>
+                    <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#161413' }}>{fmt(p.amount_eur)}</div>
                   </div>
                 ))}
               </Section>
@@ -2229,7 +2229,7 @@ const AnalyticsDrawer = ({ onClose }) => {
 
   useEffect(() => {
     Promise.all([
-      pgFetch('/purchase_orders?select=supplier_id,value_eur,status,category&limit=500').catch(() => []),
+      pgFetch('/purchase_orders?select=supplier_id,amount_eur,status,category&limit=500').catch(() => []),
       pgFetch('/suppliers?select=id,name,category&limit=100').catch(() => []),
       pgFetch('/budget_positions?select=category,period,planned,committed,spent&limit=200').catch(() => []),
     ]).then(([pos, sups, budgets]) => setData({ pos, sups, budgets }))
@@ -2250,7 +2250,7 @@ const AnalyticsDrawer = ({ onClose }) => {
   for (const po of data.pos) {
     if (!po.supplier_id) continue
     const n = nameMap[po.supplier_id] || 'Unknown'
-    bySupplier[n] = (bySupplier[n] || 0) + Number(po.value_eur || 0)
+    bySupplier[n] = (bySupplier[n] || 0) + Number(po.amount_eur || 0)
   }
   const top10 = Object.entries(bySupplier).sort((a,b) => b[1]-a[1]).slice(0,10)
   const maxSpend = top10[0]?.[1] || 1
@@ -2258,14 +2258,14 @@ const AnalyticsDrawer = ({ onClose }) => {
   const byCategory = {}
   for (const po of data.pos) {
     const c = po.category || 'other'
-    byCategory[c] = (byCategory[c] || 0) + Number(po.value_eur || 0)
+    byCategory[c] = (byCategory[c] || 0) + Number(po.amount_eur || 0)
   }
   const catEntries = Object.entries(byCategory).sort((a,b) => b[1]-a[1])
 
   const totalPlanned = data.budgets.reduce((s, b) => s + Number(b.planned  || 0), 0)
   const totalCommit  = data.budgets.reduce((s, b) => s + Number(b.committed|| 0), 0)
   const totalSpent   = data.budgets.reduce((s, b) => s + Number(b.spent    || 0), 0)
-  const totalPOs     = data.pos.reduce((s, p) => s + Number(p.value_eur    || 0), 0)
+  const totalPOs     = data.pos.reduce((s, p) => s + Number(p.amount_eur   || 0), 0)
 
   const CAT_COLOR = {
     hardware: '#2B5F7A', saas_license: '#5A3E7A', hyperscaler: '#3D7A5A',
@@ -2380,7 +2380,7 @@ const SuppliersScreen = () => {
       const [sups, cons, pos] = await Promise.all([
         pgFetch('/suppliers?order=name.asc&limit=100'),
         pgFetch('/contracts?select=supplier_id,expiry_date,name,contract_number,value_eur,auto_renew,start_date&order=expiry_date.asc&limit=300').catch(() => []),
-        pgFetch('/purchase_orders?select=supplier_id,value_eur&limit=1000').catch(() => []),
+        pgFetch('/purchase_orders?select=supplier_id,amount_eur&limit=1000').catch(() => []),
       ])
       setSuppliers(sups)
 
@@ -2395,7 +2395,7 @@ const SuppliersScreen = () => {
       const sm = {}
       for (const po of pos) {
         if (!po.supplier_id) continue
-        sm[po.supplier_id] = (sm[po.supplier_id] || 0) + Number(po.value_eur || 0)
+        sm[po.supplier_id] = (sm[po.supplier_id] || 0) + Number(po.amount_eur || 0)
       }
       setSpendMap(sm)
     } catch { setSuppliers([]) }
