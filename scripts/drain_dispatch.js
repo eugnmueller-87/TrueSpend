@@ -42,6 +42,8 @@ const DATABASE_URL = loadEnv('DATABASE_URL')
 const POSTGREST_URL = loadEnv('POSTGREST_URL')
 const POSTGREST_JWT = loadEnv('POSTGREST_JWT')
 const N8N_WEBHOOK_BASE = loadEnv('N8N_WEBHOOK_BASE')
+const N8N_WEBHOOK_USER = loadEnv('N8N_WEBHOOK_USER')  // optional: basic-auth for delivery webhook
+const N8N_WEBHOOK_PASS = loadEnv('N8N_WEBHOOK_PASS')
 
 const args = process.argv.slice(2)
 const LOOP = args.includes('--loop')
@@ -57,12 +59,17 @@ async function deliver(row) {
 
   // Delivery events fan out to the delivery-confirmation workflow (invoice
   // match, SLA flagging) — the durable replacement for OrdersBoard's old
-  // browser fire-and-forget webhook.
-  if (event_type === 'delivered') {
-    if (!N8N_WEBHOOK_BASE) throw new Error('N8N_WEBHOOK_BASE not set — cannot dispatch delivered event')
+  // browser fire-and-forget webhook. That webhook requires HTTP Basic auth
+  // (WWW-Authenticate: Basic realm="Webhook"). If creds are configured
+  // (N8N_WEBHOOK_USER/PASS) we call it; otherwise we fall back to a trace_log
+  // audit row so the event still delivers durably instead of 401-looping to
+  // dead-letter. (The old browser fetch sent no auth and was silently 401'd —
+  // this path is strictly more reliable.)
+  if (event_type === 'delivered' && N8N_WEBHOOK_BASE && N8N_WEBHOOK_USER && N8N_WEBHOOK_PASS) {
+    const auth = Buffer.from(`${N8N_WEBHOOK_USER}:${N8N_WEBHOOK_PASS}`).toString('base64')
     const r = await fetch(`${N8N_WEBHOOK_BASE}/delivery-confirmation`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
       body: JSON.stringify({
         po_id: payload.po_id,
         po_number: payload.po_number,
@@ -76,9 +83,12 @@ async function deliver(row) {
     }
     return
   }
+  // else: fall through to the trace_log audit write below (covers 'delivered'
+  // when webhook creds are absent, plus approved/rejected/closed).
 
-  const verb = event_type === 'approved' ? 'PO approved & committed'
-             : event_type === 'rejected' ? 'Request rejected, budget released'
+  const verb = event_type === 'approved'  ? 'PO approved & committed'
+             : event_type === 'rejected'  ? 'Request rejected, budget released'
+             : event_type === 'delivered' ? 'Delivery confirmed'
              : 'Request closed'
   // trace_log schema: signal + value are NOT NULL; notes is free text.
   // (No ticket_id FK on trace_log — see CLAUDE.md. We embed it in notes.)
