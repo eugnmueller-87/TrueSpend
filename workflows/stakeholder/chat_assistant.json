@@ -11,28 +11,42 @@
       "name": "Chat Question Received",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// SCOPE GATE — fail-closed. Only the three v1 full-access role groups may use\n// the assistant (ADR-005). Any unknown / missing / unmapped role → denied.\n// This is defence-in-depth: the UI already hides the bubble for other roles.\nconst body = $input.first().json.body || {};\nconst question = (body.question || '').toString().trim();\n\n// Normalise DB role strings to canonical groups (mirror of App.jsx ROLE_GROUP).\nconst ROLE_GROUP = {\n  procurement_manager: 'procurement', head_of_procurement: 'procurement', category_manager: 'procurement',\n  it: 'it', it_manager: 'it',\n  user: 'user', ops_manager: 'user', requester: 'user', budget_owner: 'user',\n  controlling: 'controlling',\n  admin: 'admin',\n  legal: 'legal'\n};\nconst V1_ALLOWED = ['procurement', 'admin', 'controlling'];\n\nconst rawRole = (body.role || '').toString();\nconst group = ROLE_GROUP[rawRole] || null;\nconst allowed = group !== null && V1_ALLOWED.includes(group);\n\nif (!question) {\n  return [{ json: { denied: true, reason: 'empty_question', answer: 'Please ask a question about your orders, budget, suppliers, or spend.' } }];\n}\nif (!allowed) {\n  return [{ json: { denied: true, reason: 'role_not_in_v1', role: rawRole, group,\n    answer: 'The Ask assistant is being rolled out to procurement, controlling, and admin first. It will be available to your role soon.' } }];\n}\n\n// Scope context carried forward. In v1 branch scope is NOT enforced server-side\n// (single shared JWT, RLS USING(true)) — these full-access roles see all branches.\n// Recorded here so the SSO migration can flip it to a real JWT-claim filter.\nreturn [{ json: {\n  denied: false,\n  question,\n  role: rawRole,\n  group,\n  email: (body.email || '').toString(),\n  branchIds: Array.isArray(body.branchIds) ? body.branchIds : [],\n  costCenterId: (body.costCenterId || '').toString()\n} }];"
+        "jsCode": "// SCOPE GATE — fail-closed. Only the three v1 full-access role groups may use\n// the assistant (ADR-005). Any unknown / missing / unmapped role → denied.\n// NOTE: no $env access here — this n8n box blocks $env inside Code nodes.\n// Credentials are supplied via httpRequest-node {{ $env.X }} expressions instead.\nconst body = $input.first().json.body || {};\nconst question = (body.question || '').toString().trim();\n\nconst ROLE_GROUP = {\n  procurement_manager: 'procurement', head_of_procurement: 'procurement', category_manager: 'procurement',\n  it: 'it', it_manager: 'it',\n  user: 'user', ops_manager: 'user', requester: 'user', budget_owner: 'user',\n  controlling: 'controlling',\n  admin: 'admin',\n  legal: 'legal'\n};\nconst V1_ALLOWED = ['procurement', 'admin', 'controlling'];\n\nconst rawRole = (body.role || '').toString();\nconst group = ROLE_GROUP[rawRole] || null;\nconst allowed = group !== null && V1_ALLOWED.includes(group);\n\nif (!question) {\n  return [{ json: { denied: true, reason: 'empty_question', answer: 'Please ask a question about your orders, budget, suppliers, or spend.' } }];\n}\nif (!allowed) {\n  return [{ json: { denied: true, reason: 'role_not_in_v1', role: rawRole, group,\n    answer: 'The Ask assistant is being rolled out to procurement, controlling, and admin first. It will be available to your role soon.' } }];\n}\n\nconst now = new Date();\nconst period = now.getFullYear() + '-Q' + Math.ceil((now.getMonth() + 1) / 3);\nconst ql = question.toLowerCase();\nconst supplierish = ['supplier', 'vendor', 'compliant', 'compliance', 'contract', 'expir'].some(w => ql.includes(w));\nconst refMatch = (question.toUpperCase().match(/TS-\\d{4}-\\d{3,5}/) || [])[0] || '';\n\nreturn [{ json: {\n  denied: false,\n  question,\n  role: rawRole,\n  group,\n  email: (body.email || '').toString(),\n  branchIds: Array.isArray(body.branchIds) ? body.branchIds : [],\n  costCenterId: (body.costCenterId || '').toString(),\n  period,\n  supplierish,\n  ref: refMatch\n} }];"
       },
       "id": "scope_gate",
       "name": "Scope Gate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "id": "is_denied",
               "leftValue": "={{ $json.denied }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
           "combinator": "and"
@@ -43,7 +57,10 @@
       "name": "Allowed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
@@ -54,27 +71,221 @@
       "name": "Respond — Denied",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [660, 460]
+      "position": [
+        660,
+        460
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// PRE-FETCH BUNDLE — read-only, scoped PostgREST GETs. No tool-call loop (one\n// workflow run = one set of fetches), to keep n8n execution volume low.\n// Fetches the caller's data per the ADR-005 read surfaces PLUS summary rollups\n// (spend-by-category, budget-by-cost-centre). The assistant answers ONLY from\n// what this bundle returns (I-9).\nconst ctx = $input.first().json;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\nconst H = { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' };\nconst q = (n) => (ctx.question || '').toLowerCase().includes(n);\n\nconst get = async (path) => {\n  try {\n    const r = await this.helpers.httpRequest({ method: 'GET', url: POSTGREST + path, headers: H, json: true });\n    return Array.isArray(r) ? r : (r ? [r] : []);\n  } catch (e) { return []; }\n};\n\n// current fiscal period e.g. 2026-Q2\nconst now = new Date();\nconst period = now.getFullYear() + '-Q' + Math.ceil((now.getMonth() + 1) / 3);\n\n// 1) OPEN TICKETS / ORDER STATUS — board view (limited). If the question names a\n//    ticket reference (TS-YYYY-XXXX) fetch that one too.\nconst refMatch = (ctx.question.toUpperCase().match(/TS-\\d{4}-\\d{3,5}/) || [])[0];\nconst sources = [];\n\nconst openTickets = await get('/open_tickets_board?limit=40');\nif (openTickets.length) sources.push('open_tickets_board');\n\nlet namedTicket = [];\nif (refMatch) {\n  namedTicket = await get('/tickets?reference=eq.' + encodeURIComponent(refMatch) + '&limit=1');\n  if (namedTicket.length) sources.push('tickets:' + refMatch);\n}\n\n// 2) BUDGET — command center for the current period (branch×category health).\nconst budget = await get('/budget_command_center?period=eq.' + encodeURIComponent(period) + '&limit=80');\nif (budget.length) sources.push('budget_command_center');\n\n// 3) SUPPLIER — if the question seems supplier-oriented, pull compliance summary.\n//    Try to extract a supplier name token (capitalised word) for a targeted look.\nlet suppliers = [];\nlet supplierCompliance = [];\nif (q('supplier') || q('vendor') || q('compliant') || q('contract') || q('expir')) {\n  supplierCompliance = await get('/supplier_compliance_summary?limit=60');\n  if (supplierCompliance.length) sources.push('supplier_compliance_summary');\n  // contracts expiring soon (the renewal/expiry story)\n  const expiring = await get('/contracts_expiring?limit=40');\n  if (expiring.length) { suppliers = expiring; sources.push('contracts_expiring'); }\n}\n\n// 4) SPEND ANALYTICS + ROLLUPS — invoices are the spend truth; budget_positions\n//    carry the reconciled spent. Provide both a category rollup and a\n//    cost-centre rollup, computed from budget_positions for the period.\nconst budgetPositions = await get('/budget_positions?period=eq.' + encodeURIComponent(period) + '&limit=200');\nif (budgetPositions.length) sources.push('budget_positions');\n\nconst spendByCategory = {};\nconst budgetByCostCentre = {};\nfor (const b of budgetPositions) {\n  const cat = b.category || 'unknown';\n  spendByCategory[cat] = (spendByCategory[cat] || 0) + Number(b.spent || 0);\n  const cc = b.cost_center_id || 'unassigned';\n  if (!budgetByCostCentre[cc]) budgetByCostCentre[cc] = { budget: 0, committed: 0, spent: 0 };\n  budgetByCostCentre[cc].budget += Number(b.budget || 0);\n  budgetByCostCentre[cc].committed += Number(b.committed || 0);\n  budgetByCostCentre[cc].spent += Number(b.spent || 0);\n}\n\nconst bundle = {\n  meta: { period, role: ctx.group, askedBy: ctx.email, branchScopeEnforced: false },\n  question: ctx.question,\n  openTickets,\n  namedTicket,\n  budgetHealth: budget,\n  supplierCompliance,\n  contractsExpiringSoon: suppliers,\n  rollups: { spendByCategory, budgetByCostCentre }\n};\n\nreturn [{ json: { ctx, bundle, sources } }];"
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/open_tickets_board?limit=40",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 12000
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth"
       },
-      "id": "prefetch_bundle",
-      "name": "Pre-fetch Bundle",
+      "id": "fetch_board",
+      "name": "Fetch Open Tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        660,
+        200
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CI2TdAwodddFXggz",
+          "name": "TrueSpend-app PostgREST (assistant)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?period=eq.{{ $node['Scope Gate'].json.period }}&limit=200",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 12000
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth"
+      },
+      "id": "fetch_budget_pos",
+      "name": "Fetch Budget Positions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1100,
+        200
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CI2TdAwodddFXggz",
+          "name": "TrueSpend-app PostgREST (assistant)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?select=name,category,health,compliance_status,infosec_score,nda_status,dpa_status,strategic_tier,lock_in_score&order=health.desc&limit=80",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 12000
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth"
+      },
+      "id": "fetch_suppliers",
+      "name": "Fetch Supplier Compliance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1320,
+        200
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CI2TdAwodddFXggz",
+          "name": "TrueSpend-app PostgREST (assistant)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/contracts_expiring?limit=40",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 12000
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth"
+      },
+      "id": "fetch_expiring",
+      "name": "Fetch Contracts Expiring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1540,
+        200
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CI2TdAwodddFXggz",
+          "name": "TrueSpend-app PostgREST (assistant)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// BUILD BUNDLE — compact, read-only TrueSpend data the assistant may use (I-9).\n// Trimmed hard: full view rows blow past Claude's context, so we select only the\n// fields needed to answer and rely on the precomputed rollups for spend/budget.\nconst rows = (nodeName) => {\n  try {\n    const items = $items(nodeName);\n    if (!items || !items.length) return [];\n    if (items.length === 1 && Array.isArray(items[0].json)) return items[0].json;\n    return items.map(i => i.json).filter(v => v && typeof v === 'object' && !Array.isArray(v));\n  } catch (e) { return []; }\n};\nconst num = (v) => Number(v || 0);\nconst ctx = $node['Scope Gate'].json;\n\nconst openRaw      = rows('Fetch Open Tickets');\nconst budgetPos    = rows('Fetch Budget Positions');\nconst supplierRaw  = ctx.supplierish ? rows('Fetch Supplier Compliance') : [];\nconst expiringRaw  = ctx.supplierish ? rows('Fetch Contracts Expiring') : [];\n\n// trim tickets to essentials\nconst openTickets = openRaw.slice(0, 30).map(t => ({\n  reference: t.reference, title: t.title, status: t.status,\n  category: t.category, value_eur: num(t.value_eur),\n  supplier: t.supplier_name || t.supplier, submitted_by: t.submitted_by,\n}));\nconst namedTicket = ctx.ref ? openTickets.filter(t => (t.reference||'').toUpperCase() === ctx.ref) : [];\n\n// budget health derived directly from budget_positions (the command-center view\n// is not readable by truespend_app). Group by branch+category with status.\nconst budgetHealth = budgetPos.slice(0, 80).map(b => {\n  const avail = num(b.available);\n  const bud = num(b.budget) || 1;\n  const usedPct = (num(b.committed) + num(b.spent)) / bud;\n  return { branch_id: b.branch_id, cost_center_id: b.cost_center_id, category: b.category,\n    budget: num(b.budget), committed: num(b.committed), spent: num(b.spent), available: avail,\n    status: usedPct >= 1 ? 'overrun' : usedPct >= 0.9 ? 'critical' : usedPct >= 0.75 ? 'warn' : 'healthy' };\n});\n\n// rollups from budget_positions (small, derived)\nconst spendByCategory = {};\nconst budgetByCostCentre = {};\nfor (const b of budgetPos) {\n  const cat = b.category || 'unknown';\n  spendByCategory[cat] = (spendByCategory[cat] || 0) + num(b.spent);\n  const cc = b.cost_center_id || 'unassigned';\n  if (!budgetByCostCentre[cc]) budgetByCostCentre[cc] = { budget: 0, committed: 0, spent: 0 };\n  budgetByCostCentre[cc].budget    += num(b.budget);\n  budgetByCostCentre[cc].committed += num(b.committed);\n  budgetByCostCentre[cc].spent     += num(b.spent);\n}\n\nconst supplierCompliance = supplierRaw.slice(0, 80).map(s => ({\n  supplier: s.name, category: s.category, health: s.health,\n  compliance: s.compliance_status, infosec: num(s.infosec_score),\n  tier: s.strategic_tier, nda: s.nda_status, dpa: s.dpa_status,\n}));\nconst contractsExpiringSoon = expiringRaw.slice(0, 40).map(c => ({\n  name: c.name, supplier: c.supplier_name || c.supplier,\n  expiry_date: c.expiry_date, days_to_expiry: c.days_to_expiry,\n  value_eur: num(c.value_eur), auto_renew: c.auto_renew, renewal_state: c.renewal_state,\n}));\n\nconst sources = [];\nif (openTickets.length) sources.push('open_tickets_board');\nif (namedTicket.length) sources.push('tickets:' + ctx.ref);\nif (budgetHealth.length) sources.push('budget_positions');\nif (Object.keys(spendByCategory).length) sources.push('budget_positions');\nif (supplierCompliance.length) sources.push('suppliers');\nif (contractsExpiringSoon.length) sources.push('contracts_expiring');\n\nconst bundle = {\n  meta: { period: ctx.period, role: ctx.group, askedBy: ctx.email, branchScopeEnforced: false },\n  question: ctx.question,\n  openTickets, namedTicket, budgetHealth,\n  supplierCompliance, contractsExpiringSoon,\n  rollups: { spendByCategory, budgetByCostCentre },\n};\n\nconst system = `You are TrueSpend's internal procurement assistant. You answer questions about orders, budget, suppliers, and spend.\n\nHARD RULES (must follow):\n1. Answer ONLY using the TrueSpend DATA provided. NEVER use outside or general knowledge.\n2. If the answer is not present in the provided data, reply exactly: \"I don't have that in TrueSpend.\" Do not guess.\n3. You are read-only. Never claim to have changed, approved, ordered, or paid anything.\n4. Be concise. Prefer concrete figures (EUR amounts, dates, references) straight from the data.\n5. All amounts are EUR unless stated. The current period is ${ctx.period}.`;\nconst userMsg = `QUESTION:\n${ctx.question}\n\nTRUESPEND DATA (the ONLY source you may use):\n${JSON.stringify(bundle)}\n\nAnswer using only the data above. If not answerable from it, say \"I don't have that in TrueSpend.\"`;\n\nreturn [{ json: { sources, anthropicBody: {\n  model: 'claude-sonnet-4-6', max_tokens: 2048, system,\n  messages: [{ role: 'user', content: userMsg }]\n} } }];"
+      },
+      "id": "build_bundle",
+      "name": "Build Bundle",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 220]
+      "position": [
+        1760,
+        200
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// CLAUDE — answers ONLY from the pre-fetched TrueSpend bundle (I-9). No external\n// knowledge, no web tool. If the answer is not in the data, it says so.\nconst { ctx, bundle, sources } = $input.first().json;\nconst ANTHROPIC_KEY = $env.ANTHROPIC_API_KEY;\n\nconst system = `You are TrueSpend's internal procurement assistant. You answer questions about orders, budget, suppliers, and spend.\n\nHARD RULES (must follow):\n1. Answer ONLY using the TrueSpend DATA provided below. NEVER use outside or general knowledge.\n2. If the answer is not present in the provided data, reply exactly: \"I don't have that in TrueSpend.\" Do not guess.\n3. You are read-only. Never claim to have changed, approved, ordered, or paid anything.\n4. Be concise. Prefer concrete figures (EUR amounts, dates, references) straight from the data.\n5. All amounts are EUR unless stated. The current period is ${bundle.meta.period}.`;\n\nconst prompt = `QUESTION:\\n${ctx.question}\\n\\nTRUESPEND DATA (this is the ONLY source you may use):\\n${JSON.stringify(bundle, null, 1)}\\n\\nAnswer the question using only the data above. If it is not answerable from this data, say \"I don't have that in TrueSpend.\"`;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.anthropic.com/v1/messages',\n  headers: {\n    'x-api-key': ANTHROPIC_KEY,\n    'anthropic-version': '2023-06-01',\n    'content-type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'claude-sonnet-4-6',\n    max_tokens: 1024,\n    system,\n    messages: [{ role: 'user', content: prompt }]\n  }),\n  json: true\n});\n\nconst answer = (response.content && response.content[0] && response.content[0].text)\n  ? response.content[0].text.trim()\n  : \"I don't have that in TrueSpend.\";\n\nreturn [{ json: { answer, sources, denied: false } }];"
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.anthropicBody) }}",
+        "options": {
+          "timeout": 45000
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth"
       },
       "id": "call_claude_chat",
       "name": "Claude — Answer from Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1980,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "WpwFtmNbjE94Ufjj",
+          "name": "Anthropic-API-Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FORMAT ANSWER — extract Claude text + carry sources from Build Bundle.\nconst resp = $input.first().json;\nconst sources = $node['Build Bundle'].json.sources || [];\nlet answer = \"I don't have that in TrueSpend.\";\ntry {\n  if (resp && Array.isArray(resp.content) && resp.content[0] && resp.content[0].text) {\n    answer = resp.content[0].text.trim();\n  }\n} catch (e) {}\nreturn [{ json: { answer, sources, denied: false } }];"
+      },
+      "id": "format_answer",
+      "name": "Format Answer",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [880, 220]
+      "position": [
+        2200,
+        200
+      ]
     },
     {
       "parameters": {
@@ -85,20 +296,132 @@
       "name": "Respond — Answer",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1100, 220]
+      "position": [
+        2420,
+        200
+      ]
     }
   ],
   "connections": {
-    "Chat Question Received": { "main": [[{ "node": "Scope Gate", "type": "main", "index": 0 }]] },
-    "Scope Gate": { "main": [[{ "node": "Allowed?", "type": "main", "index": 0 }]] },
-    "Allowed?": {
+    "Chat Question Received": {
       "main": [
-        [{ "node": "Respond — Denied", "type": "main", "index": 0 }],
-        [{ "node": "Pre-fetch Bundle", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Scope Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Pre-fetch Bundle": { "main": [[{ "node": "Claude — Answer from Data", "type": "main", "index": 0 }]] },
-    "Claude — Answer from Data": { "main": [[{ "node": "Respond — Answer", "type": "main", "index": 0 }]] }
+    "Scope Gate": {
+      "main": [
+        [
+          {
+            "node": "Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Respond — Denied",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Open Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Open Tickets": {
+      "main": [
+        [
+          {
+            "node": "Fetch Budget Positions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Budget Positions": {
+      "main": [
+        [
+          {
+            "node": "Fetch Supplier Compliance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Supplier Compliance": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contracts Expiring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contracts Expiring": {
+      "main": [
+        [
+          {
+            "node": "Build Bundle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Bundle": {
+      "main": [
+        [
+          {
+            "node": "Claude — Answer from Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude — Answer from Data": {
+      "main": [
+        [
+          {
+            "node": "Format Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Answer": {
+      "main": [
+        [
+          {
+            "node": "Respond — Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1"
+  }
 }
