@@ -1,0 +1,159 @@
+{
+  "name": "TrueSpend — Dispatch Queue Drain",
+  "description": "Every 2 min: drains the dispatch_queue outbox (Task 2 — graceful n8n degradation). Money RPCs (approve_and_commit/reject_ticket) enqueue 'approved'/'rejected'/'closed' events durably; this workflow claims due rows via claim_dispatch_batch RPC (SKIP LOCKED, concurrency-safe), delivers each downstream (trace_log write — swap for Slack/ERP as integrations come online), then marks sent or applies exponential backoff / dead-letter via mark_dispatch_sent / mark_dispatch_failed. Equivalent to scripts/drain_dispatch.js, which is the n8n-independent fallback.",
+  "nodes": [
+    {
+      "id": "schedule_trigger",
+      "name": "Every 2 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 2 } ] }
+      },
+      "position": [0, 300]
+    },
+    {
+      "id": "claim_batch",
+      "name": "RPC — claim_dispatch_batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/rpc/claim_dispatch_batch",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        },
+        "body": { "p_limit": 20 },
+        "options": { "timeout": 30000 }
+      },
+      "position": [220, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "any_rows",
+      "name": "Any Pending?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [
+            { "value1": "={{ $json.length }}", "operation": "larger", "value2": 0 }
+          ]
+        }
+      },
+      "position": [440, 300]
+    },
+    {
+      "id": "split_rows",
+      "name": "Split Out Rows",
+      "type": "n8n-nodes-base.splitOut",
+      "parameters": { "fieldToSplitOut": "data", "include": "noOtherFields" },
+      "position": [660, 200],
+      "notes": "claim_dispatch_batch returns a SETOF — n8n receives one item whose json is the array. Split into one item per row."
+    },
+    {
+      "id": "deliver",
+      "name": "Deliver → trace_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "body": {
+          "signal": "contract",
+          "value":  "={{ 'dispatch_' + $json.event_type }}",
+          "notes":  "={{ ($json.event_type === 'approved' ? 'PO approved & committed' : $json.event_type === 'rejected' ? 'Request rejected, budget released' : 'Request closed') + ' — ' + JSON.stringify($json.payload) }}",
+          "created_at": "={{ new Date().toISOString() }}"
+        },
+        "options": { "timeout": 20000 }
+      },
+      "position": [880, 200],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "mark_sent",
+      "name": "RPC — mark_dispatch_sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/rpc/mark_dispatch_sent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "body": { "p_id": "={{ $('Split Out Rows').item.json.id }}" },
+        "options": { "timeout": 15000 }
+      },
+      "position": [1100, 120]
+    },
+    {
+      "id": "mark_failed",
+      "name": "RPC — mark_dispatch_failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL }}/rpc/mark_dispatch_failed",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "body": {
+          "p_id":    "={{ $('Split Out Rows').item.json.id }}",
+          "p_error": "={{ ($json.error?.message || $json.message || 'delivery failed').toString().slice(0,500) }}"
+        },
+        "options": { "timeout": 15000 }
+      },
+      "position": [1100, 300]
+    },
+    {
+      "id": "noop_empty",
+      "name": "Nothing To Drain",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [660, 400]
+    }
+  ],
+  "connections": {
+    "Every 2 Minutes": {
+      "main": [[{ "node": "RPC — claim_dispatch_batch", "type": "main", "index": 0 }]]
+    },
+    "RPC — claim_dispatch_batch": {
+      "main": [[{ "node": "Any Pending?", "type": "main", "index": 0 }]]
+    },
+    "Any Pending?": {
+      "main": [
+        [{ "node": "Split Out Rows",   "type": "main", "index": 0 }],
+        [{ "node": "Nothing To Drain", "type": "main", "index": 0 }]
+      ]
+    },
+    "Split Out Rows": {
+      "main": [[{ "node": "Deliver → trace_log", "type": "main", "index": 0 }]]
+    },
+    "Deliver → trace_log": {
+      "main": [
+        [{ "node": "RPC — mark_dispatch_sent",   "type": "main", "index": 0 }],
+        [{ "node": "RPC — mark_dispatch_failed", "type": "main", "index": 0 }]
+      ]
+    }
+  }
+}

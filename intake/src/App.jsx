@@ -1281,6 +1281,7 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
   const [tickets, setTickets]           = useState(null)
   const [openId, setOpenId]             = useState(null)
   const [signingTicketId, setSigningId] = useState(null)  // open signing modal
+  const [dispatchHealth, setDispatchHealth] = useState(null) // {dead, stuck} or null
   const isIT           = roleGroup === 'it'
   const isControlling  = roleGroup === 'controlling'
   const isProcurement  = roleGroup === 'procurement'
@@ -1307,6 +1308,31 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
     const t = setInterval(load, 30000)
     return () => clearInterval(t)
   }, [load])
+
+  // ── Dispatch-queue health (Task 2: graceful n8n degradation) ──────────────
+  // Surface a banner when downstream notifications are stuck: any dead_letter
+  // row, or a row pending for >2h (n8n likely down). Procurement-facing only.
+  const checkDispatchHealth = useCallback(async () => {
+    if (!isProcurement) return
+    try {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+      const dead = await pgFetch(`/dispatch_queue?status=eq.dead_letter&select=id`)
+      const stuck = await pgFetch(
+        `/dispatch_queue?status=eq.pending&created_at=lt.${twoHoursAgo}&select=id`
+      )
+      if (dead.length || stuck.length) setDispatchHealth({ dead: dead.length, stuck: stuck.length })
+      else setDispatchHealth(null)
+    } catch {
+      // dispatch_queue not reachable (e.g. PostgREST schema not reloaded) — stay silent
+      setDispatchHealth(null)
+    }
+  }, [isProcurement])
+
+  useEffect(() => {
+    checkDispatchHealth()
+    const t = setInterval(checkDispatchHealth, 60000)
+    return () => clearInterval(t)
+  }, [checkDispatchHealth])
 
   useEffect(() => {
     if (sectionJump) {
@@ -1462,6 +1488,20 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
           <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#F0EBF6', border: '1px solid #D4C3E5', borderRadius: 6, fontSize: 12, color: '#5A3E7A', fontWeight: 600 }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             Read-only view — your branch requests. Procurement managers handle approvals.
+          </div>
+        )}
+
+        {/* Dispatch-queue health banner (Task 2) — downstream notifications stuck */}
+        {dispatchHealth && (
+          <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#FBEDED', border: '1px solid #E5C3C3', borderRadius: 6, fontSize: 12.5, color: '#8A2B2B', fontWeight: 600 }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>
+              Downstream notifications are delayed —{' '}
+              {dispatchHealth.dead > 0 && `${dispatchHealth.dead} failed (dead-letter)`}
+              {dispatchHealth.dead > 0 && dispatchHealth.stuck > 0 && ', '}
+              {dispatchHealth.stuck > 0 && `${dispatchHealth.stuck} pending >2h`}
+              . The approvals themselves are safely recorded; the automation engine (n8n) may be down.
+            </span>
           </div>
         )}
 
@@ -2329,21 +2369,17 @@ const OrdersBoard = ({ onCountChange, user }) => {
   }, [onCountChange])
 
   // ── Confirm delivery — always goes through confirm_delivery RPC (SECURITY DEFINER).
-  // n8n webhook is dispatched for notifications only — delivery state is written by RPC regardless.
+  // The RPC writes po.status AND durably enqueues a 'delivered' event in
+  // dispatch_queue (step8). The drainer fans that out to the delivery-
+  // confirmation workflow with retry — so downstream automation is never lost
+  // even if n8n is momentarily down. No browser fire-and-forget webhook needed.
   const handleMarkDelivered = async (po) => {
     setDelivering(po.id)
     try {
-      // Primary: confirm_delivery RPC (SECURITY DEFINER — the only path that writes po.status)
       await pgRpc('confirm_delivery', {
         p_po_id:         po.id,
         p_confirmed_by:  user?.email || '',
       })
-      // Fire n8n notification async — failure does not affect delivery confirmation
-      fetch(`${N8N_WEBHOOK_BASE}/delivery-confirmation`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ po_id: po.id, po_number: po.po_number, delivered_at: new Date().toISOString() }),
-      }).catch(() => {})
       await load()
     } catch (e) {
       alert('Delivery confirmation failed: ' + (e?.message || 'Unknown error'))

@@ -33,6 +33,9 @@ MIGRATION_ORDER=(
   "step3_invoice_rpc_grants.sql"
   "step4_rls_truespend_app.sql"
   "step5_action_ledger.sql"
+  "step6_dispatch_queue.sql"
+  "step7_dispatch_drain_rpc.sql"
+  "step8_delivery_dispatch.sql"
 )
 
 # ── Args ──────────────────────────────────────────────────────────────────────
