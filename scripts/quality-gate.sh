@@ -81,14 +81,9 @@ fi
 # ── 1. All JSON files must be valid ───────────────────────────
 info "Checking JSON validity..."
 
-JSON_FILES=(
-  "workflows/automatic/contract_watcher.json"
-  "workflows/automatic/hyperscaler_monitor.json"
-  "workflows/automatic/reorder_trigger.json"
-  "workflows/communication/supplier_reply_handler.json"
-  "workflows/stakeholder/intake_receiver.json"
-  "grafana/dashboards/truespend_main.json"
-)
+# Auto-discover all tracked workflow + grafana dashboard JSON so every current
+# and future workflow is validated without editing this list.
+mapfile -t JSON_FILES < <(git ls-files -- 'workflows/**/*.json' 'grafana/dashboards/*.json')
 
 for f in "${JSON_FILES[@]}"; do
   if node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" 2>/dev/null; then

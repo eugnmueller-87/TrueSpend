@@ -5293,6 +5293,136 @@ const DEFAULT_USER = {
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
+// ─── Ask Assistant ──────────────────────────────────────────────────────────
+// Read-only chat bubble. v1 is mounted ONLY for procurement / admin / controlling
+// (the caller gates this — see <App/>). Posts the question + caller identity to
+// the n8n /chat workflow, which pre-fetches scoped TrueSpend data and answers
+// from it only (no external knowledge — I-9). See docs/ask-assistant.md.
+const ASK_SUGGESTIONS = [
+  'What contracts are expiring in the next 60 days?',
+  'How much have we spent on SaaS this quarter?',
+  'Which suppliers are not compliant?',
+  'What is pending review on the board right now?',
+]
+
+function AskAssistant({ user }) {
+  const [open, setOpen]       = useState(false)
+  const [input, setInput]     = useState('')
+  const [busy, setBusy]       = useState(false)
+  // messages: { role: 'user' | 'bot', text, sources?: string[], error?: bool }
+  const [messages, setMessages] = useState([])
+  const scrollRef = useRef(null)
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [messages, busy, open])
+
+  const ask = async (q) => {
+    const question = (q ?? input).trim()
+    if (!question || busy) return
+    setInput('')
+    setMessages(prev => [...prev, { role: 'user', text: question }])
+    setBusy(true)
+    try {
+      const r = await fetch(`${N8N_WEBHOOK_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          role:         user?.role || '',
+          email:        user?.email || '',
+          branchIds:    user?.branchId ? [user.branchId] : [],
+          costCenterId: user?.costCenterId || '',
+        }),
+      })
+      if (!r.ok) throw new Error(`chat ${r.status}`)
+      const data = await r.json()
+      setMessages(prev => [...prev, {
+        role: 'bot',
+        text: data?.answer || "I don't have that in TrueSpend.",
+        sources: Array.isArray(data?.sources) ? data.sources : [],
+      }])
+    } catch {
+      setMessages(prev => [...prev, {
+        role: 'bot', error: true,
+        text: 'Could not reach the assistant just now. Please try again in a moment.',
+      }])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        className="ask-fab"
+        title="Ask TrueSpend"
+        aria-label="Ask TrueSpend"
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? '✕' : '💬'}
+      </button>
+
+      {open && (
+        <div className="ask-panel" role="dialog" aria-label="Ask TrueSpend assistant">
+          <div className="ask-panel__head">
+            <div>
+              <div className="ask-panel__title">Ask TrueSpend</div>
+              <div className="ask-panel__sub">Answers only from your TrueSpend data · read-only</div>
+            </div>
+            <button className="ask-panel__close" onClick={() => setOpen(false)} aria-label="Close">✕</button>
+          </div>
+
+          <div className="ask-panel__body" ref={scrollRef}>
+            {messages.length === 0 && (
+              <div className="ask-empty">
+                <p className="ask-empty__lead">Ask about orders, budget, suppliers, or spend.</p>
+                <div className="ask-suggest">
+                  {ASK_SUGGESTIONS.map((s) => (
+                    <button key={s} className="ask-suggest__chip" onClick={() => ask(s)}>{s}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((m, i) => (
+              <div key={i} className={`ask-msg ask-msg--${m.role}${m.error ? ' ask-msg--error' : ''}`}>
+                <div className="ask-msg__bubble">{m.text}</div>
+                {m.role === 'bot' && m.sources && m.sources.length > 0 && (
+                  <div className="ask-msg__sources">
+                    {m.sources.map((s) => <span key={s} className="ask-msg__source">{s}</span>)}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {busy && (
+              <div className="ask-msg ask-msg--bot">
+                <div className="ask-msg__bubble ask-msg__bubble--typing">Looking in TrueSpend…</div>
+              </div>
+            )}
+          </div>
+
+          <form
+            className="ask-panel__foot"
+            onSubmit={(e) => { e.preventDefault(); ask() }}
+          >
+            <input
+              className="ask-input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask a question…"
+              disabled={busy}
+              autoFocus
+            />
+            <button className="ask-send" type="submit" disabled={busy || !input.trim()}>Send</button>
+          </form>
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function App() {
   const [user, setUser] = useLocalStorage('truespend_user', DEFAULT_USER)
   // resolvedUser: if cached role has no group mapping (e.g. stale 'cfo' or 'legal'), fall back to default
@@ -5464,6 +5594,12 @@ export default function App() {
           onRemove={(id) => setCart(prev => prev.filter(l => l.item.id !== id))}
           onPlace={placeOrder}
         />
+      )}
+
+      {/* Ask assistant — v1 fail-closed: only the three full-access role groups.
+          Mirrors ADR-005 / the n8n Scope Gate. Other roles get no bubble. */}
+      {user && ['procurement', 'admin', 'controlling'].includes(ROLE_GROUP[resolvedUser?.role]) && (
+        <AskAssistant user={resolvedUser} />
       )}
     </>
   )

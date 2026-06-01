@@ -1,0 +1,104 @@
+{
+  "name": "TrueSpend — Ask Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "chat",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "chat_webhook",
+      "name": "Chat Question Received",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// SCOPE GATE — fail-closed. Only the three v1 full-access role groups may use\n// the assistant (ADR-005). Any unknown / missing / unmapped role → denied.\n// This is defence-in-depth: the UI already hides the bubble for other roles.\nconst body = $input.first().json.body || {};\nconst question = (body.question || '').toString().trim();\n\n// Normalise DB role strings to canonical groups (mirror of App.jsx ROLE_GROUP).\nconst ROLE_GROUP = {\n  procurement_manager: 'procurement', head_of_procurement: 'procurement', category_manager: 'procurement',\n  it: 'it', it_manager: 'it',\n  user: 'user', ops_manager: 'user', requester: 'user', budget_owner: 'user',\n  controlling: 'controlling',\n  admin: 'admin',\n  legal: 'legal'\n};\nconst V1_ALLOWED = ['procurement', 'admin', 'controlling'];\n\nconst rawRole = (body.role || '').toString();\nconst group = ROLE_GROUP[rawRole] || null;\nconst allowed = group !== null && V1_ALLOWED.includes(group);\n\nif (!question) {\n  return [{ json: { denied: true, reason: 'empty_question', answer: 'Please ask a question about your orders, budget, suppliers, or spend.' } }];\n}\nif (!allowed) {\n  return [{ json: { denied: true, reason: 'role_not_in_v1', role: rawRole, group,\n    answer: 'The Ask assistant is being rolled out to procurement, controlling, and admin first. It will be available to your role soon.' } }];\n}\n\n// Scope context carried forward. In v1 branch scope is NOT enforced server-side\n// (single shared JWT, RLS USING(true)) — these full-access roles see all branches.\n// Recorded here so the SSO migration can flip it to a real JWT-claim filter.\nreturn [{ json: {\n  denied: false,\n  question,\n  role: rawRole,\n  group,\n  email: (body.email || '').toString(),\n  branchIds: Array.isArray(body.branchIds) ? body.branchIds : [],\n  costCenterId: (body.costCenterId || '').toString()\n} }];"
+      },
+      "id": "scope_gate",
+      "name": "Scope Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "is_denied",
+              "leftValue": "={{ $json.denied }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route_denied",
+      "name": "Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ answer: $json.answer, sources: [], denied: true }) }}"
+      },
+      "id": "respond_denied",
+      "name": "Respond — Denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PRE-FETCH BUNDLE — read-only, scoped PostgREST GETs. No tool-call loop (one\n// workflow run = one set of fetches), to keep n8n execution volume low.\n// Fetches the caller's data per the ADR-005 read surfaces PLUS summary rollups\n// (spend-by-category, budget-by-cost-centre). The assistant answers ONLY from\n// what this bundle returns (I-9).\nconst ctx = $input.first().json;\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\nconst H = { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' };\nconst q = (n) => (ctx.question || '').toLowerCase().includes(n);\n\nconst get = async (path) => {\n  try {\n    const r = await this.helpers.httpRequest({ method: 'GET', url: POSTGREST + path, headers: H, json: true });\n    return Array.isArray(r) ? r : (r ? [r] : []);\n  } catch (e) { return []; }\n};\n\n// current fiscal period e.g. 2026-Q2\nconst now = new Date();\nconst period = now.getFullYear() + '-Q' + Math.ceil((now.getMonth() + 1) / 3);\n\n// 1) OPEN TICKETS / ORDER STATUS — board view (limited). If the question names a\n//    ticket reference (TS-YYYY-XXXX) fetch that one too.\nconst refMatch = (ctx.question.toUpperCase().match(/TS-\\d{4}-\\d{3,5}/) || [])[0];\nconst sources = [];\n\nconst openTickets = await get('/open_tickets_board?limit=40');\nif (openTickets.length) sources.push('open_tickets_board');\n\nlet namedTicket = [];\nif (refMatch) {\n  namedTicket = await get('/tickets?reference=eq.' + encodeURIComponent(refMatch) + '&limit=1');\n  if (namedTicket.length) sources.push('tickets:' + refMatch);\n}\n\n// 2) BUDGET — command center for the current period (branch×category health).\nconst budget = await get('/budget_command_center?period=eq.' + encodeURIComponent(period) + '&limit=80');\nif (budget.length) sources.push('budget_command_center');\n\n// 3) SUPPLIER — if the question seems supplier-oriented, pull compliance summary.\n//    Try to extract a supplier name token (capitalised word) for a targeted look.\nlet suppliers = [];\nlet supplierCompliance = [];\nif (q('supplier') || q('vendor') || q('compliant') || q('contract') || q('expir')) {\n  supplierCompliance = await get('/supplier_compliance_summary?limit=60');\n  if (supplierCompliance.length) sources.push('supplier_compliance_summary');\n  // contracts expiring soon (the renewal/expiry story)\n  const expiring = await get('/contracts_expiring?limit=40');\n  if (expiring.length) { suppliers = expiring; sources.push('contracts_expiring'); }\n}\n\n// 4) SPEND ANALYTICS + ROLLUPS — invoices are the spend truth; budget_positions\n//    carry the reconciled spent. Provide both a category rollup and a\n//    cost-centre rollup, computed from budget_positions for the period.\nconst budgetPositions = await get('/budget_positions?period=eq.' + encodeURIComponent(period) + '&limit=200');\nif (budgetPositions.length) sources.push('budget_positions');\n\nconst spendByCategory = {};\nconst budgetByCostCentre = {};\nfor (const b of budgetPositions) {\n  const cat = b.category || 'unknown';\n  spendByCategory[cat] = (spendByCategory[cat] || 0) + Number(b.spent || 0);\n  const cc = b.cost_center_id || 'unassigned';\n  if (!budgetByCostCentre[cc]) budgetByCostCentre[cc] = { budget: 0, committed: 0, spent: 0 };\n  budgetByCostCentre[cc].budget += Number(b.budget || 0);\n  budgetByCostCentre[cc].committed += Number(b.committed || 0);\n  budgetByCostCentre[cc].spent += Number(b.spent || 0);\n}\n\nconst bundle = {\n  meta: { period, role: ctx.group, askedBy: ctx.email, branchScopeEnforced: false },\n  question: ctx.question,\n  openTickets,\n  namedTicket,\n  budgetHealth: budget,\n  supplierCompliance,\n  contractsExpiringSoon: suppliers,\n  rollups: { spendByCategory, budgetByCostCentre }\n};\n\nreturn [{ json: { ctx, bundle, sources } }];"
+      },
+      "id": "prefetch_bundle",
+      "name": "Pre-fetch Bundle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CLAUDE — answers ONLY from the pre-fetched TrueSpend bundle (I-9). No external\n// knowledge, no web tool. If the answer is not in the data, it says so.\nconst { ctx, bundle, sources } = $input.first().json;\nconst ANTHROPIC_KEY = $env.ANTHROPIC_API_KEY;\n\nconst system = `You are TrueSpend's internal procurement assistant. You answer questions about orders, budget, suppliers, and spend.\n\nHARD RULES (must follow):\n1. Answer ONLY using the TrueSpend DATA provided below. NEVER use outside or general knowledge.\n2. If the answer is not present in the provided data, reply exactly: \"I don't have that in TrueSpend.\" Do not guess.\n3. You are read-only. Never claim to have changed, approved, ordered, or paid anything.\n4. Be concise. Prefer concrete figures (EUR amounts, dates, references) straight from the data.\n5. All amounts are EUR unless stated. The current period is ${bundle.meta.period}.`;\n\nconst prompt = `QUESTION:\\n${ctx.question}\\n\\nTRUESPEND DATA (this is the ONLY source you may use):\\n${JSON.stringify(bundle, null, 1)}\\n\\nAnswer the question using only the data above. If it is not answerable from this data, say \"I don't have that in TrueSpend.\"`;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.anthropic.com/v1/messages',\n  headers: {\n    'x-api-key': ANTHROPIC_KEY,\n    'anthropic-version': '2023-06-01',\n    'content-type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'claude-sonnet-4-6',\n    max_tokens: 1024,\n    system,\n    messages: [{ role: 'user', content: prompt }]\n  }),\n  json: true\n});\n\nconst answer = (response.content && response.content[0] && response.content[0].text)\n  ? response.content[0].text.trim()\n  : \"I don't have that in TrueSpend.\";\n\nreturn [{ json: { answer, sources, denied: false } }];"
+      },
+      "id": "call_claude_chat",
+      "name": "Claude — Answer from Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ answer: $json.answer, sources: $json.sources, denied: false }) }}"
+      },
+      "id": "respond_answer",
+      "name": "Respond — Answer",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 220]
+    }
+  ],
+  "connections": {
+    "Chat Question Received": { "main": [[{ "node": "Scope Gate", "type": "main", "index": 0 }]] },
+    "Scope Gate": { "main": [[{ "node": "Allowed?", "type": "main", "index": 0 }]] },
+    "Allowed?": {
+      "main": [
+        [{ "node": "Respond — Denied", "type": "main", "index": 0 }],
+        [{ "node": "Pre-fetch Bundle", "type": "main", "index": 0 }]
+      ]
+    },
+    "Pre-fetch Bundle": { "main": [[{ "node": "Claude — Answer from Data", "type": "main", "index": 0 }]] },
+    "Claude — Answer from Data": { "main": [[{ "node": "Respond — Answer", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

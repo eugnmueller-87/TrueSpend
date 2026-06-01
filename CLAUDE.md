@@ -27,6 +27,7 @@ Agentic procurement OS: n8n orchestrates Claude Sonnet 4.6 + PostgreSQL. One Ope
 | `db/seed/01–12*.sql` | Load in order. Applied to Railway DB. |
 | `intake/src/App.jsx` | Full Ops Board: roles, board, submit, catalog, budget, suppliers, search |
 | `workflows/stakeholder/intake_receiver.json` | Main intake path — webhook → Claude → dispose |
+| `workflows/stakeholder/chat_assistant.json` | Ask assistant — `/webhook/chat` → scope gate → pre-fetch bundle → Claude (read-only, I-9) |
 | `workflows/stakeholder/docusign_sign.json` | Sign button → DocuSign JWT → embedded URL |
 | `workflows/automatic/contract_watcher.json` | Daily 07:00 — expiring contracts |
 | `workflows/automatic/reorder_trigger.json` | Daily — reorder candidates |
@@ -84,6 +85,15 @@ DATABASE_URL=postgresql://truespend:...@zephyr.proxy.rlwy.net:24934/truespend \
 ```
 Never re-edit a migration file to "fix" something — add a new migration instead.
 See: `scripts/db-migrate.sh`, `.github/workflows/db-migrate.yml`
+
+**I-9 — The Ask assistant answers ONLY from TrueSpend data — never external knowledge.**
+The `chat_assistant.json` workflow pre-fetches scoped DB rows and Claude answers from that
+bundle only; if the data lacks the answer it says "I don't have that in TrueSpend." It is
+read-only (no RPC, no PATCH). v1 access is fail-closed to procurement/admin/controlling only;
+scope follows the role→capability→scope matrix in ADR-005 (the spec for post-SSO RLS). The UI
+bubble gate and the n8n Scope Gate must stay in sync.
+See: `workflows/stakeholder/chat_assistant.json`, `intake/src/App.jsx` (AskAssistant),
+`docs/decisions/ADR-005-ask-assistant.md`, `docs/ask-assistant.md`
 
 ## Commands
 
