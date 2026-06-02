@@ -1,7 +1,7 @@
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const { Client } = require('pg')
-const client = new Client({ host:'zephyr.proxy.rlwy.net', port:24934, database:'truespend', user:'truespend', password:'<REDACTED_ROTATE_ME>', ssl:false })
+const client = new Client({ host:'zephyr.proxy.rlwy.net', port:24934, database:'truespend', user:'truespend', <REDACTED_ROTATE_ME>:'<REDACTED_ROTATE_ME>', ssl:false })
 await client.connect()
 const r = await client.query("SELECT id, name, role FROM users ORDER BY id LIMIT 20")
 console.table(r.rows)

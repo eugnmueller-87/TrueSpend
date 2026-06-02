@@ -1,7 +1,7 @@
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const { Client } = require('pg')
-const c = new Client({host:'zephyr.proxy.rlwy.net',port:24934,database:'truespend',user:'truespend',password:'<REDACTED_ROTATE_ME>',ssl:false})
+const c = new Client({host:'zephyr.proxy.rlwy.net',port:24934,database:'truespend',user:'truespend',<REDACTED_ROTATE_ME>:'<REDACTED_ROTATE_ME>',ssl:false})
 await c.connect()
 const q = async(lbl, sql) => { const r = await c.query(sql); console.log(`${lbl}: ${r.rows[0]?.count ?? r.rows[0]?.c ?? JSON.stringify(r.rows[0])}`) }
 await q('tickets (mock)', "SELECT count(*) FROM tickets WHERE reference IN ('TS-2026-0101','TS-2026-0118','TS-2026-0122','TS-2026-0125','TS-2026-0130','TS-2026-0133')")

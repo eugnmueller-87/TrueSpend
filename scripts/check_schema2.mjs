@@ -1,7 +1,7 @@
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const { Client } = require('pg')
-const client = new Client({ host:'zephyr.proxy.rlwy.net', port:24934, database:'truespend', user:'truespend', password:'<REDACTED_ROTATE_ME>', ssl:false })
+const client = new Client({ host:'zephyr.proxy.rlwy.net', port:24934, database:'truespend', user:'truespend', <REDACTED_ROTATE_ME>:'<REDACTED_ROTATE_ME>', ssl:false })
 await client.connect()
 for (const t of ['llm_consumption','workflow_runs','decisions']) {
   const r = await client.query(`SELECT column_name, data_type FROM information_schema.columns WHERE table_name=$1 ORDER BY ordinal_position`, [t])

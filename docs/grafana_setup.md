@@ -32,7 +32,7 @@ Skip to **Step 3 — Verify**.
 | Host | `SUPABASE_DB_HOST:5432` |
 | Database | `postgres` |
 | User | `postgres` |
-| Password | Your Supabase DB password |
+| Password | Your Supabase DB <REDACTED_ROTATE_ME> |
 | SSL Mode | `require` |
 | Version | `15` |
 

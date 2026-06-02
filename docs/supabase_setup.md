@@ -10,7 +10,7 @@
 
 1. Go to [supabase.com](https://supabase.com) → **New project**
 2. Name it `truespend`
-3. Set a strong database password — **save it**, you'll need it for Grafana
+3. Set a strong database <REDACTED_ROTATE_ME> — **save it**, you'll need it for Grafana
 4. Region: choose closest to your users (Frankfurt for EU)
 5. Wait ~2 minutes for provisioning
 
@@ -30,7 +30,7 @@ Go to **Settings → Database**. Copy:
 | Variable | Where to find it |
 |---|---|
 | `SUPABASE_DB_HOST` | Host (e.g. `db.abcdefgh.supabase.co`) |
-| `SUPABASE_DB_PASSWORD` | The password you set in Step 1 |
+| `SUPABASE_DB_PASSWORD` | The <REDACTED_ROTATE_ME> you set in Step 1 |
 
 Paste all of these into your `.env` file.
 

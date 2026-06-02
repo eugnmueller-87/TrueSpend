@@ -218,7 +218,7 @@ TrueSpend/
 
 **Grafana "no data" on all panels**
 → Datasource connection failed. Go to Connections → Supabase PostgreSQL → Test
-→ Confirm `SUPABASE_DB_HOST` and password are correct
+→ Confirm `SUPABASE_DB_HOST` and <REDACTED_ROTATE_ME> are correct
 → Supabase requires SSL — datasource config has `sslmode: require`
 
 **Intake form returns 502**
@@ -229,6 +229,6 @@ TrueSpend/
 → You ran them out of order. Drop all tables (`db/schema.sql` has `create` not `create if not exists`) and start from schema.sql again.
 
 **Supplier reply handler not picking up emails**
-→ For Gmail: use an App Password, not your account password
+→ For Gmail: use an App Password, not your account <REDACTED_ROTATE_ME>
 → Check IMAP is enabled in Gmail settings
 → Confirm IMAP node uses port 993 with SSL

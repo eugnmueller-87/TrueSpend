@@ -258,7 +258,7 @@ TrueSpend owns the full cycle. ERP receives the payment instruction and posts it
 Current state: installation requires ~100 manual steps across Railway, n8n UI, and terminal. Not repeatable, not auditable, not production-ready.
 
 **Setup wizard (`setup.sh`)**
-- [ ] Interactive CLI: prompts for Anthropic key, email (IMAP/SMTP), Jira config, domain name, admin passwords
+- [ ] Interactive CLI: prompts for Anthropic key, email (IMAP/SMTP), Jira config, domain name, admin <REDACTED_ROTATE_ME>s
 - [ ] Auto-generates `N8N_ENCRYPTION_KEY` and `POSTGREST_JWT_SECRET` (openssl) — no manual key generation
 - [ ] Auto-generates signed `POSTGREST_JWT` (HS256) from secret — no manual JWT encoding
 - [ ] Writes `.env` from template — operator never edits a config file manually

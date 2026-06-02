@@ -5,7 +5,7 @@ import path from 'path'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
 const { Client } = require('pg')
-const client = new Client({ host:'zephyr.proxy.rlwy.net', port:24934, database:'truespend', user:'truespend', password:'<REDACTED_ROTATE_ME>', ssl:false })
+const client = new Client({ host:'zephyr.proxy.rlwy.net', port:24934, database:'truespend', user:'truespend', <REDACTED_ROTATE_ME>:'<REDACTED_ROTATE_ME>', ssl:false })
 const sql = readFileSync(path.join(__dirname,'..','db','seed','09_mock_data.sql'),'utf-8').replace(/^﻿/,'')
 
 // Split on section comments and run each block separately

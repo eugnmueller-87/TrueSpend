@@ -9,7 +9,7 @@ datasources:
     database: ${DATABASE_NAME}
     user: ${DATABASE_USER}
     secureJsonData:
-      password: ${DATABASE_PASSWORD}
+      <REDACTED_ROTATE_ME>: ${DATABASE_PASSWORD}
     jsonData:
       sslmode: require
       postgresVersion: 1500

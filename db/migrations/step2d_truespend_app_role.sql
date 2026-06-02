@@ -9,7 +9,7 @@
 -- no superuser in the session, hard boundary.
 --
 -- After this migration:
---   PGRST_DB_URI  → postgres://truespend_app:<password>@...
+--   PGRST_DB_URI  → postgres://truespend_app:<REDACTED_ROTATE_ME>@...
 --   PGRST_DB_ANON_ROLE → truespend_app (or keep web_anon for unauthenticated)
 --   JWT role claim → "role":"truespend_app"
 --   truespend (superuser) is kept for migrations/admin only — no app traffic
@@ -30,7 +30,7 @@ begin
       noinherit
       login
       nobypassrls
-      password '<REDACTED_ROTATE_ME>';
+      <REDACTED_ROTATE_ME> '<REDACTED_ROTATE_ME>';
     raise notice 'Created role truespend_app';
   else
     raise notice 'Role truespend_app already exists — skipping CREATE';

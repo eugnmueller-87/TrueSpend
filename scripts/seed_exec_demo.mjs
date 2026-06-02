@@ -5,7 +5,7 @@ const { Client } = require('pg')
 const c = new Client({
   host: 'zephyr.proxy.rlwy.net', port: 24934,
   database: 'truespend', user: 'truespend',
-  password: '<REDACTED_ROTATE_ME>', ssl: false
+  <REDACTED_ROTATE_ME>: '<REDACTED_ROTATE_ME>', ssl: false
 })
 await c.connect()
 console.log('Connected')

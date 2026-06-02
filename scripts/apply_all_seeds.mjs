@@ -17,7 +17,7 @@ const client = new Client({
   port: 24934,
   database: 'truespend',
   user: 'truespend',
-  password: '<REDACTED_ROTATE_ME>',
+  <REDACTED_ROTATE_ME>: '<REDACTED_ROTATE_ME>',
   ssl: false
 })
 

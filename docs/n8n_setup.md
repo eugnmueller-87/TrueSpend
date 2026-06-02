@@ -40,8 +40,8 @@ Go to **Settings → Credentials → New**. Create one credential per row:
 | `Supabase` | HTTP Header Auth | Header: `apikey`, Value: `SUPABASE_SERVICE_ROLE_KEY`; also set base URL |
 | `Slack Bot` | Slack OAuth2 | Bot token: `SLACK_BOT_TOKEN` |
 | `Jira` | Jira API | Base URL, email, API token |
-| `Email IMAP` | IMAP | Host, port, user, password (use App Password for Gmail) |
-| `Email SMTP` | SMTP | Host, port, user, password |
+| `Email IMAP` | IMAP | Host, port, user, <REDACTED_ROTATE_ME> (use App Password for Gmail) |
+| `Email SMTP` | SMTP | Host, port, user, <REDACTED_ROTATE_ME> |
 
 > **Supabase HTTP credential:** Set the base URL to `SUPABASE_URL/rest/v1` so
 > all Supabase nodes can use relative paths like `/contracts?select=*`
