@@ -110,7 +110,8 @@
           "id": "CI2TdAwodddFXggz",
           "name": "TrueSpend-app PostgREST (assistant)"
         }
-      }
+      },
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -146,7 +147,8 @@
           "id": "CI2TdAwodddFXggz",
           "name": "TrueSpend-app PostgREST (assistant)"
         }
-      }
+      },
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -182,7 +184,8 @@
           "id": "CI2TdAwodddFXggz",
           "name": "TrueSpend-app PostgREST (assistant)"
         }
-      }
+      },
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -218,7 +221,8 @@
           "id": "CI2TdAwodddFXggz",
           "name": "TrueSpend-app PostgREST (assistant)"
         }
-      }
+      },
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -231,7 +235,8 @@
       "position": [
         1760,
         200
-      ]
+      ],
+      "executeOnce": true
     },
     {
       "parameters": {
