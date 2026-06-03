@@ -23,6 +23,14 @@
   <img src="screenshots/hero.png" alt="TrueSpend Operations Board" width="100%" />
 </p>
 
+<p align="center">
+  <a href="demo/truespend-demo.mp4">
+    <img src="screenshots/demo-poster.png" alt="Watch the TrueSpend demo" width="100%" />
+  </a>
+  <br />
+  <a href="demo/truespend-demo.mp4"><strong>▶ Watch the 45-second demo</strong></a>
+</p>
+
 ---
 
 > *"Three things need you this week. Everything else, the agent closed."*
