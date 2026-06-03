@@ -108,7 +108,7 @@ while IFS= read -r file; do
       # Not a hard fail — fallback URL in code is acceptable, but flag it
     fi
   fi
-done <<< "$STAGED"
+done <<< "$STAGED" || true   # loop's final read hits EOF (rc=1); don't let set -e abort
 
 # ── Result ─────────────────────────────────────────────────────
 echo ""
