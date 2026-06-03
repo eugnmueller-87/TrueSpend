@@ -24,11 +24,9 @@
 </p>
 
 <p align="center">
-  <a href="demo/truespend-demo.mp4">
-    <img src="screenshots/demo-poster.png" alt="Watch the TrueSpend demo" width="100%" />
-  </a>
+  <img src="demo/truespend-demo.gif" alt="TrueSpend demo — Operations board, orders, and the Ask TrueSpend assistant" width="100%" />
   <br />
-  <a href="demo/truespend-demo.mp4"><strong>▶ Watch the 45-second demo</strong></a>
+  <em>Live walkthrough · </em><a href="demo/truespend-demo.mp4"><strong>watch in full resolution ▸</strong></a>
 </p>
 
 ---
