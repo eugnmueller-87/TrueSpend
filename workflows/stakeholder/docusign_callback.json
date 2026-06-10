@@ -11,7 +11,10 @@
       "name": "DocuSign Event Received",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
@@ -22,7 +25,10 @@
       "name": "Acknowledge DocuSign",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [220, 100]
+      "position": [
+        220,
+        100
+      ]
     },
     {
       "parameters": {
@@ -32,17 +38,25 @@
       "name": "Parse DocuSign Event",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 400]
+      "position": [
+        220,
+        400
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": false },
+          "options": {
+            "caseSensitive": false
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.isSigned }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "true" }
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
           ]
         }
@@ -51,43 +65,84 @@
       "name": "Is Signed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [440, 400]
+      "position": [
+        440,
+        400
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Find ticket via trace_log notes (envelopeId was stored in notes by docusign_sign workflow)\n// trace_log has NO ticket_id column — it uses decision_id\n// We find the ticket by looking up the decision that references the envelope\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\n\nconst { envelopeId, completedAt } = $input.first().json;\n\n// Find trace entry containing the envelopeId in notes — get decision_id from it\nconst traceRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/trace_log?notes=ilike.*' + envelopeId + '*&order=created_at.desc&limit=1',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\n\nconst trace = traceRes[0];\nif (!trace) throw new Error('No trace found for envelope: ' + envelopeId);\n\n// Get ticket_id from the decision that owns this trace entry\nlet ticketId = null;\nif (trace.decision_id) {\n  const decRes = await this.helpers.httpRequest({\n    method: 'GET',\n    url: POSTGREST + '/decisions?id=eq.' + trace.decision_id + '&select=ticket_id',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n  });\n  ticketId = decRes[0]?.ticket_id;\n}\n\n// Fallback: parse ticket_id from the trace value field\nif (!ticketId) {\n  const match = (trace.value || '').match(/ticket\\s+([0-9a-f-]{36})/i);\n  ticketId = match ? match[1] : null;\n}\n\nif (!ticketId) throw new Error('Could not resolve ticket_id for envelope: ' + envelopeId);\n\n// Update ticket status → approved\nawait this.helpers.httpRequest({\n  method: 'PATCH',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId,\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n  body: JSON.stringify({ status: 'approved' })\n});\n\n// Update legal_document signed_at — linked via supplier_id, find by supplier from ticket\nconst ticketRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId + '&select=supplier_id',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\nconst supplierId = ticketRes[0]?.supplier_id;\nif (supplierId) {\n  await this.helpers.httpRequest({\n    method: 'PATCH',\n    url: POSTGREST + '/legal_documents?supplier_id=eq.' + supplierId + '&status=in.(draft,pending_signature)',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n    body: JSON.stringify({ status: 'signed', signed_at: completedAt })\n  });\n}\n\n// Write trace entry (no ticket_id FK on trace_log — use decision_id if available)\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: POSTGREST + '/trace_log',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n  body: JSON.stringify({\n    decision_id: trace.decision_id || null,\n    signal: 'contract',\n    value: 'Envelope ' + envelopeId + ' signed. Ticket ' + ticketId + ' approved.',\n    green: true,\n    weight: 1.0,\n    notes: 'DocuSign envelope ' + envelopeId + ' completed at ' + completedAt + '.'\n  })\n});\n\nreturn [{ json: { ticketId, envelopeId, result: 'signed' } }];"
+        "jsCode": "=// Find ticket via trace_log notes (envelopeId was stored in notes by docusign_sign workflow)\n// trace_log has NO ticket_id column — it uses decision_id\n// We find the ticket by looking up the decision that references the envelope\nconst POSTGREST = $env.POSTGREST_URL || '{{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}';\nconst JWT = $env.POSTGREST_JWT;\n\nconst { envelopeId, completedAt } = $input.first().json;\n\n// Find trace entry containing the envelopeId in notes — get decision_id from it\nconst traceRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/trace_log?notes=ilike.*' + envelopeId + '*&order=created_at.desc&limit=1',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\n\nconst trace = traceRes[0];\nif (!trace) throw new Error('No trace found for envelope: ' + envelopeId);\n\n// Get ticket_id from the decision that owns this trace entry\nlet ticketId = null;\nif (trace.decision_id) {\n  const decRes = await this.helpers.httpRequest({\n    method: 'GET',\n    url: POSTGREST + '/decisions?id=eq.' + trace.decision_id + '&select=ticket_id',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n  });\n  ticketId = decRes[0]?.ticket_id;\n}\n\n// Fallback: parse ticket_id from the trace value field\nif (!ticketId) {\n  const match = (trace.value || '').match(/ticket\\s+([0-9a-f-]{36})/i);\n  ticketId = match ? match[1] : null;\n}\n\nif (!ticketId) throw new Error('Could not resolve ticket_id for envelope: ' + envelopeId);\n\n// Update ticket status → approved\nawait this.helpers.httpRequest({\n  method: 'PATCH',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId,\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n  body: JSON.stringify({ status: 'approved' })\n});\n\n// Update legal_document signed_at — linked via supplier_id, find by supplier from ticket\nconst ticketRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId + '&select=supplier_id',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\nconst supplierId = ticketRes[0]?.supplier_id;\nif (supplierId) {\n  await this.helpers.httpRequest({\n    method: 'PATCH',\n    url: POSTGREST + '/legal_documents?supplier_id=eq.' + supplierId + '&status=in.(draft,pending_signature)',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n    body: JSON.stringify({ status: 'signed', signed_at: completedAt })\n  });\n}\n\n// Write trace entry (no ticket_id FK on trace_log — use decision_id if available)\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: POSTGREST + '/trace_log',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n  body: JSON.stringify({\n    decision_id: trace.decision_id || null,\n    signal: 'contract',\n    value: 'Envelope ' + envelopeId + ' signed. Ticket ' + ticketId + ' approved.',\n    green: true,\n    weight: 1.0,\n    notes: 'DocuSign envelope ' + envelopeId + ' completed at ' + completedAt + '.'\n  })\n});\n\nreturn [{ json: { ticketId, envelopeId, result: 'signed' } }];"
       },
       "id": "mark_signed",
       "name": "Mark Ticket Approved + Doc Signed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 280]
+      "position": [
+        660,
+        280
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Declined — log to trace, no ticket status change\nconst POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\n\nconst { envelopeId, status } = $input.first().json;\n\nconst traceRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/trace_log?notes=ilike.*' + envelopeId + '*&order=created_at.desc&limit=1',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\n\nconst trace = traceRes[0];\nif (!trace) return [{ json: { skipped: true, reason: 'no trace for ' + envelopeId } }];\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: POSTGREST + '/trace_log',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n  body: JSON.stringify({\n    decision_id: trace.decision_id || null,\n    signal: 'contract',\n    value: 'Envelope ' + envelopeId + ' declined.',\n    green: false,\n    weight: 1.0,\n    notes: 'DocuSign envelope ' + envelopeId + ' declined/voided. Status: ' + status\n  })\n});\n\nreturn [{ json: { envelopeId, result: 'declined' } }];"
+        "jsCode": "=// Declined — log to trace, no ticket status change\nconst POSTGREST = $env.POSTGREST_URL || '{{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}';\nconst JWT = $env.POSTGREST_JWT;\n\nconst { envelopeId, status } = $input.first().json;\n\nconst traceRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/trace_log?notes=ilike.*' + envelopeId + '*&order=created_at.desc&limit=1',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\n\nconst trace = traceRes[0];\nif (!trace) return [{ json: { skipped: true, reason: 'no trace for ' + envelopeId } }];\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: POSTGREST + '/trace_log',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n  body: JSON.stringify({\n    decision_id: trace.decision_id || null,\n    signal: 'contract',\n    value: 'Envelope ' + envelopeId + ' declined.',\n    green: false,\n    weight: 1.0,\n    notes: 'DocuSign envelope ' + envelopeId + ' declined/voided. Status: ' + status\n  })\n});\n\nreturn [{ json: { envelopeId, result: 'declined' } }];"
       },
       "id": "mark_declined",
       "name": "Log Declined",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 520]
+      "position": [
+        660,
+        520
+      ]
     }
   ],
   "connections": {
     "DocuSign Event Received": {
       "main": [
-        [{ "node": "Acknowledge DocuSign",  "type": "main", "index": 0 }],
-        [{ "node": "Parse DocuSign Event",  "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Acknowledge DocuSign",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse DocuSign Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Parse DocuSign Event": {
-      "main": [[{ "node": "Is Signed?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Is Signed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Is Signed?": {
       "main": [
-        [{ "node": "Mark Ticket Approved + Doc Signed", "type": "main", "index": 0 }],
-        [{ "node": "Log Declined",                     "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Mark Ticket Approved + Doc Signed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Declined",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
@@ -96,5 +151,9 @@
     "saveManualExecutions": true,
     "errorWorkflow": ""
   },
-  "tags": ["truespend", "docusign", "callback"]
+  "tags": [
+    "truespend",
+    "docusign",
+    "callback"
+  ]
 }

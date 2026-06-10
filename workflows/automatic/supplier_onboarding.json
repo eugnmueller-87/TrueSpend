@@ -1,1175 +1,1174 @@
 {
-
-    "name":  "TrueSpend â€” Supplier Onboarding \u0026 Compliance",
-    "description":  "Triggered when a new supplier is created. Runs 4 compliance agents in parallel: Lawyer (NDA), GDPR/DPA, InfoSec, and LkSG/Ethics. Generates required legal documents. Creates a ticket only if there are blockers or the supplier needs signature on docs. Everything else is logged to DB silently.",
-    "nodes":  [
-                  {
-                      "id":  "trigger",
-                      "name":  "New Supplier Webhook",
-                      "type":  "n8n-nodes-base.webhook",
-                      "parameters":  {
-                                         "path":  "supplier-onboarding",
-                                         "httpMethod":  "POST",
-                                         "responseMode":  "lastNode",
-                                         "responseData":  "allEntries"
-                                     },
-                      "position":  [
-                                       0,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "fetch_supplier",
-                      "name":  "Fetch Supplier Details",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $json.body.supplier_id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Accept",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              }
-                                     },
-                      "position":  [
-                                       240,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "set_supplier",
-                      "name":  "Extract Supplier",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "supplier_id",
-                                                                           "value":  "={{ $json[0].id }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "supplier_name",
-                                                                           "value":  "={{ $json[0].name }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "legal_name",
-                                                                           "value":  "={{ $json[0].legal_name || $json[0].name }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "country",
-                                                                           "value":  "={{ $json[0].country }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "category",
-                                                                           "value":  "={{ $json[0].category }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "contact_email",
-                                                                           "value":  "={{ $json[0].contact_email }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       480,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "mark_running",
-                      "name":  "Mark Compliance Running",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "PATCH",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $json.supplier_id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ compliance_status: \u0027running\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       720,
-                                       0
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "claude_lawyer",
-                      "name":  "Lawyer Agent â€” Legal \u0026 NDA Review",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend\u0027s Legal Agent. You assess new supplier relationships for legal risk and determine which legal documents are required. You are expert in German commercial law, EU contract law, and standard B2B procurement agreements. You generate NDA content and flag legal risks. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this new supplier for legal risk and NDA requirements.\\n\\nSUPPLIER:\\nName: {{ $node[\u0027Extract Supplier\u0027].json.supplier_name }}\\nLegal name: {{ $node[\u0027Extract Supplier\u0027].json.legal_name }}\\nCountry: {{ $node[\u0027Extract Supplier\u0027].json.country }}\\nCategory: {{ $node[\u0027Extract Supplier\u0027].json.category }}\\n\\nTASKS:\\n1. Assess legal risk of engaging this supplier\\n2. Determine if NDA is required (almost always yes for new suppliers)\\n3. Generate NDA content filling in these template variables:\\n   - EFFECTIVE_DATE: today {{ new Date().toISOString().split(\u0027T\u0027)[0] }}\\n   - SUPPLIER_LEGAL_NAME: {{ $node[\u0027Extract Supplier\u0027].json.legal_name }}\\n   - SUPPLIER_COUNTRY: {{ $node[\u0027Extract Supplier\u0027].json.country }}\\n   - SUPPLIER_ADDRESS: [to be completed by supplier]\\n   - PURPOSE: procurement and vendor relationship management\\n   - TERM_YEARS: 3\\n   - SURVIVAL_YEARS: 5\\n   - JURISDICTION_CITY: Munich\\n   - TRUESPEND_ADDRESS: Munich, Germany\\n4. Flag any legal red flags for this supplier type\\n\\nReturn JSON:\\n{\\n  \\\"nda_required\\\": true|false,\\n  \\\"nda_content\\\": \\\"full NDA text with variables filled in\\\",\\n  \\\"legal_risk_score\\\": 0-100,\\n  \\\"risk_level\\\": \\\"low|medium|high\\\",\\n  \\\"findings\\\": [\\\"list of findings\\\"],\\n  \\\"blockers\\\": [\\\"must-fix items\\\"],\\n  \\\"recommendations\\\": [\\\"nice-to-have items\\\"],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       960,
-                                       -300
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "claude_gdpr",
-                      "name":  "GDPR Agent â€” Privacy \u0026 DPA Review",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend\u0027s GDPR Agent. You assess whether suppliers require a Data Processing Agreement under Art. 28 GDPR and generate DPA content. You are expert in GDPR, BDSG, EU data protection law, Standard Contractual Clauses, and data residency requirements. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this supplier for GDPR compliance and DPA requirements.\\n\\nSUPPLIER:\\nName: {{ $node[\u0027Extract Supplier\u0027].json.supplier_name }}\\nCountry: {{ $node[\u0027Extract Supplier\u0027].json.country }}\\nCategory: {{ $node[\u0027Extract Supplier\u0027].json.category }}\\n\\nTASKS:\\n1. Determine if this supplier will process personal data on behalf of TrueSpend\\n2. If yes, determine if Standard Contractual Clauses are needed (non-EU supplier)\\n3. Generate DPA content with:\\n   - EFFECTIVE_DATE: {{ new Date().toISOString().split(\u0027T\u0027)[0] }}\\n   - SUPPLIER_LEGAL_NAME: {{ $node[\u0027Extract Supplier\u0027].json.legal_name }}\\n   - SERVICE_DESCRIPTION: {{ $node[\u0027Extract Supplier\u0027].json.category }} services\\n   - JURISDICTION_CITY: Munich\\n   - Fill in appropriate processing nature, purpose, data subjects, data categories based on supplier category\\n   - Generate TOM_CONTENT appropriate for this supplier type\\n4. Flag any GDPR red flags\\n\\nReturn JSON:\\n{\\n  \\\"dpa_required\\\": true|false,\\n  \\\"scc_required\\\": true|false,\\n  \\\"processes_personal_data\\\": true|false,\\n  \\\"data_residency\\\": \\\"EU|non-EU|mixed\\\",\\n  \\\"dpa_content\\\": \\\"full DPA text with variables filled in\\\",\\n  \\\"gdpr_risk_score\\\": 0-100,\\n  \\\"risk_level\\\": \\\"low|medium|high\\\",\\n  \\\"findings\\\": [],\\n  \\\"blockers\\\": [],\\n  \\\"recommendations\\\": [],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       960,
-                                       -100
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "claude_infosec",
-                      "name":  "InfoSec Agent â€” Security Assessment",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend\u0027s InfoSec Agent. You assess new suppliers for information security risks and requirements. You evaluate what certifications and controls should be required based on supplier category and data access. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this supplier\u0027s information security requirements.\\n\\nSUPPLIER:\\nName: {{ $node[\u0027Extract Supplier\u0027].json.supplier_name }}\\nCountry: {{ $node[\u0027Extract Supplier\u0027].json.country }}\\nCategory: {{ $node[\u0027Extract Supplier\u0027].json.category }}\\n\\nBased on the supplier category, assess:\\n1. What InfoSec certifications should be required? (ISO 27001, SOC2, etc.)\\n2. What security controls are minimum requirements?\\n3. What is the risk level for this supplier type?\\n4. Generate Technical and Organisational Measures (TOMs) text for the DPA Annex 2\\n5. What ongoing security monitoring is required?\\n\\nReturn JSON:\\n{\\n  \\\"infosec_score\\\": 0-100,\\n  \\\"risk_level\\\": \\\"low|medium|high|critical\\\",\\n  \\\"iso27001_required\\\": true|false,\\n  \\\"soc2_required\\\": true|false,\\n  \\\"tom_content\\\": \\\"full TOM text for DPA Annex 2\\\",\\n  \\\"findings\\\": [],\\n  \\\"blockers\\\": [],\\n  \\\"recommendations\\\": [],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       960,
-                                       100
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "claude_lksg",
-                      "name":  "LkSG \u0026 Ethics Agent â€” Supply Chain Compliance",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://api.anthropic.com/v1/messages",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "x-api-key",
-                                                                                         "value":  "={{ $env.ANTHROPIC_API_KEY }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "anthropic-version",
-                                                                                         "value":  "2023-06-01"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "content-type",
-                                                                                         "value":  "application/json"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend\u0027s Supply Chain Compliance Agent. You assess suppliers for compliance with the German Supply Chain Due Diligence Act (Lieferkettensorgfaltspflichtengesetz â€” LkSG), Code of Conduct requirements, sanctions screening, and ethical sourcing standards. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this supplier for LkSG, ethics, and supply chain compliance.\\n\\nSUPPLIER:\\nName: {{ $node[\u0027Extract Supplier\u0027].json.supplier_name }}\\nCountry: {{ $node[\u0027Extract Supplier\u0027].json.country }}\\nCategory: {{ $node[\u0027Extract Supplier\u0027].json.category }}\\n\\nAssess:\\n1. LkSG risk level based on country and category (human rights, environmental risks)\\n2. Sanctions screening risk (high-risk countries, restricted entities)\\n3. Code of Conduct requirements\\n4. Modern slavery and forced labour risk\\n5. Environmental compliance requirements\\n\\nReturn JSON:\\n{\\n  \\\"lksg_risk_level\\\": \\\"low|medium|high\\\",\\n  \\\"lksg_compliant\\\": true|false|null,\\n  \\\"sanctions_risk\\\": \\\"low|medium|high\\\",\\n  \\\"coc_required\\\": true|false,\\n  \\\"findings\\\": [],\\n  \\\"blockers\\\": [],\\n  \\\"recommendations\\\": [],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       960,
-                                       300
-                                   ],
-                      "options":  {
-                                      "timeout":  120000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  2000
-                  },
-                  {
-                      "id":  "parse_lawyer",
-                      "name":  "Parse Lawyer Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "nda_required",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).nda_required }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "nda_content",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).nda_content }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "legal_risk_score",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).legal_risk_score }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "lawyer_passed",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).passed }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "lawyer_blockers",
-                                                                           "value":  "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "lawyer_findings",
-                                                                           "value":  "={{ JSON.stringify(JSON.parse($json.content[0].text).findings) }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1200,
-                                       -300
-                                   ]
-                  },
-                  {
-                      "id":  "parse_gdpr",
-                      "name":  "Parse GDPR Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "dpa_required",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).dpa_required }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "scc_required",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).scc_required }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "processes_personal_data",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).processes_personal_data }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "data_residency",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).data_residency }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "dpa_content",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).dpa_content }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "gdpr_risk_score",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).gdpr_risk_score }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "gdpr_passed",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).passed }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "gdpr_blockers",
-                                                                           "value":  "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1200,
-                                       -100
-                                   ]
-                  },
-                  {
-                      "id":  "parse_infosec",
-                      "name":  "Parse InfoSec Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "infosec_score",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).infosec_score }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "tom_content",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).tom_content }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "infosec_passed",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).passed }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "infosec_blockers",
-                                                                           "value":  "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "iso27001_required",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).iso27001_required }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1200,
-                                       100
-                                   ]
-                  },
-                  {
-                      "id":  "parse_lksg",
-                      "name":  "Parse LkSG Response",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "lksg_risk_level",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).lksg_risk_level }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "lksg_compliant",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).lksg_compliant }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "lksg_passed",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).passed }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "lksg_blockers",
-                                                                           "value":  "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "sanctions_risk",
-                                                                           "value":  "={{ JSON.parse($json.content[0].text).sanctions_risk }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1200,
-                                       300
-                                   ]
-                  },
-                  {
-                      "id":  "save_lawyer_check",
-                      "name":  "Save Lawyer Compliance Check",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/compliance_checks",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Extract Supplier\u0027].json.supplier_id, check_type: \u0027lawyer\u0027, status: $json.lawyer_passed === \u0027true\u0027 ? \u0027green\u0027 : \u0027red\u0027, score: parseFloat($json.legal_risk_score), passed: $json.lawyer_passed === \u0027true\u0027, findings: JSON.parse($json.lawyer_findings), blockers: JSON.parse($json.lawyer_blockers), docs_required: $json.nda_required === \u0027true\u0027 ? [\u0027nda\u0027] : [] }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1440,
-                                       -300
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "save_gdpr_check",
-                      "name":  "Save GDPR Compliance Check",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/compliance_checks",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Extract Supplier\u0027].json.supplier_id, check_type: \u0027gdpr\u0027, status: $json.gdpr_passed === \u0027true\u0027 ? \u0027green\u0027 : \u0027red\u0027, score: parseFloat($json.gdpr_risk_score), passed: $json.gdpr_passed === \u0027true\u0027, blockers: JSON.parse($json.gdpr_blockers), docs_required: $json.dpa_required === \u0027true\u0027 ? [\u0027dpa\u0027] : [] }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1440,
-                                       -100
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "save_infosec_check",
-                      "name":  "Save InfoSec Compliance Check",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/compliance_checks",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Extract Supplier\u0027].json.supplier_id, check_type: \u0027infosec\u0027, status: $json.infosec_passed === \u0027true\u0027 ? \u0027green\u0027 : \u0027amber\u0027, score: parseFloat($json.infosec_score), passed: $json.infosec_passed === \u0027true\u0027, blockers: JSON.parse($json.infosec_blockers) }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1440,
-                                       100
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "save_lksg_check",
-                      "name":  "Save LkSG Compliance Check",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/compliance_checks",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Extract Supplier\u0027].json.supplier_id, check_type: \u0027lksg\u0027, status: $json.lksg_passed === \u0027true\u0027 ? \u0027green\u0027 : \u0027amber\u0027, passed: $json.lksg_passed === \u0027true\u0027, blockers: JSON.parse($json.lksg_blockers) }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1440,
-                                       300
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "generate_nda",
-                      "name":  "Save NDA Document",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/legal_documents",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Extract Supplier\u0027].json.supplier_id, doc_type: \u0027nda\u0027, status: \u0027generated\u0027, content: $node[\u0027Parse Lawyer Response\u0027].json.nda_content, supplier_name: $node[\u0027Extract Supplier\u0027].json.legal_name, governing_law: \u0027German law\u0027, generated_at: new Date().toISOString(), sent_to_email: $node[\u0027Extract Supplier\u0027].json.contact_email, expires_at: new Date(Date.now() + 3 * 365 * 24 * 60 * 60 * 1000).toISOString().split(\u0027T\u0027)[0] }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1680,
-                                       -300
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "generate_dpa",
-                      "name":  "Save DPA Document",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/legal_documents",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ supplier_id: $node[\u0027Extract Supplier\u0027].json.supplier_id, doc_type: \u0027dpa\u0027, status: \u0027generated\u0027, content: $node[\u0027Parse GDPR Response\u0027].json.dpa_content, supplier_name: $node[\u0027Extract Supplier\u0027].json.legal_name, governing_law: \u0027German law\u0027, generated_at: new Date().toISOString(), sent_to_email: $node[\u0027Extract Supplier\u0027].json.contact_email }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       1680,
-                                       -100
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "aggregate_results",
-                      "name":  "Aggregate Compliance Results",
-                      "type":  "n8n-nodes-base.set",
-                      "parameters":  {
-                                         "values":  {
-                                                        "string":  [
-                                                                       {
-                                                                           "name":  "overall_status",
-                                                                           "value":  "={{ ($node[\u0027Parse Lawyer Response\u0027].json.lawyer_passed === \u0027true\u0027 \u0026\u0026 $node[\u0027Parse GDPR Response\u0027].json.gdpr_passed === \u0027true\u0027 \u0026\u0026 $node[\u0027Parse InfoSec Response\u0027].json.infosec_passed === \u0027true\u0027 \u0026\u0026 $node[\u0027Parse LkSG Response\u0027].json.lksg_passed === \u0027true\u0027) ? \u0027green\u0027 : \u0027amber\u0027 }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "has_blockers",
-                                                                           "value":  "={{ (JSON.parse($node[\u0027Parse Lawyer Response\u0027].json.lawyer_blockers || \u0027[]\u0027).length \u003e 0) || (JSON.parse($node[\u0027Parse GDPR Response\u0027].json.gdpr_blockers || \u0027[]\u0027).length \u003e 0) || (JSON.parse($node[\u0027Parse InfoSec Response\u0027].json.infosec_blockers || \u0027[]\u0027).length \u003e 0) || (JSON.parse($node[\u0027Parse LkSG Response\u0027].json.lksg_blockers || \u0027[]\u0027).length \u003e 0) }}"
-                                                                       },
-                                                                       {
-                                                                           "name":  "docs_needed",
-                                                                           "value":  "={{ [$node[\u0027Parse Lawyer Response\u0027].json.nda_required === \u0027true\u0027 ? \u0027NDA\u0027 : null, $node[\u0027Parse GDPR Response\u0027].json.dpa_required === \u0027true\u0027 ? \u0027DPA\u0027 : null].filter(Boolean).join(\u0027, \u0027) }}"
-                                                                       }
-                                                                   ]
-                                                    }
-                                     },
-                      "position":  [
-                                       1920,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "update_supplier_compliance",
-                      "name":  "Update Supplier Compliance Status",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "PATCH",
-                                         "url":  "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $node[\u0027Extract Supplier\u0027].json.supplier_id }}",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ compliance_status: $json.overall_status, nda_status: $node[\u0027Parse Lawyer Response\u0027].json.nda_required === \u0027true\u0027 ? \u0027generated\u0027 : \u0027not_required\u0027, dpa_status: $node[\u0027Parse GDPR Response\u0027].json.dpa_required === \u0027true\u0027 ? \u0027generated\u0027 : \u0027not_required\u0027, infosec_score: parseFloat($node[\u0027Parse InfoSec Response\u0027].json.infosec_score), lksg_compliant: $node[\u0027Parse LkSG Response\u0027].json.lksg_compliant === \u0027true\u0027, processes_personal_data: $node[\u0027Parse GDPR Response\u0027].json.processes_personal_data === \u0027true\u0027, data_residency: $node[\u0027Parse GDPR Response\u0027].json.data_residency }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2160,
-                                       0
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "check_needs_ticket",
-                      "name":  "Docs or Blockers Need Review?",
-                      "type":  "n8n-nodes-base.if",
-                      "parameters":  {
-                                         "conditions":  {
-                                                            "string":  [
-                                                                           {
-                                                                               "value1":  "={{ $node[\u0027Aggregate Compliance Results\u0027].json.docs_needed }}",
-                                                                               "operation":  "isNotEmpty"
-                                                                           }
-                                                                       ]
-                                                        }
-                                     },
-                      "position":  [
-                                       2400,
-                                       0
-                                   ]
-                  },
-                  {
-                      "id":  "create_onboarding_ticket",
-                      "name":  "Create Onboarding Review Ticket",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/tickets",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ reference: \u0027TS-\u0027 + new Date().getFullYear() + \u0027-ON-\u0027 + String(Math.floor(Math.random() * 9000) + 1000), source: \u0027automatic\u0027, status: \u0027signature_required\u0027, title: \u0027New supplier onboarding â€” \u0027 + $node[\u0027Extract Supplier\u0027].json.supplier_name, description: \u0027Compliance checks complete. Documents generated and ready for review: \u0027 + $node[\u0027Aggregate Compliance Results\u0027].json.docs_needed, supplier_id: $node[\u0027Extract Supplier\u0027].json.supplier_id, review_type: \u0027compliance_flag\u0027, review_notes: \u0027Legal Agent: \u0027 + ($node[\u0027Parse Lawyer Response\u0027].json.lawyer_passed === \u0027true\u0027 ? \u0027âœ…\u0027 : \u0027âŒ\u0027) + \u0027 | GDPR: \u0027 + ($node[\u0027Parse GDPR Response\u0027].json.gdpr_passed === \u0027true\u0027 ? \u0027âœ…\u0027 : \u0027âŒ\u0027) + \u0027 | InfoSec: \u0027 + ($node[\u0027Parse InfoSec Response\u0027].json.infosec_passed === \u0027true\u0027 ? \u0027âœ…\u0027 : \u0027âŒ\u0027) + \u0027 | LkSG: \u0027 + ($node[\u0027Parse LkSG Response\u0027].json.lksg_passed === \u0027true\u0027 ? \u0027âœ…\u0027 : \u0027âŒ\u0027) + \u0027. Docs required: \u0027 + $node[\u0027Aggregate Compliance Results\u0027].json.docs_needed + \u0027. Send to supplier for signature.\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2640,
-                                       -120
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  },
-                  {
-                      "id":  "log_trace",
-                      "name":  "Log Onboarding Trace",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "https://postgrest-production-7960.up.railway.app/trace_log",
-                                         "authentication":  "genericCredentialType",
-                                         "genericAuthType":  "httpHeaderAuth",
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "name":  "Authorization",
-                                                                                         "value":  "Bearer {{ $env.POSTGREST_JWT }}"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Content-Type",
-                                                                                         "value":  "application/json"
-                                                                                     },
-                                                                                     {
-                                                                                         "name":  "Prefer",
-                                                                                         "value":  "return=representation"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "body",
-                                                                                       "value":  "={{ JSON.stringify({ signal: \u0027supplier\u0027, value: \u0027Onboarding complete for \u0027 + $node[\u0027Extract Supplier\u0027].json.supplier_name + \u0027. Status: \u0027 + $node[\u0027Aggregate Compliance Results\u0027].json.overall_status + \u0027. Docs: \u0027 + ($node[\u0027Aggregate Compliance Results\u0027].json.docs_needed || \u0027none\u0027), notes: \u0027Compliance agents: Lawyer, GDPR, InfoSec, LkSG all completed\u0027 }) }}"
-                                                                                   }
-                                                                               ]
-                                                            }
-                                     },
-                      "position":  [
-                                       2640,
-                                       120
-                                   ],
-                      "options":  {
-                                      "timeout":  30000
-                                  },
-                      "retryOnFail":  true,
-                      "maxTries":  3,
-                      "waitBetweenTries":  1000
-                  }
-              ],
-    "connections":  {
-                        "New Supplier Webhook":  {
-                                                     "main":  [
-                                                                  [
-                                                                      {
-                                                                          "node":  "Fetch Supplier Details",
-                                                                          "type":  "main",
-                                                                          "index":  0
-                                                                      }
-                                                                  ]
-                                                              ]
-                                                 },
-                        "Fetch Supplier Details":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Extract Supplier",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Extract Supplier":  {
-                                                 "main":  [
-                                                              [
-                                                                  {
-                                                                      "node":  "Mark Compliance Running",
-                                                                      "type":  "main",
-                                                                      "index":  0
-                                                                  }
-                                                              ]
-                                                          ]
-                                             },
-                        "Mark Compliance Running":  {
-                                                        "main":  [
-                                                                     [
-                                                                         {
-                                                                             "node":  "Lawyer Agent â€” Legal \u0026 NDA Review",
-                                                                             "type":  "main",
-                                                                             "index":  0
-                                                                         },
-                                                                         {
-                                                                             "node":  "GDPR Agent â€” Privacy \u0026 DPA Review",
-                                                                             "type":  "main",
-                                                                             "index":  0
-                                                                         },
-                                                                         {
-                                                                             "node":  "InfoSec Agent â€” Security Assessment",
-                                                                             "type":  "main",
-                                                                             "index":  0
-                                                                         },
-                                                                         {
-                                                                             "node":  "LkSG \u0026 Ethics Agent â€” Supply Chain Compliance",
-                                                                             "type":  "main",
-                                                                             "index":  0
-                                                                         }
-                                                                     ]
-                                                                 ]
-                                                    },
-                        "Lawyer Agent â€” Legal \u0026 NDA Review":  {
-                                                                         "main":  [
-                                                                                      [
-                                                                                          {
-                                                                                              "node":  "Parse Lawyer Response",
-                                                                                              "type":  "main",
-                                                                                              "index":  0
-                                                                                          }
-                                                                                      ]
-                                                                                  ]
-                                                                     },
-                        "GDPR Agent â€” Privacy \u0026 DPA Review":  {
-                                                                         "main":  [
-                                                                                      [
-                                                                                          {
-                                                                                              "node":  "Parse GDPR Response",
-                                                                                              "type":  "main",
-                                                                                              "index":  0
-                                                                                          }
-                                                                                      ]
-                                                                                  ]
-                                                                     },
-                        "InfoSec Agent â€” Security Assessment":  {
-                                                                      "main":  [
-                                                                                   [
-                                                                                       {
-                                                                                           "node":  "Parse InfoSec Response",
-                                                                                           "type":  "main",
-                                                                                           "index":  0
-                                                                                       }
-                                                                                   ]
-                                                                               ]
-                                                                  },
-                        "LkSG \u0026 Ethics Agent â€” Supply Chain Compliance":  {
-                                                                                     "main":  [
-                                                                                                  [
-                                                                                                      {
-                                                                                                          "node":  "Parse LkSG Response",
-                                                                                                          "type":  "main",
-                                                                                                          "index":  0
-                                                                                                      }
-                                                                                                  ]
-                                                                                              ]
-                                                                                 },
-                        "Parse Lawyer Response":  {
-                                                      "main":  [
-                                                                   [
-                                                                       {
-                                                                           "node":  "Save Lawyer Compliance Check",
-                                                                           "type":  "main",
-                                                                           "index":  0
-                                                                       }
-                                                                   ]
-                                                               ]
-                                                  },
-                        "Parse GDPR Response":  {
-                                                    "main":  [
-                                                                 [
-                                                                     {
-                                                                         "node":  "Save GDPR Compliance Check",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ]
-                                                             ]
-                                                },
-                        "Parse InfoSec Response":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Save InfoSec Compliance Check",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
-                        "Parse LkSG Response":  {
-                                                    "main":  [
-                                                                 [
-                                                                     {
-                                                                         "node":  "Save LkSG Compliance Check",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ]
-                                                             ]
-                                                },
-                        "Save Lawyer Compliance Check":  {
-                                                             "main":  [
-                                                                          [
-                                                                              {
-                                                                                  "node":  "Save NDA Document",
-                                                                                  "type":  "main",
-                                                                                  "index":  0
-                                                                              }
-                                                                          ]
-                                                                      ]
-                                                         },
-                        "Save GDPR Compliance Check":  {
-                                                           "main":  [
-                                                                        [
-                                                                            {
-                                                                                "node":  "Save DPA Document",
-                                                                                "type":  "main",
-                                                                                "index":  0
-                                                                            }
-                                                                        ]
-                                                                    ]
-                                                       },
-                        "Save InfoSec Compliance Check":  {
-                                                              "main":  [
-                                                                           [
-                                                                               {
-                                                                                   "node":  "Aggregate Compliance Results",
-                                                                                   "type":  "main",
-                                                                                   "index":  0
-                                                                               }
-                                                                           ]
-                                                                       ]
-                                                          },
-                        "Save LkSG Compliance Check":  {
-                                                           "main":  [
-                                                                        [
-                                                                            {
-                                                                                "node":  "Aggregate Compliance Results",
-                                                                                "type":  "main",
-                                                                                "index":  0
-                                                                            }
-                                                                        ]
-                                                                    ]
-                                                       },
-                        "Save NDA Document":  {
-                                                  "main":  [
-                                                               [
-                                                                   {
-                                                                       "node":  "Aggregate Compliance Results",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   }
-                                                               ]
-                                                           ]
-                                              },
-                        "Save DPA Document":  {
-                                                  "main":  [
-                                                               [
-                                                                   {
-                                                                       "node":  "Aggregate Compliance Results",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   }
-                                                               ]
-                                                           ]
-                                              },
-                        "Aggregate Compliance Results":  {
-                                                             "main":  [
-                                                                          [
-                                                                              {
-                                                                                  "node":  "Update Supplier Compliance Status",
-                                                                                  "type":  "main",
-                                                                                  "index":  0
-                                                                              }
-                                                                          ]
-                                                                      ]
-                                                         },
-                        "Update Supplier Compliance Status":  {
-                                                                  "main":  [
-                                                                               [
-                                                                                   {
-                                                                                       "node":  "Docs or Blockers Need Review?",
-                                                                                       "type":  "main",
-                                                                                       "index":  0
-                                                                                   }
-                                                                               ]
-                                                                           ]
-                                                              },
-                        "Docs or Blockers Need Review?":  {
-                                                              "main":  [
-                                                                           [
-                                                                               {
-                                                                                   "node":  "Create Onboarding Review Ticket",
-                                                                                   "type":  "main",
-                                                                                   "index":  0
-                                                                               }
-                                                                           ],
-                                                                           [
-                                                                               {
-                                                                                   "node":  "Log Onboarding Trace",
-                                                                                   "type":  "main",
-                                                                                   "index":  0
-                                                                               }
-                                                                           ]
-                                                                       ]
-                                                          }
-                    }
+  "name": "TrueSpend â€” Supplier Onboarding & Compliance",
+  "description": "Triggered when a new supplier is created. Runs 4 compliance agents in parallel: Lawyer (NDA), GDPR/DPA, InfoSec, and LkSG/Ethics. Generates required legal documents. Creates a ticket only if there are blockers or the supplier needs signature on docs. Everything else is logged to DB silently.",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "New Supplier Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "path": "supplier-onboarding",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "responseData": "allEntries"
+      },
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "fetch_supplier",
+      "name": "Fetch Supplier Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/suppliers?id=eq.{{ $json.body.supplier_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "id": "set_supplier",
+      "name": "Extract Supplier",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "supplier_id",
+              "value": "={{ $json[0].id }}"
+            },
+            {
+              "name": "supplier_name",
+              "value": "={{ $json[0].name }}"
+            },
+            {
+              "name": "legal_name",
+              "value": "={{ $json[0].legal_name || $json[0].name }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ $json[0].country }}"
+            },
+            {
+              "name": "category",
+              "value": "={{ $json[0].category }}"
+            },
+            {
+              "name": "contact_email",
+              "value": "={{ $json[0].contact_email }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "id": "mark_running",
+      "name": "Mark Compliance Running",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/suppliers?id=eq.{{ $json.supplier_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ compliance_status: 'running' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        720,
+        0
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "claude_lawyer",
+      "name": "Lawyer Agent â€” Legal & NDA Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend's Legal Agent. You assess new supplier relationships for legal risk and determine which legal documents are required. You are expert in German commercial law, EU contract law, and standard B2B procurement agreements. You generate NDA content and flag legal risks. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this new supplier for legal risk and NDA requirements.\\n\\nSUPPLIER:\\nName: {{ $node['Extract Supplier'].json.supplier_name }}\\nLegal name: {{ $node['Extract Supplier'].json.legal_name }}\\nCountry: {{ $node['Extract Supplier'].json.country }}\\nCategory: {{ $node['Extract Supplier'].json.category }}\\n\\nTASKS:\\n1. Assess legal risk of engaging this supplier\\n2. Determine if NDA is required (almost always yes for new suppliers)\\n3. Generate NDA content filling in these template variables:\\n   - EFFECTIVE_DATE: today {{ new Date().toISOString().split('T')[0] }}\\n   - SUPPLIER_LEGAL_NAME: {{ $node['Extract Supplier'].json.legal_name }}\\n   - SUPPLIER_COUNTRY: {{ $node['Extract Supplier'].json.country }}\\n   - SUPPLIER_ADDRESS: [to be completed by supplier]\\n   - PURPOSE: procurement and vendor relationship management\\n   - TERM_YEARS: 3\\n   - SURVIVAL_YEARS: 5\\n   - JURISDICTION_CITY: Munich\\n   - TRUESPEND_ADDRESS: Munich, Germany\\n4. Flag any legal red flags for this supplier type\\n\\nReturn JSON:\\n{\\n  \\\"nda_required\\\": true|false,\\n  \\\"nda_content\\\": \\\"full NDA text with variables filled in\\\",\\n  \\\"legal_risk_score\\\": 0-100,\\n  \\\"risk_level\\\": \\\"low|medium|high\\\",\\n  \\\"findings\\\": [\\\"list of findings\\\"],\\n  \\\"blockers\\\": [\\\"must-fix items\\\"],\\n  \\\"recommendations\\\": [\\\"nice-to-have items\\\"],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        960,
+        -300
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "claude_gdpr",
+      "name": "GDPR Agent â€” Privacy & DPA Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend's GDPR Agent. You assess whether suppliers require a Data Processing Agreement under Art. 28 GDPR and generate DPA content. You are expert in GDPR, BDSG, EU data protection law, Standard Contractual Clauses, and data residency requirements. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this supplier for GDPR compliance and DPA requirements.\\n\\nSUPPLIER:\\nName: {{ $node['Extract Supplier'].json.supplier_name }}\\nCountry: {{ $node['Extract Supplier'].json.country }}\\nCategory: {{ $node['Extract Supplier'].json.category }}\\n\\nTASKS:\\n1. Determine if this supplier will process personal data on behalf of TrueSpend\\n2. If yes, determine if Standard Contractual Clauses are needed (non-EU supplier)\\n3. Generate DPA content with:\\n   - EFFECTIVE_DATE: {{ new Date().toISOString().split('T')[0] }}\\n   - SUPPLIER_LEGAL_NAME: {{ $node['Extract Supplier'].json.legal_name }}\\n   - SERVICE_DESCRIPTION: {{ $node['Extract Supplier'].json.category }} services\\n   - JURISDICTION_CITY: Munich\\n   - Fill in appropriate processing nature, purpose, data subjects, data categories based on supplier category\\n   - Generate TOM_CONTENT appropriate for this supplier type\\n4. Flag any GDPR red flags\\n\\nReturn JSON:\\n{\\n  \\\"dpa_required\\\": true|false,\\n  \\\"scc_required\\\": true|false,\\n  \\\"processes_personal_data\\\": true|false,\\n  \\\"data_residency\\\": \\\"EU|non-EU|mixed\\\",\\n  \\\"dpa_content\\\": \\\"full DPA text with variables filled in\\\",\\n  \\\"gdpr_risk_score\\\": 0-100,\\n  \\\"risk_level\\\": \\\"low|medium|high\\\",\\n  \\\"findings\\\": [],\\n  \\\"blockers\\\": [],\\n  \\\"recommendations\\\": [],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        960,
+        -100
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "claude_infosec",
+      "name": "InfoSec Agent â€” Security Assessment",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend's InfoSec Agent. You assess new suppliers for information security risks and requirements. You evaluate what certifications and controls should be required based on supplier category and data access. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this supplier's information security requirements.\\n\\nSUPPLIER:\\nName: {{ $node['Extract Supplier'].json.supplier_name }}\\nCountry: {{ $node['Extract Supplier'].json.country }}\\nCategory: {{ $node['Extract Supplier'].json.category }}\\n\\nBased on the supplier category, assess:\\n1. What InfoSec certifications should be required? (ISO 27001, SOC2, etc.)\\n2. What security controls are minimum requirements?\\n3. What is the risk level for this supplier type?\\n4. Generate Technical and Organisational Measures (TOMs) text for the DPA Annex 2\\n5. What ongoing security monitoring is required?\\n\\nReturn JSON:\\n{\\n  \\\"infosec_score\\\": 0-100,\\n  \\\"risk_level\\\": \\\"low|medium|high|critical\\\",\\n  \\\"iso27001_required\\\": true|false,\\n  \\\"soc2_required\\\": true|false,\\n  \\\"tom_content\\\": \\\"full TOM text for DPA Annex 2\\\",\\n  \\\"findings\\\": [],\\n  \\\"blockers\\\": [],\\n  \\\"recommendations\\\": [],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        960,
+        100
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "claude_lksg",
+      "name": "LkSG & Ethics Agent â€” Supply Chain Compliance",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are TrueSpend's Supply Chain Compliance Agent. You assess suppliers for compliance with the German Supply Chain Due Diligence Act (Lieferkettensorgfaltspflichtengesetz â€” LkSG), Code of Conduct requirements, sanctions screening, and ethical sourcing standards. Always return structured JSON.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Assess this supplier for LkSG, ethics, and supply chain compliance.\\n\\nSUPPLIER:\\nName: {{ $node['Extract Supplier'].json.supplier_name }}\\nCountry: {{ $node['Extract Supplier'].json.country }}\\nCategory: {{ $node['Extract Supplier'].json.category }}\\n\\nAssess:\\n1. LkSG risk level based on country and category (human rights, environmental risks)\\n2. Sanctions screening risk (high-risk countries, restricted entities)\\n3. Code of Conduct requirements\\n4. Modern slavery and forced labour risk\\n5. Environmental compliance requirements\\n\\nReturn JSON:\\n{\\n  \\\"lksg_risk_level\\\": \\\"low|medium|high\\\",\\n  \\\"lksg_compliant\\\": true|false|null,\\n  \\\"sanctions_risk\\\": \\\"low|medium|high\\\",\\n  \\\"coc_required\\\": true|false,\\n  \\\"findings\\\": [],\\n  \\\"blockers\\\": [],\\n  \\\"recommendations\\\": [],\\n  \\\"passed\\\": true|false\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [
+        960,
+        300
+      ],
+      "options": {
+        "timeout": 120000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "parse_lawyer",
+      "name": "Parse Lawyer Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "nda_required",
+              "value": "={{ JSON.parse($json.content[0].text).nda_required }}"
+            },
+            {
+              "name": "nda_content",
+              "value": "={{ JSON.parse($json.content[0].text).nda_content }}"
+            },
+            {
+              "name": "legal_risk_score",
+              "value": "={{ JSON.parse($json.content[0].text).legal_risk_score }}"
+            },
+            {
+              "name": "lawyer_passed",
+              "value": "={{ JSON.parse($json.content[0].text).passed }}"
+            },
+            {
+              "name": "lawyer_blockers",
+              "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
+            },
+            {
+              "name": "lawyer_findings",
+              "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).findings) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        -300
+      ]
+    },
+    {
+      "id": "parse_gdpr",
+      "name": "Parse GDPR Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "dpa_required",
+              "value": "={{ JSON.parse($json.content[0].text).dpa_required }}"
+            },
+            {
+              "name": "scc_required",
+              "value": "={{ JSON.parse($json.content[0].text).scc_required }}"
+            },
+            {
+              "name": "processes_personal_data",
+              "value": "={{ JSON.parse($json.content[0].text).processes_personal_data }}"
+            },
+            {
+              "name": "data_residency",
+              "value": "={{ JSON.parse($json.content[0].text).data_residency }}"
+            },
+            {
+              "name": "dpa_content",
+              "value": "={{ JSON.parse($json.content[0].text).dpa_content }}"
+            },
+            {
+              "name": "gdpr_risk_score",
+              "value": "={{ JSON.parse($json.content[0].text).gdpr_risk_score }}"
+            },
+            {
+              "name": "gdpr_passed",
+              "value": "={{ JSON.parse($json.content[0].text).passed }}"
+            },
+            {
+              "name": "gdpr_blockers",
+              "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        -100
+      ]
+    },
+    {
+      "id": "parse_infosec",
+      "name": "Parse InfoSec Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "infosec_score",
+              "value": "={{ JSON.parse($json.content[0].text).infosec_score }}"
+            },
+            {
+              "name": "tom_content",
+              "value": "={{ JSON.parse($json.content[0].text).tom_content }}"
+            },
+            {
+              "name": "infosec_passed",
+              "value": "={{ JSON.parse($json.content[0].text).passed }}"
+            },
+            {
+              "name": "infosec_blockers",
+              "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
+            },
+            {
+              "name": "iso27001_required",
+              "value": "={{ JSON.parse($json.content[0].text).iso27001_required }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        100
+      ]
+    },
+    {
+      "id": "parse_lksg",
+      "name": "Parse LkSG Response",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "lksg_risk_level",
+              "value": "={{ JSON.parse($json.content[0].text).lksg_risk_level }}"
+            },
+            {
+              "name": "lksg_compliant",
+              "value": "={{ JSON.parse($json.content[0].text).lksg_compliant }}"
+            },
+            {
+              "name": "lksg_passed",
+              "value": "={{ JSON.parse($json.content[0].text).passed }}"
+            },
+            {
+              "name": "lksg_blockers",
+              "value": "={{ JSON.stringify(JSON.parse($json.content[0].text).blockers) }}"
+            },
+            {
+              "name": "sanctions_risk",
+              "value": "={{ JSON.parse($json.content[0].text).sanctions_risk }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "id": "save_lawyer_check",
+      "name": "Save Lawyer Compliance Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/compliance_checks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Extract Supplier'].json.supplier_id, check_type: 'lawyer', status: $json.lawyer_passed === 'true' ? 'green' : 'red', score: parseFloat($json.legal_risk_score), passed: $json.lawyer_passed === 'true', findings: JSON.parse($json.lawyer_findings), blockers: JSON.parse($json.lawyer_blockers), docs_required: $json.nda_required === 'true' ? ['nda'] : [] }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1440,
+        -300
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "save_gdpr_check",
+      "name": "Save GDPR Compliance Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/compliance_checks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Extract Supplier'].json.supplier_id, check_type: 'gdpr', status: $json.gdpr_passed === 'true' ? 'green' : 'red', score: parseFloat($json.gdpr_risk_score), passed: $json.gdpr_passed === 'true', blockers: JSON.parse($json.gdpr_blockers), docs_required: $json.dpa_required === 'true' ? ['dpa'] : [] }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1440,
+        -100
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "save_infosec_check",
+      "name": "Save InfoSec Compliance Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/compliance_checks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Extract Supplier'].json.supplier_id, check_type: 'infosec', status: $json.infosec_passed === 'true' ? 'green' : 'amber', score: parseFloat($json.infosec_score), passed: $json.infosec_passed === 'true', blockers: JSON.parse($json.infosec_blockers) }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1440,
+        100
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "save_lksg_check",
+      "name": "Save LkSG Compliance Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/compliance_checks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Extract Supplier'].json.supplier_id, check_type: 'lksg', status: $json.lksg_passed === 'true' ? 'green' : 'amber', passed: $json.lksg_passed === 'true', blockers: JSON.parse($json.lksg_blockers) }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1440,
+        300
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "generate_nda",
+      "name": "Save NDA Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/legal_documents",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Extract Supplier'].json.supplier_id, doc_type: 'nda', status: 'generated', content: $node['Parse Lawyer Response'].json.nda_content, supplier_name: $node['Extract Supplier'].json.legal_name, governing_law: 'German law', generated_at: new Date().toISOString(), sent_to_email: $node['Extract Supplier'].json.contact_email, expires_at: new Date(Date.now() + 3 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1680,
+        -300
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "generate_dpa",
+      "name": "Save DPA Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/legal_documents",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ supplier_id: $node['Extract Supplier'].json.supplier_id, doc_type: 'dpa', status: 'generated', content: $node['Parse GDPR Response'].json.dpa_content, supplier_name: $node['Extract Supplier'].json.legal_name, governing_law: 'German law', generated_at: new Date().toISOString(), sent_to_email: $node['Extract Supplier'].json.contact_email }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1680,
+        -100
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "aggregate_results",
+      "name": "Aggregate Compliance Results",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "overall_status",
+              "value": "={{ ($node['Parse Lawyer Response'].json.lawyer_passed === 'true' && $node['Parse GDPR Response'].json.gdpr_passed === 'true' && $node['Parse InfoSec Response'].json.infosec_passed === 'true' && $node['Parse LkSG Response'].json.lksg_passed === 'true') ? 'green' : 'amber' }}"
+            },
+            {
+              "name": "has_blockers",
+              "value": "={{ (JSON.parse($node['Parse Lawyer Response'].json.lawyer_blockers || '[]').length > 0) || (JSON.parse($node['Parse GDPR Response'].json.gdpr_blockers || '[]').length > 0) || (JSON.parse($node['Parse InfoSec Response'].json.infosec_blockers || '[]').length > 0) || (JSON.parse($node['Parse LkSG Response'].json.lksg_blockers || '[]').length > 0) }}"
+            },
+            {
+              "name": "docs_needed",
+              "value": "={{ [$node['Parse Lawyer Response'].json.nda_required === 'true' ? 'NDA' : null, $node['Parse GDPR Response'].json.dpa_required === 'true' ? 'DPA' : null].filter(Boolean).join(', ') }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "id": "update_supplier_compliance",
+      "name": "Update Supplier Compliance Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/suppliers?id=eq.{{ $node['Extract Supplier'].json.supplier_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ compliance_status: $json.overall_status, nda_status: $node['Parse Lawyer Response'].json.nda_required === 'true' ? 'generated' : 'not_required', dpa_status: $node['Parse GDPR Response'].json.dpa_required === 'true' ? 'generated' : 'not_required', infosec_score: parseFloat($node['Parse InfoSec Response'].json.infosec_score), lksg_compliant: $node['Parse LkSG Response'].json.lksg_compliant === 'true', processes_personal_data: $node['Parse GDPR Response'].json.processes_personal_data === 'true', data_residency: $node['Parse GDPR Response'].json.data_residency }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2160,
+        0
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "check_needs_ticket",
+      "name": "Docs or Blockers Need Review?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $node['Aggregate Compliance Results'].json.docs_needed }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "position": [
+        2400,
+        0
+      ]
+    },
+    {
+      "id": "create_onboarding_ticket",
+      "name": "Create Onboarding Review Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: 'TS-' + new Date().getFullYear() + '-ON-' + String(Math.floor(Math.random() * 9000) + 1000), source: 'automatic', status: 'signature_required', title: 'New supplier onboarding â€” ' + $node['Extract Supplier'].json.supplier_name, description: 'Compliance checks complete. Documents generated and ready for review: ' + $node['Aggregate Compliance Results'].json.docs_needed, supplier_id: $node['Extract Supplier'].json.supplier_id, review_type: 'compliance_flag', review_notes: 'Legal Agent: ' + ($node['Parse Lawyer Response'].json.lawyer_passed === 'true' ? 'âœ…' : 'âŒ') + ' | GDPR: ' + ($node['Parse GDPR Response'].json.gdpr_passed === 'true' ? 'âœ…' : 'âŒ') + ' | InfoSec: ' + ($node['Parse InfoSec Response'].json.infosec_passed === 'true' ? 'âœ…' : 'âŒ') + ' | LkSG: ' + ($node['Parse LkSG Response'].json.lksg_passed === 'true' ? 'âœ…' : 'âŒ') + '. Docs required: ' + $node['Aggregate Compliance Results'].json.docs_needed + '. Send to supplier for signature.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2640,
+        -120
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "log_trace",
+      "name": "Log Onboarding Trace",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'supplier', value: 'Onboarding complete for ' + $node['Extract Supplier'].json.supplier_name + '. Status: ' + $node['Aggregate Compliance Results'].json.overall_status + '. Docs: ' + ($node['Aggregate Compliance Results'].json.docs_needed || 'none'), notes: 'Compliance agents: Lawyer, GDPR, InfoSec, LkSG all completed' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2640,
+        120
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    }
+  ],
+  "connections": {
+    "New Supplier Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch Supplier Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Supplier Details": {
+      "main": [
+        [
+          {
+            "node": "Extract Supplier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Supplier": {
+      "main": [
+        [
+          {
+            "node": "Mark Compliance Running",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Compliance Running": {
+      "main": [
+        [
+          {
+            "node": "Lawyer Agent â€” Legal & NDA Review",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GDPR Agent â€” Privacy & DPA Review",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "InfoSec Agent â€” Security Assessment",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "LkSG & Ethics Agent â€” Supply Chain Compliance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lawyer Agent â€” Legal & NDA Review": {
+      "main": [
+        [
+          {
+            "node": "Parse Lawyer Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GDPR Agent â€” Privacy & DPA Review": {
+      "main": [
+        [
+          {
+            "node": "Parse GDPR Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InfoSec Agent â€” Security Assessment": {
+      "main": [
+        [
+          {
+            "node": "Parse InfoSec Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LkSG & Ethics Agent â€” Supply Chain Compliance": {
+      "main": [
+        [
+          {
+            "node": "Parse LkSG Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Lawyer Response": {
+      "main": [
+        [
+          {
+            "node": "Save Lawyer Compliance Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse GDPR Response": {
+      "main": [
+        [
+          {
+            "node": "Save GDPR Compliance Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse InfoSec Response": {
+      "main": [
+        [
+          {
+            "node": "Save InfoSec Compliance Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LkSG Response": {
+      "main": [
+        [
+          {
+            "node": "Save LkSG Compliance Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Lawyer Compliance Check": {
+      "main": [
+        [
+          {
+            "node": "Save NDA Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save GDPR Compliance Check": {
+      "main": [
+        [
+          {
+            "node": "Save DPA Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save InfoSec Compliance Check": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Compliance Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save LkSG Compliance Check": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Compliance Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save NDA Document": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Compliance Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save DPA Document": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Compliance Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Compliance Results": {
+      "main": [
+        [
+          {
+            "node": "Update Supplier Compliance Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Supplier Compliance Status": {
+      "main": [
+        [
+          {
+            "node": "Docs or Blockers Need Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs or Blockers Need Review?": {
+      "main": [
+        [
+          {
+            "node": "Create Onboarding Review Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Onboarding Trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
 }

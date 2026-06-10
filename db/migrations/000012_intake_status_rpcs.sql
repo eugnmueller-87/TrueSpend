@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- =============================================================================
 -- step9_intake_status_rpcs.sql
 -- All write-backs in the intake_receiver agent path go through SECURITY DEFINER
@@ -115,3 +116,8 @@ grant execute on function record_decision(uuid,disposition,numeric,text,text,tex
 grant execute on function record_trace_signals(uuid,jsonb)                         to truespend_app;
 
 commit;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

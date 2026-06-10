@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- TrueSpend — Step 4: Extend RLS policies to truespend_app + catalog_by_supplier view
 -- Migration: 2026-05-31
 --
@@ -150,3 +151,8 @@ begin
   end if;
   raise notice '6 OK — approve_and_commit executable';
 end $$;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

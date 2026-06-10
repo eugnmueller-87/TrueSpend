@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- TrueSpend — Step 2: RPC boundary for status transitions
 -- Migration: 2026-05-31
 -- Closes the raw-PATCH forge path and adds a dormant app_role claim check.
@@ -372,3 +373,8 @@ end $$;
 --   1. Drop `approver_role IS NOT NULL AND` in both RPCs → fail-closed
 --   2. Consider adding app_role to the claim in next_po_number / release_budget
 --   3. Update CLAUDE.md invariant I-2 note to remove "client-side only" caveat
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

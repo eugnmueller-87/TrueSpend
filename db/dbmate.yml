@@ -1,0 +1,20 @@
+# dbmate configuration — TrueSpend
+# (dbmate reads DATABASE_URL from the environment / .env)
+#
+# Phase 3: dbmate is the canonical migration runner. Each file in
+# db/migrations/ is an immutable, version-ordered SQL migration with
+# -- migrate:up / -- migrate:down markers (I-8 by convention: never edit an
+# applied migration; add a new one).
+#
+# Migrations dir + schema snapshot location are pinned here so `dbmate` run
+# from the repo root behaves identically in CI and locally.
+
+migrations-dir: "./db/migrations"
+
+# The schema snapshot dbmate writes after each migrate. This is the GENERATED
+# source-of-truth artifact that replaces the hand-maintained db/schema.sql.
+schema-file: "./db/schema.sql"
+
+# Do NOT auto-dump on every migrate in CI (requires pg_dump + prod creds);
+# regenerate explicitly via `dbmate dump`. See docs/conventions.md.
+no-dump-schema: true

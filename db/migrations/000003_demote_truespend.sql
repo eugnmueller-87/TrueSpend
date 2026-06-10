@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- TrueSpend — Step 2c: Demote truespend from superuser
 -- Migration: 2026-05-31
 --
@@ -185,3 +186,8 @@ end $$;
 -- its schema cache as the now-unprivileged truespend role.
 -- The PATCH /tickets {status:...} endpoint will then return 403.
 -- =============================================================================
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

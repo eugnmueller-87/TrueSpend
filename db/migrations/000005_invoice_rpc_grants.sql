@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- TrueSpend — Step 3: Invoice RPC grants + purchase_orders_board access
 -- Migration: 2026-05-31
 --
@@ -190,3 +191,8 @@ begin
 
   raise notice '4 OK — boundary verified: no raw UPDATE on purchase_orders, all RPCs executable, board view accessible';
 end $$;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

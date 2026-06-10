@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- =============================================================================
 -- grant_views_to_truespend_app.sql
 -- Restore SELECT on 8 views that were never granted to the truespend_app login
@@ -23,3 +24,8 @@ grant select on public.po_cycle_time                 to truespend_app;
 grant select on public.weekly_digest                 to truespend_app;
 
 commit;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

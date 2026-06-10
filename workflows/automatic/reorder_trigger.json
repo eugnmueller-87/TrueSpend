@@ -27,7 +27,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "https://postgrest-production-7960.up.railway.app/contracts?category=in.(hardware,saas_license)&auto_renew=eq.true&renewal_state=neq.manual_required",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/contracts?category=in.(hardware,saas_license)&auto_renew=eq.true&renewal_state=neq.manual_required",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -54,7 +54,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?category=in.(hardware,saas_license)&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/budget_positions?category=in.(hardware,saas_license)&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -113,7 +113,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?id=eq.{{ $json.supplier_id }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/suppliers?id=eq.{{ $json.supplier_id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -140,7 +140,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?branch_id=eq.{{ $node['Loop Each Contract'].json.branch_id }}&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}&category=eq.{{ $node['Loop Each Contract'].json.category }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/budget_positions?branch_id=eq.{{ $node['Loop Each Contract'].json.branch_id }}&period=eq.{{ new Date().getFullYear() + '-Q' + Math.ceil((new Date().getMonth()+1)/3) }}&category=eq.{{ $node['Loop Each Contract'].json.category }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -167,7 +167,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/contracts?id=eq.{{ $node['Loop Each Contract'].json.id }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/contracts?id=eq.{{ $node['Loop Each Contract'].json.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -341,7 +341,7 @@
       "name": "Send Order Email to Supplier",
       "type": "n8n-nodes-base.emailSend",
       "parameters": {
-        "fromEmail": "procurement@company.com",
+        "fromEmail": "={{ $env.PROCUREMENT_FROM_EMAIL }}",
         "toEmail": "={{ $node['Fetch Supplier Health'].json[0]?.contact_email }}",
         "subject": "={{ $node['Parse Claude Response'].json.supplier_email_subject }}",
         "text": "={{ $node['Parse Claude Response'].json.supplier_email_body }}"
@@ -357,7 +357,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/supplier_emails",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -402,7 +402,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/tickets",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -447,7 +447,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/decisions",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -492,7 +492,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/tickets",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -537,7 +537,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/decisions",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -582,7 +582,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/users?branch_ids=cs.{$node['Loop Each Contract'].json.branch_id}&active=eq.true&role=in.(head_of_procurement,category_manager,ops_manager)&order=spend_authority.desc&limit=1",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/users?branch_ids=cs.{$node['Loop Each Contract'].json.branch_id}&active=eq.true&role=in.(head_of_procurement,category_manager,ops_manager)&order=spend_authority.desc&limit=1",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -609,7 +609,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/trace_log",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -654,7 +654,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/tickets",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -699,7 +699,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/decisions",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/decisions",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -761,7 +761,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "PATCH",
-        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Create Ticket â€” Escalated'].json[0]?.id || $node['Create Ticket â€” Escalated'].json?.id }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/tickets?id=eq.{{ $node['Create Ticket â€” Escalated'].json[0]?.id || $node['Create Ticket â€” Escalated'].json?.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {

@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- TrueSpend — Cost Centers + Budget positions by cost center
 -- Migration: 2026-05-31
 -- Adds one full CC set for Global HQ (6 CCs) and DACH (4 CCs),
@@ -132,3 +133,8 @@ join cost_centers cc on cc.id = bp.cost_center_id
 join branches b on b.id = bp.branch_id
 order by b.name, cc.code, bp.category
 limit 40;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

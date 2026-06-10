@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- TrueSpend — Step 2d: Create truespend_app as the PostgREST login role
 -- Migration: 2026-05-31
 --
@@ -273,3 +274,8 @@ end $$;
 --
 -- 4. Verify: PATCH /tickets {status:...} → 403. PATCH {description:...} → 200.
 --    POST /rpc/approve_and_commit → works.
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

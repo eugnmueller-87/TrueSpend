@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- ============================================================================
 -- step6_dispatch_queue.sql
 -- ----------------------------------------------------------------------------
@@ -327,3 +328,8 @@ end $function$;
 -- ============================================================================
 GRANT EXECUTE ON FUNCTION enqueue_dispatch(uuid, text, jsonb) TO truespend_app;
 GRANT EXECUTE ON FUNCTION enqueue_dispatch(uuid, text, jsonb) TO truespend;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

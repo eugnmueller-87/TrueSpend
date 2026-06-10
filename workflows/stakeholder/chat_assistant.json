@@ -79,7 +79,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/open_tickets_board?limit=40",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/open_tickets_board?limit=40",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -116,7 +116,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/budget_positions?period=eq.{{ $node['Scope Gate'].json.period }}&limit=200",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/budget_positions?period=eq.{{ $node['Scope Gate'].json.period }}&limit=200",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -153,7 +153,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?select=name,category,health,compliance_status,infosec_score,nda_status,dpa_status,strategic_tier,lock_in_score&order=health.desc&limit=80",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/suppliers?select=name,category,health,compliance_status,infosec_score,nda_status,dpa_status,strategic_tier,lock_in_score&order=health.desc&limit=80",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -190,7 +190,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/contracts_expiring?limit=40",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/contracts_expiring?limit=40",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

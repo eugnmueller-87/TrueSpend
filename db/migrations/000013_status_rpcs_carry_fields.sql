@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- =============================================================================
 -- step10_status_rpcs_carry_fields.sql
 -- Widen the 3 intake status-transition RPCs (from step9) so they also set the
@@ -84,3 +85,8 @@ grant execute on function escalate_ticket(uuid,text,text,numeric)            to 
 grant execute on function complete_ticket_auto(uuid,text,text,numeric,text)  to truespend_app;
 
 commit;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

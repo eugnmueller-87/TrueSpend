@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- ============================================================================
 -- step8_delivery_dispatch.sql
 -- ----------------------------------------------------------------------------
@@ -67,3 +68,8 @@ begin
 
   return v_po;
 end $function$;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;

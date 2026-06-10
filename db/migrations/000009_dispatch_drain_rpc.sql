@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 -- ============================================================================
 -- step7_dispatch_drain_rpc.sql
 -- ----------------------------------------------------------------------------
@@ -81,3 +82,8 @@ end $function$;
 GRANT EXECUTE ON FUNCTION claim_dispatch_batch(int)        TO truespend_app, truespend;
 GRANT EXECUTE ON FUNCTION mark_dispatch_sent(uuid)         TO truespend_app, truespend;
 GRANT EXECUTE ON FUNCTION mark_dispatch_failed(uuid, text) TO truespend_app, truespend;
+
+-- migrate:down transaction:false
+-- Irreversible / forward-only migration. Roll forward with a new migration
+-- per invariant I-8; no automated down path.
+select 1;
