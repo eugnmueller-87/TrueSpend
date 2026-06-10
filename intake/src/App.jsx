@@ -3355,7 +3355,7 @@ const SuppliersScreen = () => {
     try {
       const [sups, cons, pos] = await Promise.all([
         pgFetch('/suppliers?order=name.asc&limit=100'),
-        pgFetch('/contracts?select=supplier_id,expiry_date,name,contract_number,value_eur,auto_renew,start_date&order=expiry_date.asc&limit=300').catch(() => []),
+        pgFetch('/contracts?select=supplier_id,expiry_date,name,value_eur,auto_renew,start_date&order=expiry_date.asc&limit=300').catch(() => []),
         pgFetch('/purchase_orders?select=supplier_id,amount_eur&limit=1000').catch(() => []),
       ])
       setSuppliers(sups)
@@ -4838,7 +4838,7 @@ function ContractsScreen({ user }) {
 
   useEffect(() => {
     Promise.all([
-      pgFetch('/contracts?order=expiry_date.asc&limit=200&select=id,name,contract_number,supplier_id,category,value_eur,expiry_date,auto_renew,renewal_state,start_date'),
+      pgFetch('/contracts?order=expiry_date.asc&limit=200&select=id,name,supplier_id,category,value_eur,expiry_date,auto_renew,renewal_state,start_date'),
       pgFetch('/suppliers?select=id,name&limit=200'),
     ]).then(([ctrs, sups]) => {
       const supMap = {}
