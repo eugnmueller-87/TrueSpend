@@ -1,0 +1,233 @@
+/* =============================================================================
+   TrueSpend — Design Tokens
+   Editorial · Confident · Finance-grade
+   Paper not screen. Ink not glow. Gold for signal, never for decoration.
+============================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ---------- Brand --------------------------------------------------- */
+  --ts-brand-gold:        #B07219;   /* the "T" mark gold — primary accent */
+  --ts-brand-gold-deep:   #8F5C12;   /* hover / pressed */
+  --ts-brand-gold-soft:   #E9DAB5;   /* tint backgrounds */
+  --ts-brand-gold-wash:   #F7EFDE;   /* subtle highlight */
+
+  /* ---------- Surfaces (paper) ---------------------------------------- */
+  --ts-paper:             #F7F4ED;   /* canvas — warm off-white */
+  --ts-paper-deep:        #EFEBE1;   /* secondary surface (rails, footers) */
+  --ts-surface:           #FFFEFB;   /* card / sheet */
+  --ts-surface-raised:    #FFFFFF;   /* modal / popover */
+  --ts-ink-night:         #161413;   /* high-contrast inverse surface */
+
+  /* ---------- Ink (text) ---------------------------------------------- */
+  --ts-ink:               #161413;   /* primary text */
+  --ts-ink-soft:          #3D3633;   /* secondary text */
+  --ts-ink-mute:          #75695F;   /* tertiary, captions, labels */
+  --ts-ink-faint:         #A89B8B;   /* placeholder, disabled */
+  --ts-ink-inverse:       #F7F4ED;   /* text on dark / on gold */
+
+  /* ---------- Lines --------------------------------------------------- */
+  --ts-line:              #E5DDD0;   /* hairline divider */
+  --ts-line-soft:         #EEE7DA;   /* whisper divider */
+  --ts-line-strong:       #C9BFAE;   /* emphasized rule */
+
+  /* ---------- Semantic (muted, finance-grade — never neon) ------------ */
+  --ts-positive:          #3D7A5A;   /* sage — approved, on-track */
+  --ts-positive-soft:     #DCE8DF;
+  --ts-positive-wash:     #EEF3EE;
+
+  --ts-warning:           #C99119;   /* amber — needs attention */
+  --ts-warning-soft:      #F3E4BE;
+  --ts-warning-wash:      #FAF1D7;
+
+  --ts-negative:          #B5462E;   /* brick — blocked, rejected */
+  --ts-negative-soft:     #ECCFC7;
+  --ts-negative-wash:     #F6E5DE;
+
+  --ts-info:              #2B5F7A;   /* slate-teal — informational */
+  --ts-info-soft:         #D2DFE6;
+  --ts-info-wash:         #E6EEF2;
+
+  /* ---------- Fonts -------------------------------------------------- */
+  --ts-font-display:      'Instrument Serif', 'Times New Roman', Georgia, serif;
+  --ts-font-sans:         'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ts-font-mono:         'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ---------- Type scale --------------------------------------------- */
+  /* Display uses serif; everything else sans. Sizes are deliberate and few. */
+  --ts-text-xs:           12px;   /* metadata, eyebrow */
+  --ts-text-sm:           13px;   /* secondary UI */
+  --ts-text-base:         15px;   /* body */
+  --ts-text-md:           17px;   /* prominent body */
+  --ts-text-lg:           20px;   /* section titles */
+  --ts-text-xl:           28px;   /* page H2 (sans) */
+  --ts-text-2xl:          40px;   /* display H2 (serif) */
+  --ts-text-3xl:          56px;   /* display H1 (serif) */
+  --ts-text-4xl:          84px;   /* hero (serif) */
+
+  /* line-heights */
+  --ts-lh-tight:          1.04;
+  --ts-lh-snug:           1.18;
+  --ts-lh-normal:         1.5;
+  --ts-lh-loose:          1.65;
+
+  /* tracking */
+  --ts-track-tight:       -0.02em;
+  --ts-track-display:     -0.025em;
+  --ts-track-eyebrow:     0.14em;   /* uppercase eyebrows */
+  --ts-track-mono:        -0.01em;
+
+  /* ---------- Spacing (4px base) ------------------------------------- */
+  --ts-space-1:  4px;
+  --ts-space-2:  8px;
+  --ts-space-3:  12px;
+  --ts-space-4:  16px;
+  --ts-space-5:  20px;
+  --ts-space-6:  24px;
+  --ts-space-8:  32px;
+  --ts-space-10: 40px;
+  --ts-space-12: 48px;
+  --ts-space-16: 64px;
+  --ts-space-20: 80px;
+
+  /* ---------- Radii (restrained; never pill-cards) ------------------- */
+  --ts-radius-xs:  2px;    /* tags, inline marks */
+  --ts-radius-sm:  4px;    /* buttons, inputs */
+  --ts-radius-md:  6px;    /* cards */
+  --ts-radius-lg:  10px;   /* large surfaces */
+  --ts-radius-pill: 999px;
+
+  /* ---------- Shadows (paper-on-paper, never glow) ------------------- */
+  --ts-shadow-xs:  0 1px 0 rgba(22, 20, 19, 0.04);
+  --ts-shadow-sm:  0 1px 2px rgba(22, 20, 19, 0.04), 0 0 0 1px rgba(22, 20, 19, 0.04);
+  --ts-shadow-md:  0 2px 6px rgba(22, 20, 19, 0.06), 0 1px 2px rgba(22, 20, 19, 0.04);
+  --ts-shadow-lg:  0 12px 32px -8px rgba(22, 20, 19, 0.16), 0 4px 12px rgba(22, 20, 19, 0.06);
+  --ts-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+
+  /* ---------- Motion -------------------------------------------------- */
+  --ts-ease:            cubic-bezier(0.2, 0.6, 0.2, 1);
+  --ts-ease-emphatic:   cubic-bezier(0.16, 1, 0.3, 1);
+  --ts-dur-fast:        120ms;
+  --ts-dur-med:         220ms;
+  --ts-dur-slow:        420ms;
+}
+
+/* =============================================================================
+   Semantic typography
+   ---------------------------------------------------------------------------
+   Headlines are serif (Instrument Serif) — they carry the editorial voice.
+   UI labels, metadata, numbers are sans (Geist) — they stay in service.
+   Mono for references, IDs, code, money where alignment matters.
+============================================================================= */
+
+.ts-hero,
+.ts-h1,
+.ts-h2,
+.ts-display {
+  font-family: var(--ts-font-display);
+  font-weight: 400;
+  color: var(--ts-ink);
+  letter-spacing: var(--ts-track-display);
+  line-height: var(--ts-lh-tight);
+  text-wrap: balance;
+}
+
+.ts-hero    { font-size: var(--ts-text-4xl); }
+.ts-h1      { font-size: var(--ts-text-3xl); }
+.ts-h2      { font-size: var(--ts-text-2xl); }
+.ts-display { font-size: var(--ts-text-xl); font-style: normal; }
+
+/* Sans headings — for in-product UI where the serif would be too literary */
+.ts-h3 {
+  font-family: var(--ts-font-sans);
+  font-weight: 600;
+  font-size: var(--ts-text-lg);
+  letter-spacing: var(--ts-track-tight);
+  line-height: var(--ts-lh-snug);
+  color: var(--ts-ink);
+}
+
+.ts-h4 {
+  font-family: var(--ts-font-sans);
+  font-weight: 600;
+  font-size: var(--ts-text-md);
+  letter-spacing: var(--ts-track-tight);
+  line-height: var(--ts-lh-snug);
+  color: var(--ts-ink);
+}
+
+.ts-body {
+  font-family: var(--ts-font-sans);
+  font-weight: 400;
+  font-size: var(--ts-text-base);
+  line-height: var(--ts-lh-loose);
+  color: var(--ts-ink-soft);
+  text-wrap: pretty;
+}
+
+.ts-body-sm {
+  font-family: var(--ts-font-sans);
+  font-weight: 400;
+  font-size: var(--ts-text-sm);
+  line-height: var(--ts-lh-normal);
+  color: var(--ts-ink-soft);
+}
+
+.ts-label {
+  font-family: var(--ts-font-sans);
+  font-weight: 500;
+  font-size: var(--ts-text-sm);
+  color: var(--ts-ink);
+  letter-spacing: 0;
+}
+
+.ts-eyebrow {
+  font-family: var(--ts-font-sans);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: var(--ts-track-eyebrow);
+  color: var(--ts-ink-mute);
+}
+
+.ts-caption {
+  font-family: var(--ts-font-sans);
+  font-weight: 400;
+  font-size: var(--ts-text-xs);
+  color: var(--ts-ink-mute);
+  line-height: var(--ts-lh-normal);
+}
+
+.ts-mono,
+.ts-ref {
+  font-family: var(--ts-font-mono);
+  font-weight: 500;
+  font-size: var(--ts-text-xs);
+  letter-spacing: var(--ts-track-mono);
+  color: var(--ts-ink-soft);
+}
+
+/* Money — tabular figures, lined for stacked columns */
+.ts-money {
+  font-family: var(--ts-font-sans);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  letter-spacing: -0.005em;
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+/* Editorial mark — italic serif accent inside body copy */
+.ts-mark {
+  font-family: var(--ts-font-display);
+  font-style: normal;
+  color: var(--ts-brand-gold-deep);
+}
+
+/* no-italic override — brand decision: keep the accent color on `em`, drop the slant */
+.ts-hero em, .ts-h1 em, .ts-h2 em, .ts-h3 em, .ts-h4 em, .ts-display em,
+.ts-body em, .ts-body-sm em, .ts-label em, .ts-mark, em.ts-mark {
+  font-style: normal;
+  color: var(--ts-brand-gold-deep);
+}

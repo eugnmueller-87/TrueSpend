@@ -1,0 +1,521 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrueSpend — Intake</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
+
+  :root{
+    --paper:#F7F4EE; --card:#FFFFFF; --ink:#16201C; --ink-soft:#54605A;
+    --line:#E3DED3; --line-soft:#EDE9E0;
+    --accent:#0E5B4E; --accent-soft:#E4EFEA; --accent-ink:#0A4136;
+    --amber:#9A6314; --amber-soft:#F7EEDC;
+    --red:#9E2B25; --red-soft:#F6E4E1;
+    --blue:#22507A; --blue-soft:#E6EEF5;
+    --r:14px; --shadow:0 1px 2px rgba(22,32,28,.04),0 8px 30px rgba(22,32,28,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:'Hanken Grotesk',sans-serif; -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 1px 1px, rgba(22,32,28,.025) 1px, transparent 0);
+    background-size:22px 22px;
+  }
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+
+  /* ---------- rail ---------- */
+  .rail{border-right:1px solid var(--line);padding:26px 20px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:30px}
+  .mark{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;font-family:'Fraunces',serif;font-weight:600;font-size:18px}
+  .brand b{font-weight:600;letter-spacing:-.2px;font-size:16px}
+  .brand span{display:block;font-size:11px;color:var(--ink-soft);letter-spacing:.04em;text-transform:uppercase;margin-top:1px}
+  .navitem{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;color:var(--ink-soft);font-weight:500;cursor:pointer;font-size:14.5px;transition:.16s}
+  .navitem:hover{background:var(--line-soft);color:var(--ink)}
+  .navitem.on{background:var(--accent);color:#fff}
+  .navitem .ic{width:17px;height:17px;flex:none;stroke-width:1.9}
+  .rail .foot{margin-top:auto;font-size:12px;color:var(--ink-soft);line-height:1.5}
+  .rail .foot .who{display:flex;align-items:center;gap:9px;padding-top:14px;border-top:1px solid var(--line)}
+  .avatar{width:30px;height:30px;border-radius:50%;background:var(--blue-soft);color:var(--blue);display:grid;place-items:center;font-weight:600;font-size:13px}
+
+  /* ---------- main ---------- */
+  .main{padding:40px 48px 80px;max-width:1180px}
+  .head h1{font-family:'Fraunces',serif;font-weight:500;font-size:30px;letter-spacing:-.4px;margin:0 0 4px}
+  .head p{color:var(--ink-soft);margin:0 0 28px;font-size:15px}
+
+  .layout{display:grid;grid-template-columns:1fr 360px;gap:30px;align-items:start}
+  @media(max-width:1080px){.layout{grid-template-columns:1fr}.rail{display:none}.app{grid-template-columns:1fr}.main{padding:26px}}
+
+  /* steps */
+  .steps{display:flex;gap:6px;margin-bottom:26px}
+  .step{flex:1;height:4px;border-radius:99px;background:var(--line)}
+  .step.done{background:var(--accent)}
+  .step.now{background:var(--accent);opacity:.45}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:28px}
+  .klabel{display:block;font-size:12.5px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 7px}
+  .hint{font-size:12.5px;color:var(--ink-soft);margin-top:6px}
+  textarea,input,select{width:100%;font:inherit;font-size:15px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:12px 13px;outline:none;transition:.15s}
+  textarea{min-height:84px;resize:vertical;line-height:1.5}
+  textarea:focus,input:focus,select:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px var(--accent-soft)}
+  .ask{font-family:'Fraunces',serif;font-size:22px;font-weight:500;letter-spacing:-.3px;margin:0 0 16px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .row3{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:14px}
+  .field{margin-bottom:20px}
+  .field:last-child{margin-bottom:0}
+
+  /* category chips */
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{padding:8px 13px;border:1px solid var(--line);border-radius:99px;background:var(--card);font-size:13.5px;font-weight:500;cursor:pointer;color:var(--ink-soft);transition:.14s;display:flex;align-items:center;gap:7px}
+  .chip:hover{border-color:var(--accent);color:var(--ink)}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip.auto{border-style:dashed}
+
+  .seg{display:inline-flex;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:3px}
+  .seg button{border:0;background:none;font:inherit;font-size:14px;font-weight:500;padding:8px 16px;border-radius:8px;cursor:pointer;color:var(--ink-soft)}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+
+  .btn{font:inherit;font-weight:600;font-size:14.5px;border-radius:10px;padding:12px 20px;cursor:pointer;border:1px solid transparent;transition:.15s}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-ink)}
+  .btn.ghost{background:transparent;color:var(--ink-soft);border-color:var(--line)}
+  .btn.ghost:hover{border-color:var(--ink-soft);color:var(--ink)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .actions{display:flex;justify-content:space-between;margin-top:26px;gap:12px}
+
+  /* live side panel */
+  .panel{position:sticky;top:30px;display:flex;flex-direction:column;gap:16px}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden}
+  .pcard h3{margin:0;padding:15px 18px;font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:8px}
+  .pbody{padding:16px 18px}
+  .tier{display:flex;align-items:baseline;gap:10px;margin-bottom:4px}
+  .tier b{font-family:'Fraunces',serif;font-size:26px;font-weight:500;line-height:1}
+  .tier span{font-size:13px;color:var(--ink-soft)}
+  .meta{font-size:13px;color:var(--ink-soft);margin-top:8px}
+  .meta b{color:var(--ink);font-weight:600}
+  .approver{display:flex;gap:10px;padding:11px 0;border-top:1px solid var(--line-soft);font-size:13.5px}
+  .approver:first-of-type{border-top:0}
+  .approver .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:6px;flex:none}
+  .approver .r{font-weight:600}
+  .approver .w{color:var(--ink-soft);font-size:12.5px;margin-top:1px}
+  .flag{display:flex;gap:10px;padding:12px 14px;border-radius:10px;font-size:13px;margin-top:10px;line-height:1.45}
+  .flag .ic{width:16px;height:16px;flex:none;margin-top:1px;stroke-width:2}
+  .flag.amber{background:var(--amber-soft);color:var(--amber)}
+  .flag.red{background:var(--red-soft);color:var(--red)}
+  .flag.blue{background:var(--blue-soft);color:var(--blue)}
+  .flag .t{font-weight:600;color:var(--ink)}
+  .empty{color:var(--ink-soft);font-size:13.5px;padding:6px 0;line-height:1.5}
+
+  /* duplicate nudge */
+  .nudge{border:1px solid var(--accent);background:var(--accent-soft);border-radius:12px;padding:16px;margin-bottom:20px;display:flex;gap:13px;align-items:flex-start;animation:pop .25s ease}
+  @keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
+  .nudge .ic{width:20px;height:20px;color:var(--accent);flex:none;margin-top:1px;stroke-width:2}
+  .nudge b{display:block;margin-bottom:3px}
+  .nudge p{margin:0 0 10px;font-size:13.5px;color:var(--accent-ink);line-height:1.5}
+  .nudge .nb{display:flex;gap:8px}
+  .nb .btn{padding:7px 14px;font-size:13px}
+
+  /* dynamic detail fields */
+  .dyn{animation:fade .3s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+
+  /* confirmation */
+  .done{text-align:center;padding:30px 20px}
+  .done .ring{width:64px;height:64px;border-radius:50%;background:var(--accent-soft);display:grid;place-items:center;margin:0 auto 20px}
+  .done .ring svg{width:30px;height:30px;color:var(--accent);stroke-width:2.4}
+  .done h2{font-family:'Fraunces',serif;font-weight:500;font-size:26px;margin:0 0 6px}
+  .done .ref{display:inline-block;font-family:ui-monospace,monospace;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:6px 14px;font-size:15px;margin:6px 0 18px;letter-spacing:.04em}
+  .timeline{text-align:left;max-width:420px;margin:18px auto 0}
+  .tl{display:flex;gap:13px;padding:11px 0}
+  .tl .n{width:24px;height:24px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--ink-soft);flex:none}
+  .tl.active .n{background:var(--accent);border-color:var(--accent);color:#fff}
+  .tl .lab{font-weight:600;font-size:14px}
+  .tl .sub{font-size:12.5px;color:var(--ink-soft)}
+
+  /* my requests */
+  .reqrow{display:grid;grid-template-columns:90px 1fr 120px 130px;gap:16px;align-items:center;padding:15px 18px;border-bottom:1px solid var(--line-soft);font-size:14px}
+  .reqrow:last-child{border-bottom:0}
+  .reqref{font-family:ui-monospace,monospace;font-size:12.5px;color:var(--ink-soft)}
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;font-size:12px;font-weight:600}
+  .badge.green{background:var(--accent-soft);color:var(--accent-ink)}
+  .badge.amber{background:var(--amber-soft);color:var(--amber)}
+  .badge.blue{background:var(--blue-soft);color:var(--blue)}
+  .amt{font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+</style>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <div class="mark">T</div>
+      <div><b>TrueSpend</b><span>Intake</span></div>
+    </div>
+    <div class="navitem on" data-nav="new"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>New request</div>
+    <div class="navitem" data-nav="mine"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10"/></svg>My requests</div>
+    <div class="foot">
+      <div class="who"><div class="avatar">EM</div><div><b style="color:var(--ink)">Eugen M.</b><br>Cost centre&nbsp;·&nbsp;CC-4400</div></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="screen"></div>
+  </main>
+</div>
+
+<script>
+// ---------------------------------------------------------------- catalogue (mock)
+const CATEGORIES = [
+  {id:'saas',     label:'Software / SaaS', kw:['software','saas','licen','subscription','tool','slack','jira','figma','notion','crm','hubspot','salesforce','zoom','adobe','personio']},
+  {id:'cloud',    label:'Cloud / Infra',   kw:['cloud','aws','azure','gcp','server','compute','hosting','kubernetes','database','snowflake']},
+  {id:'services', label:'Professional services', kw:['consult','agency','contractor','freelanc','services','sow','implementation','audit','recruit','design agency','development']},
+  {id:'hardware', label:'Hardware',        kw:['laptop','monitor','hardware','device','phone','equipment','macbook','dell','peripheral']},
+  {id:'marketing',label:'Marketing / Media',kw:['ads','campaign','media','event','sponsorship','swag','print','marketing','google ads','linkedin ads']},
+  {id:'facilities',label:'Facilities / Office',kw:['office','furniture','cleaning','rent','utilit','facilit','catering','coffee']},
+  {id:'other',    label:'Other',           kw:[]},
+];
+// existing suppliers + live contracts -> drives duplicate / renew detection
+const SUPPLIERS = [
+  {name:'Slack (Salesforce)', cat:'saas',  match:['slack'],            contract:{spend:24000, expiresInDays:47,  owner:'IT'}},
+  {name:'Amazon Web Services',cat:'cloud', match:['aws','amazon web'], contract:{spend:310000,expiresInDays:210, owner:'Engineering'}},
+  {name:'Personio',           cat:'saas',  match:['personio','hris'],  contract:{spend:38000, expiresInDays:12,  owner:'People'}},
+  {name:'Figma',              cat:'saas',  match:['figma'],            contract:{spend:9000,  expiresInDays:160, owner:'Design'}},
+  {name:'Adobe',              cat:'saas',  match:['adobe','creative cloud'],contract:{spend:21000,expiresInDays:300,owner:'Marketing'}},
+];
+const BUDGET_REMAINING = 65000; // remaining in this cost centre this year
+
+// ---------------------------------------------------------------- state
+let nav = 'new';
+let s = freshState();
+let submitted = [
+  {ref:'TS-7741', title:'Notion Team plan — 40 seats', amount:14400, cat:'saas', status:'In review', stage:'blue'},
+  {ref:'TS-7702', title:'Dell monitors ×12', amount:3180, cat:'hardware', status:'Approved', stage:'green'},
+  {ref:'TS-7688', title:'Brand refresh — design agency', amount:48000, cat:'services', status:'Awaiting Legal', stage:'amber'},
+];
+function freshState(){return{step:0, desc:'', amount:'', currency:'EUR', cat:null, autoCat:null, mode:'one_time', termMonths:12,
+  supplier:'', newSupplier:false, personalData:false, onsite:false, quantity:'', renewChoice:null};}
+
+// ---------------------------------------------------------------- helpers
+const $ = sel => document.querySelector(sel);
+function num(v){const n=parseFloat(String(v).replace(/[^0-9.]/g,''));return isNaN(n)?0:n;}
+function fmt(n){return new Intl.NumberFormat('de-DE',{style:'currency',currency:s.currency||'EUR',maximumFractionDigits:0}).format(n);}
+function annualised(){return num(s.amount);} // recurring amount is entered as annual cost
+function detectCat(text){const t=text.toLowerCase();for(const c of CATEGORIES){if(c.kw.some(k=>t.includes(k)))return c.id;}return null;}
+function matchSupplier(text){const t=text.toLowerCase();if(!t.trim())return null;return SUPPLIERS.find(sp=>sp.match.some(m=>t.includes(m)))||null;}
+function catLabel(id){return (CATEGORIES.find(c=>c.id===id)||{}).label||'—';}
+
+// ---------------------------------------------------------------- THE ROUTING ENGINE (the missing logic)
+function routing(){
+  const amt = annualised();
+  const cat = s.cat;
+  const approvers = [];
+  const flags = [];
+
+  // amount tiers
+  let tier, tierName, sla;
+  if(amt<1000){tier='Auto';tierName='Light-touch';sla=0;}
+  else if(amt<10000){tier='1';tierName='Standard';sla=2;}
+  else if(amt<50000){tier='2';tierName='Reviewed';sla=3;}
+  else if(amt<250000){tier='3';tierName='Senior';sla=5;}
+  else {tier='4';tierName='Executive';sla=7;}
+
+  if(amt>=1000) approvers.push({r:'Cost-centre owner', w:'Owns the budget this is charged to'});
+  if(amt>=1000) approvers.push({r:'Procurement', w:'Commercial review & supplier terms'});
+  if(amt>=10000) approvers.push({r:'Controlling / Finance', w:'Spend above €10k threshold'});
+  if(amt>=50000) approvers.push({r:'Department head', w:'Spend above €50k threshold'});
+  if(amt>=250000) approvers.push({r:'CFO', w:'Spend above €250k — executive sign-off'});
+
+  // category-driven approvers
+  if(cat==='saas'||cat==='cloud') approvers.push({r:'IT Security', w:'New software / infrastructure review'});
+  if(cat==='services') approvers.push({r:'Legal', w:'Statement of work & liability terms'});
+  if(cat==='hardware') approvers.push({r:'IT', w:'Asset registration & provisioning'});
+
+  // risk flags (the logic the old tool was missing)
+  if((cat==='saas'||cat==='cloud') && s.personalData){
+    flags.push({sev:'red', t:'Data processing agreement required', d:'This tool handles personal data — Legal/DPO must sign a DPA before go-live (GDPR Art. 28).'});
+    if(!approvers.some(a=>a.r==='Legal')) approvers.push({r:'Legal / DPO', w:'GDPR data-processing agreement'});
+  }
+  if(s.newSupplier){
+    flags.push({sev:'amber', t:'New supplier — risk screening', d:'Third-party due diligence runs automatically: sanctions/OFAC, LkSG supply-chain, and financial health.'});
+  }
+  if(cat==='services' && s.onsite){
+    flags.push({sev:'amber', t:'Worker classification check', d:'On-site contractors need a misclassification review before engagement.'});
+    if(!approvers.some(a=>a.r==='Legal')) approvers.push({r:'Legal', w:'Contractor classification'});
+  }
+  if(amt>BUDGET_REMAINING && amt>0){
+    flags.push({sev:'red', t:'Over remaining budget', d:`Only ${fmt(BUDGET_REMAINING)} left in CC-4400 this year. Controlling must approve the overage.`});
+    if(!approvers.some(a=>a.r==='Controlling / Finance')) approvers.push({r:'Controlling / Finance', w:'Budget overage approval'});
+  }
+  if(amt>0 && amt<1000){
+    flags.push({sev:'blue', t:'Fast-tracked', d:'Under €1,000 — auto-approved with a manager acknowledgement. No procurement queue.'});
+  }
+  return {tier, tierName, sla, approvers, flags, amt};
+}
+
+// ---------------------------------------------------------------- render router
+function render(){
+  if(nav==='mine'){ return renderMine(); }
+  if(s.step>=4){ return renderDone(); }
+  renderFlow();
+  document.querySelectorAll('.navitem').forEach(n=>n.classList.toggle('on', n.dataset.nav===nav));
+}
+
+// ---------------------------------------------------------------- flow (steps 0-3) + live panel
+function renderFlow(){
+  const sup = matchSupplier(s.supplier||s.desc);
+  const showNudge = sup && s.renewChoice!=='new' && s.renewChoice!=='renew' && s.step<=1;
+  const r = routing();
+
+  $('#screen').innerHTML = `
+  <div class="head">
+    <h1>What do you need?</h1>
+    <p>Describe it in plain words. We'll route it, flag the risks, and check we don't already have it — before you submit.</p>
+  </div>
+  <div class="steps">
+    ${[0,1,2,3].map(i=>`<div class="step ${s.step>i?'done':s.step===i?'now':''}"></div>`).join('')}
+  </div>
+  <div class="layout">
+    <div class="card">
+      ${showNudge?nudge(sup):''}
+      ${s.step===0?stepDescribe():''}
+      ${s.step===1?stepDetails():''}
+      ${s.step===2?stepCompliance(r):''}
+      ${s.step===3?stepReview(r,sup):''}
+      <div class="actions">
+        <button class="btn ghost" ${s.step===0?'disabled':''} onclick="back()">Back</button>
+        ${s.step<3
+          ? `<button class="btn primary" ${canNext()?'':'disabled'} onclick="next()">Continue</button>`
+          : `<button class="btn primary" onclick="submit()">Submit request</button>`}
+      </div>
+    </div>
+    ${panel(r)}
+  </div>`;
+  bind();
+}
+
+function nudge(sup){
+  const c=sup.contract;
+  return `<div class="nudge">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+    <div style="flex:1">
+      <b>We already have ${sup.name}.</b>
+      <p>Active contract · ${fmt(c.spend)}/yr · expires in <b>${c.expiresInDays} days</b> · owned by ${c.owner}.
+      ${c.expiresInDays<60?'It\'s up for renewal soon — renewing avoids a duplicate contract and maverick spend.':'Adding a second contract creates duplicate spend.'}</p>
+      <div class="nb">
+        <button class="btn primary" onclick="chooseRenew()">Renew existing</button>
+        <button class="btn ghost" onclick="chooseNew()">No, this is separate</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function stepDescribe(){
+  const chips = CATEGORIES.map(c=>{
+    const on = s.cat===c.id;
+    const auto = !s.cat && s.autoCat===c.id;
+    return `<div class="chip ${on?'on':''} ${auto?'auto':''}" data-cat="${c.id}">${auto?'✓ ':''}${c.label}</div>`;
+  }).join('');
+  return `<div class="dyn">
+    <div class="field">
+      <label class="klabel">In one line, what do you need?</label>
+      <textarea id="desc" placeholder="e.g. Slack Business+ for the 28-person product team, annual">${s.desc||''}</textarea>
+      <div class="hint">Be specific — “design agency for Q3 rebrand, ~3 months” beats “marketing stuff”.</div>
+    </div>
+    <div class="row3">
+      <div class="field" style="margin:0">
+        <label class="klabel">Estimated ${s.mode==='recurring'?'annual ':''}cost</label>
+        <input id="amount" inputmode="decimal" placeholder="e.g. 24000" value="${s.amount||''}">
+      </div>
+      <div class="field" style="margin:0">
+        <label class="klabel">Currency</label>
+        <select id="currency">${['EUR','USD','GBP','CHF'].map(c=>`<option ${s.currency===c?'selected':''}>${c}</option>`).join('')}</select>
+      </div>
+      <div class="field" style="margin:0">
+        <label class="klabel">Type</label>
+        <div class="seg" id="mode">
+          <button class="${s.mode==='one_time'?'on':''}" data-mode="one_time">One-time</button>
+          <button class="${s.mode==='recurring'?'on':''}" data-mode="recurring">Recurring</button>
+        </div>
+      </div>
+    </div>
+    <div class="field" style="margin-top:20px">
+      <label class="klabel">Category ${!s.cat&&s.autoCat?'<span style="text-transform:none;font-weight:500;color:var(--accent)">— detected, tap to confirm or change</span>':''}</label>
+      <div class="chips">${chips}</div>
+    </div>
+  </div>`;
+}
+
+function stepDetails(){
+  let extra='';
+  if(s.cat==='saas'||s.cat==='cloud'){
+    extra=`<div class="field">
+        <label class="klabel">Does it process personal or customer data?</label>
+        <div class="seg" id="pd">
+          <button class="${s.personalData?'on':''}" data-pd="1">Yes</button>
+          <button class="${!s.personalData?'on':''}" data-pd="0">No</button>
+        </div>
+        <div class="hint">Drives whether a GDPR data-processing agreement is needed.</div>
+      </div>`;
+  } else if(s.cat==='services'){
+    extra=`<div class="field">
+        <label class="klabel">Will anyone work on-site or embedded in a team?</label>
+        <div class="seg" id="os">
+          <button class="${s.onsite?'on':''}" data-os="1">Yes</button>
+          <button class="${!s.onsite?'on':''}" data-os="0">No</button>
+        </div>
+        <div class="hint">On-site contractors trigger a worker-classification check.</div>
+      </div>`;
+  } else if(s.cat==='hardware'){
+    extra=`<div class="field">
+        <label class="klabel">Quantity</label>
+        <input id="qty" inputmode="numeric" placeholder="e.g. 12" value="${s.quantity||''}">
+      </div>`;
+  }
+  return `<div class="dyn">
+    <p class="ask">A few details for ${catLabel(s.cat)}</p>
+    <div class="field">
+      <label class="klabel">Preferred supplier <span style="text-transform:none;font-weight:500;color:var(--ink-soft)">— if you have one</span></label>
+      <input id="supplier" placeholder="Start typing — we'll check what's already on contract" value="${s.supplier||''}">
+    </div>
+    ${s.supplier&&!matchSupplier(s.supplier)?`<div class="field">
+      <label class="klabel">Is this a supplier we don't work with yet?</label>
+      <div class="seg" id="ns">
+        <button class="${s.newSupplier?'on':''}" data-ns="1">Yes, new supplier</button>
+        <button class="${!s.newSupplier?'on':''}" data-ns="0">No / not sure</button>
+      </div>
+    </div>`:''}
+    ${s.mode==='recurring'?`<div class="field">
+      <label class="klabel">Contract term (months)</label>
+      <input id="term" inputmode="numeric" value="${s.termMonths}">
+    </div>`:''}
+    ${extra}
+  </div>`;
+}
+
+function stepCompliance(r){
+  const items = r.flags;
+  return `<div class="dyn">
+    <p class="ask">Compliance & risk</p>
+    ${items.length===0
+      ? `<div class="empty">Nothing flagged — this request is low risk and skips straight to approval routing. </div>`
+      : `<p class="hint" style="margin:-6px 0 16px">These were surfaced automatically from your answers. Each is handled inside the approval flow — you don't need to chase anyone.</p>`+
+        items.map(f=>`<div class="flag ${f.sev}"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><div><span class="t">${f.t}</span><br>${f.d}</div></div>`).join('')}
+  </div>`;
+}
+
+function stepReview(r,sup){
+  return `<div class="dyn">
+    <p class="ask">Review &amp; submit</p>
+    <div style="font-size:14.5px;line-height:1.7">
+      <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line-soft)"><span style="color:var(--ink-soft)">Request</span><b style="text-align:right;max-width:60%">${s.desc||'—'}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line-soft)"><span style="color:var(--ink-soft)">Category</span><b>${catLabel(s.cat)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line-soft)"><span style="color:var(--ink-soft)">Value</span><b>${fmt(num(s.amount))} ${s.mode==='recurring'?'/ yr':'one-time'}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line-soft)"><span style="color:var(--ink-soft)">Supplier</span><b>${s.renewChoice==='renew'&&sup?'↻ Renew '+sup.name:(s.supplier||'To be sourced')}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:9px 0"><span style="color:var(--ink-soft)">Charged to</span><b>CC-4400</b></div>
+    </div>
+    <div style="margin-top:18px;padding:14px 16px;background:var(--accent-soft);border-radius:10px;font-size:13.5px;color:var(--accent-ink)">
+      You'll get a reference and live status the moment you submit. Expected decision in <b>${r.sla===0?'minutes':r.sla+' business days'}</b>.
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- live panel
+function panel(r){
+  const tierColor = r.tier==='Auto'?'blue':(r.tier==='4'?'red':(r.tier==='3'?'amber':'green'));
+  return `<div class="panel">
+    <div class="pcard">
+      <h3><svg class="ic" style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>Routing preview</h3>
+      <div class="pbody">
+        ${r.amt>0?`
+          <div class="tier"><b>${r.tier==='Auto'?'Auto':'Tier '+r.tier}</b><span>${r.tierName} · ${r.amt? fmt(r.amt):''}${s.mode==='recurring'?'/yr':''}</span></div>
+          <div class="meta">Expected decision: <b>${r.sla===0?'same day':r.sla+' business days'}</b></div>
+          <div style="margin-top:14px">
+            ${r.approvers.length? r.approvers.map(a=>`<div class="approver"><span class="dot"></span><div><div class="r">${a.r}</div><div class="w">${a.w}</div></div></div>`).join(''):'<div class="empty">No approvals needed.</div>'}
+          </div>`
+        : `<div class="empty">Add an amount and category and the full approval path appears here — before you submit.</div>`}
+      </div>
+    </div>
+    ${r.flags.length?`<div class="pcard"><h3><svg class="ic" style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>${r.flags.length} flag${r.flags.length>1?'s':''}</h3><div class="pbody" style="padding-top:6px">${r.flags.map(f=>`<div class="flag ${f.sev}" style="margin-top:10px"><div><span class="t">${f.t}</span></div></div>`).join('')}</div></div>`:''}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- confirmation
+function renderDone(){
+  const ref = 'TS-' + (7800 + Math.floor(Math.random()*180));
+  const r = routing();
+  $('#screen').innerHTML = `<div class="card done">
+    <div class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg></div>
+    <h2>Request submitted</h2>
+    <div class="ref">${ref}</div>
+    <p style="color:var(--ink-soft);max-width:440px;margin:0 auto;font-size:14.5px;line-height:1.6">
+      ${s.desc?('“'+s.desc+'”'):'Your request'} is in the queue. Everyone who needs to act has been notified — you can track it under <b style="color:var(--ink)">My requests</b>.</p>
+    <div class="timeline">
+      <div class="tl active"><div class="n">✓</div><div><div class="lab">Submitted</div><div class="sub">Just now · routed as ${r.tier==='Auto'?'auto-approval':'Tier '+r.tier}</div></div></div>
+      <div class="tl active"><div class="n">2</div><div><div class="lab">${r.approvers[0]?r.approvers[0].r:'Procurement'}</div><div class="sub">Notified · expected within ${r.sla===0?'minutes':r.sla+' days'}</div></div></div>
+      <div class="tl"><div class="n">3</div><div><div class="lab">Approvals & checks</div><div class="sub">${r.flags.length?r.flags.length+' compliance check(s) run in parallel':'No compliance holds'}</div></div></div>
+      <div class="tl"><div class="n">4</div><div><div class="lab">PO issued to supplier</div><div class="sub">Automatic once approved</div></div></div>
+    </div>
+    <div style="margin-top:26px"><button class="btn primary" onclick="reset()">New request</button> <button class="btn ghost" onclick="go('mine')">View my requests</button></div>
+  </div>`;
+  // record it
+  submitted.unshift({ref, title:s.desc||'Untitled request', amount:num(s.amount), cat:s.cat, status:r.tier==='Auto'?'Approved':'In review', stage:r.tier==='Auto'?'green':(r.flags.some(f=>f.sev==='red')?'amber':'blue')});
+}
+
+// ---------------------------------------------------------------- my requests
+function renderMine(){
+  document.querySelectorAll('.navitem').forEach(n=>n.classList.toggle('on', n.dataset.nav==='mine'));
+  $('#screen').innerHTML = `
+  <div class="head"><h1>My requests</h1><p>Every request you've raised, with its live stage — no chasing, no black box.</p></div>
+  <div class="card" style="padding:0">
+    ${submitted.map(r=>`<div class="reqrow">
+      <span class="reqref">${r.ref}</span>
+      <span>${r.title}<br><span style="font-size:12.5px;color:var(--ink-soft)">${catLabel(r.cat)}</span></span>
+      <span class="amt">${new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(r.amount)}</span>
+      <span><span class="badge ${r.stage}">${r.status}</span></span>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- interactions
+function bind(){
+  const d=$('#desc'); if(d) d.oninput=e=>{s.desc=e.target.value; s.autoCat=detectCat(s.desc); livePanel();};
+  const a=$('#amount'); if(a) a.oninput=e=>{s.amount=e.target.value; livePanel();};
+  const c=$('#currency'); if(c) c.onchange=e=>{s.currency=e.target.value; livePanel();};
+  const sup=$('#supplier'); if(sup) sup.oninput=e=>{s.supplier=e.target.value; s.newSupplier=!matchSupplier(s.supplier)&&s.supplier.length>2; renderFlow();};
+  const term=$('#term'); if(term) term.oninput=e=>s.termMonths=num(e.target.value);
+  const qty=$('#qty'); if(qty) qty.oninput=e=>s.quantity=e.target.value;
+  document.querySelectorAll('[data-cat]').forEach(el=>el.onclick=()=>{s.cat=el.dataset.cat; renderFlow();});
+  document.querySelectorAll('#mode button').forEach(el=>el.onclick=()=>{s.mode=el.dataset.mode; renderFlow();});
+  document.querySelectorAll('#pd button').forEach(el=>el.onclick=()=>{s.personalData=el.dataset.pd==='1'; renderFlow();});
+  document.querySelectorAll('#os button').forEach(el=>el.onclick=()=>{s.onsite=el.dataset.os==='1'; renderFlow();});
+  document.querySelectorAll('#ns button').forEach(el=>el.onclick=()=>{s.newSupplier=el.dataset.ns==='1'; renderFlow();});
+}
+// update only the side panel live while typing (keeps focus in inputs)
+function livePanel(){
+  if(!s.cat && s.autoCat){ /* reflect detected chip without stealing focus */ }
+  const r=routing();
+  const holder=document.querySelector('.layout');
+  if(!holder) return;
+  const existing=holder.querySelector('.panel');
+  const wrap=document.createElement('div'); wrap.innerHTML=panel(r);
+  if(existing) existing.replaceWith(wrap.firstElementChild);
+  // refresh detected category hint chips subtly
+  document.querySelectorAll('[data-cat]').forEach(el=>{
+    const auto=!s.cat && s.autoCat===el.dataset.cat;
+    el.classList.toggle('auto',auto);
+    if(auto && !el.textContent.startsWith('✓')) el.textContent='✓ '+el.textContent;
+    if(!auto && el.textContent.startsWith('✓')) el.textContent=el.textContent.replace('✓ ','');
+  });
+}
+function canNext(){
+  if(s.step===0) return s.desc.trim().length>2 && num(s.amount)>0 && (s.cat||s.autoCat);
+  return true;
+}
+function next(){ if(s.step===0 && !s.cat) s.cat=s.autoCat; s.step++; window.scrollTo({top:0,behavior:'smooth'}); render(); }
+function back(){ s.step--; render(); }
+function submit(){ s.step=4; render(); }
+function reset(){ s=freshState(); nav='new'; render(); }
+function go(n){ nav=n; if(n==='new'&&s.step>=4) s=freshState(); render(); }
+function chooseRenew(){ const sup=matchSupplier(s.supplier||s.desc); if(sup){s.supplier=sup.name; s.cat=sup.cat; s.newSupplier=false;} s.renewChoice='renew'; renderFlow(); }
+function chooseNew(){ s.renewChoice='new'; renderFlow(); }
+
+document.querySelectorAll('.navitem').forEach(n=>n.onclick=()=>go(n.dataset.nav));
+render();
+</script>
