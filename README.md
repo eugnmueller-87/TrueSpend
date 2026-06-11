@@ -3,16 +3,18 @@
 <p align="center">
   <img src="https://img.shields.io/badge/status-live-brightgreen?style=flat-square" alt="Status" />
   <img src="https://img.shields.io/badge/AI-Claude%20Sonnet%204.6-5A67D8?style=flat-square&logo=anthropic&logoColor=white" alt="Claude Sonnet 4.6" />
-  <img src="https://img.shields.io/badge/orchestration-n8n%20%C2%B7%2014%20workflows-EA4B71?style=flat-square&logo=n8n&logoColor=white" alt="n8n · 14 workflows" />
-  <img src="https://img.shields.io/badge/database-PostgreSQL%20%C2%B7%2028%20tables-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL · 28 tables" />
+  <img src="https://img.shields.io/badge/orchestration-n8n%20%C2%B7%2017%20workflows-EA4B71?style=flat-square&logo=n8n&logoColor=white" alt="n8n · 17 workflows" />
+  <img src="https://img.shields.io/badge/database-PostgreSQL%20%C2%B7%2032%20tables-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL · 32 tables" />
   <img src="https://img.shields.io/badge/REST-PostgREST-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgREST" />
+  <img src="https://img.shields.io/badge/migrations-dbmate-336791?style=flat-square&logo=postgresql&logoColor=white" alt="Migrations · dbmate" />
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React + Vite" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
   <img src="https://img.shields.io/badge/observability-Grafana-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana" />
   <img src="https://img.shields.io/badge/e--signature-DocuSign%20JWT%20Grant-FFB600?style=flat-square&logo=docusign&logoColor=black" alt="DocuSign JWT Grant" />
   <img src="https://img.shields.io/badge/escalations-Jira%20%E2%89%A5%E2%82%AC100k-0052CC?style=flat-square&logo=jira&logoColor=white" alt="Jira ≥€100k" />
   <img src="https://img.shields.io/badge/security-NOSUPERUSER%20%C2%B7%20RPC%20boundary-CC3333?style=flat-square&logo=postgresql&logoColor=white" alt="NOSUPERUSER · RPC boundary" />
-  <img src="https://img.shields.io/badge/quality%20gate-24%20checks-3D7A5A?style=flat-square" alt="Quality gate · 24 checks" />
+  <img src="https://img.shields.io/badge/agents-prompt--injection%20guarded-CC3333?style=flat-square" alt="Prompt-injection guarded" />
+  <img src="https://img.shields.io/badge/quality%20gate-44%20checks-3D7A5A?style=flat-square" alt="Quality gate · 44 checks" />
 </p>
 
 <p align="center">
@@ -165,9 +167,9 @@ All workflows: 120s timeout, 3× retry, full `trace_log` per signal. Status tran
 
 ## Database schema (v2.0)
 
-Single source of truth: [`db/schema.sql`](db/schema.sql)
+Canonical source: the ordered migration chain in [`db/migrations/`](db/migrations) (run via [dbmate](docs/decisions/ADR-007-dbmate-and-generated-schema.md)). [`db/schema.sql`](db/schema.sql) is a generated snapshot.
 
-**28 tables across 10 domains:**
+**32 tables across 10 domains:**
 
 ```
 Organization    branches · cost_centers · users
@@ -249,9 +251,23 @@ Status transitions ONLY through SECURITY DEFINER RPCs:
   create_payment_instruction → records spend + ERP sync queue entry
 ```
 
-**Pre-commit hook** (`scripts/quality-gate.sh`): blocks hardcoded JWTs, private keys, and Bearer tokens in workflow headers. 24 checks, must be green before every push.
+**Agent layer (LLM advises, deterministic code decides):**
 
-**Dormant role guard**: All money RPCs check the JWT `app_role` claim. Currently a NO-OP (static token has no claim). Auto-arms when SSO issues per-user JWTs with `app_role`. One line per RPC to go fail-closed.
+```
+Inbound email / invoice → Claude (extracts + recommends, never acts)
+  ↓
+Deterministic guard (strict schema + action allowlist; workflows/lib/*_guard.js)
+  ↓  model output is validated, never trusted:
+related_ticket_id / po_id  → DERIVED from thread headers / PO number, not the model
+supplier replies           → queued to the board (pending_review); no model-authored auto-send
+invoice match              → match_invoice RPC is the authoritative money gate, not the model
+  ↓
+Repro-proven: workflows/__tests__/phase1_repro.test.js (injection inert after the guard)
+```
+
+**Pre-commit hook** (`scripts/quality-gate.sh`): blocks hardcoded JWTs, private keys, and Bearer tokens in workflow headers; verifies migration ordering, workflow-guard sync, and that no prod URL / placeholder sender is hardcoded. 44 checks, must be green before every push.
+
+**Money-RPC fail-closed path**: every money RPC checks the JWT `app_role` claim. Today the static browser token carries no claim (the guard is dormant); the hardening flips it fail-closed and moves money writes off the browser onto a server-side n8n path ([ADR-006](docs/decisions/ADR-006-money-rpc-fail-closed.md)) — sequenced so the board never bricks before SSO issues per-user `app_role`.
 
 ---
 
