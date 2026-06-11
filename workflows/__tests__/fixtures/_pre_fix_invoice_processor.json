@@ -1,0 +1,514 @@
+{
+  "name": "TrueSpend — Invoice Processor (3-Way Match)",
+  "description": "Polls IMAP for invoices from known suppliers. Claude extracts invoice data from email/PDF. 3-way match: invoice vs PO vs goods receipt. Matched → payment instruction + ERP queue. Mismatch or no PO → one-touch ticket on Operations Board with discrepancy highlighted.",
+
+  "nodes": [
+
+    {
+      "id": "trigger_imap",
+      "name": "Poll Supplier Inbox for Invoices",
+      "type": "n8n-nodes-base.emailReadImap",
+      "parameters": {
+        "mailbox": "invoices",
+        "action": "read",
+        "download": true,
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\"]",
+          "attachmentsPrefix": "invoice_"
+        }
+      },
+      "position": [0, 400]
+    },
+
+    {
+      "id": "log_run_start",
+      "name": "Log Workflow Run — Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/workflow_runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ workflow_name: 'invoice_processor', started_at: new Date().toISOString(), status: 'running' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [200, 400],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "extract_email_meta",
+      "name": "Extract Email Metadata",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "from_email",   "value": "={{ $json.from.value[0].address }}" },
+            { "name": "from_name",    "value": "={{ $json.from.value[0].name }}" },
+            { "name": "subject",      "value": "={{ $json.subject }}" },
+            { "name": "body_text",    "value": "={{ $json.text || '' }}" },
+            { "name": "received_at",  "value": "={{ $json.date }}" },
+            { "name": "has_attachment","value": "={{ ($json.attachments && $json.attachments.length > 0) ? 'true' : 'false' }}" },
+            { "name": "attachment_content", "value": "={{ $json.attachments?.[0]?.content || '' }}" }
+          ]
+        }
+      },
+      "position": [400, 400]
+    },
+
+    {
+      "id": "match_supplier",
+      "name": "Match Supplier by Email Domain",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?contact_email=ilike.*{{ $json.from_email.split('@')[1] }}*&select=id,name,health,compliance_status,strategic_tier",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
+      },
+      "position": [600, 400]
+    },
+
+    {
+      "id": "supplier_known",
+      "name": "Supplier Recognised?",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $json.length }}", "operation": "larger", "value2": 0 }]
+        }
+      },
+      "position": [800, 400]
+    },
+
+    {
+      "id": "flag_unknown_supplier",
+      "name": "Create Unknown Supplier Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: 'TS-' + new Date().getFullYear() + '-INV-' + String(Math.floor(Math.random() * 9000) + 1000), source: 'monitoring', status: 'pending_review', title: 'Invoice from unknown sender: ' + $node['Extract Email Metadata'].json.from_email, description: 'Received invoice email from unrecognised sender. Cannot match to supplier or PO. Manual review required.\\n\\nFrom: ' + $node['Extract Email Metadata'].json.from_email + '\\nSubject: ' + $node['Extract Email Metadata'].json.subject, review_type: 'compliance_flag', review_notes: 'Unknown supplier — no match in supplier register. Verify before processing.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [1000, 600],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "fetch_open_pos",
+      "name": "Fetch Open POs for Supplier",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://postgrest-production-7960.up.railway.app/purchase_orders?supplier_id=eq.{{ $node['Match Supplier by Email Domain'].json[0].id }}&status=in.(delivered,acknowledged,sent)&select=id,po_number,description,amount,currency,amount_eur,category,branch_id,cost_center_id,contract_id,ticket_id,expected_delivery,status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        }
+      },
+      "position": [1000, 400]
+    },
+
+    {
+      "id": "call_claude_parse",
+      "name": "Claude — Parse Invoice & Match PO",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",  "value": "2023-06-01" },
+            { "name": "content-type",       "value": "application/json" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 2048,\n  \"system\": \"You are TrueSpend's invoice processing agent. You extract structured data from supplier invoices (email body or PDF attachment text), perform 3-way matching against open purchase orders, and reason on any discrepancies. You are precise about amounts, dates, and references. Always return structured JSON. If the invoice text is base64-encoded PDF content, note that you are reading extracted text.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Extract invoice data and perform 3-way match against the open purchase orders below.\\n\\nINVOICE EMAIL:\\nFrom: {{ $node['Extract Email Metadata'].json.from_email }}\\nSubject: {{ $node['Extract Email Metadata'].json.subject }}\\nBody: {{ $node['Extract Email Metadata'].json.body_text }}\\nAttachment text: {{ $node['Extract Email Metadata'].json.attachment_content.substring(0, 3000) }}\\n\\nSUPPLIER ON RECORD:\\n{{ JSON.stringify($node['Match Supplier by Email Domain'].json[0]) }}\\n\\nOPEN PURCHASE ORDERS (eligible for matching):\\n{{ JSON.stringify($node['Fetch Open POs for Supplier'].json) }}\\n\\nMatch rules:\\n1. Match by PO number reference in invoice (look in body, subject, attachment)\\n2. If no PO reference found, match by amount + supplier within ±2% tolerance\\n3. Amount tolerance: ±2% or ±€50, whichever is larger\\n4. Delivery must be confirmed (PO status: delivered) for full match\\n\\nReturn JSON exactly:\\n{\\n  \\\"invoice_number\\\": string | null,\\n  \\\"invoice_date\\\": \\\"YYYY-MM-DD\\\" | null,\\n  \\\"amount\\\": number,\\n  \\\"vat_amount\\\": number,\\n  \\\"currency\\\": string,\\n  \\\"amount_eur\\\": number,\\n  \\\"vat_rate\\\": number | null,\\n  \\\"reverse_charge\\\": boolean,\\n  \\\"matched_po_id\\\": string | null,\\n  \\\"matched_po_number\\\": string | null,\\n  \\\"match_result\\\": \\\"matched\\\" | \\\"amount_mismatch\\\" | \\\"no_po\\\" | \\\"no_delivery\\\",\\n  \\\"match_delta_eur\\\": number,\\n  \\\"match_confidence\\\": 0.00-1.00,\\n  \\\"discrepancy_detail\\\": string | null,\\n  \\\"recommended_action\\\": string,\\n  \\\"payment_due_days\\\": number\\n}\"\n  }]\n}"
+            }
+          ]
+        }
+      },
+      "position": [1200, 400],
+      "options": { "timeout": 120000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 2000
+    },
+
+    {
+      "id": "parse_claude",
+      "name": "Parse Claude Invoice Extraction",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "invoice_number",    "value": "={{ JSON.parse($json.content[0].text).invoice_number }}" },
+            { "name": "invoice_date",      "value": "={{ JSON.parse($json.content[0].text).invoice_date }}" },
+            { "name": "amount",            "value": "={{ JSON.parse($json.content[0].text).amount }}" },
+            { "name": "vat_amount",        "value": "={{ JSON.parse($json.content[0].text).vat_amount }}" },
+            { "name": "currency",          "value": "={{ JSON.parse($json.content[0].text).currency }}" },
+            { "name": "amount_eur",        "value": "={{ JSON.parse($json.content[0].text).amount_eur }}" },
+            { "name": "vat_rate",          "value": "={{ JSON.parse($json.content[0].text).vat_rate }}" },
+            { "name": "reverse_charge",    "value": "={{ JSON.parse($json.content[0].text).reverse_charge }}" },
+            { "name": "matched_po_id",     "value": "={{ JSON.parse($json.content[0].text).matched_po_id }}" },
+            { "name": "matched_po_number", "value": "={{ JSON.parse($json.content[0].text).matched_po_number }}" },
+            { "name": "match_result",      "value": "={{ JSON.parse($json.content[0].text).match_result }}" },
+            { "name": "match_delta_eur",   "value": "={{ JSON.parse($json.content[0].text).match_delta_eur }}" },
+            { "name": "match_confidence",  "value": "={{ JSON.parse($json.content[0].text).match_confidence }}" },
+            { "name": "discrepancy_detail","value": "={{ JSON.parse($json.content[0].text).discrepancy_detail }}" },
+            { "name": "recommended_action","value": "={{ JSON.parse($json.content[0].text).recommended_action }}" },
+            { "name": "payment_due_days",  "value": "={{ JSON.parse($json.content[0].text).payment_due_days }}" },
+            { "name": "raw_extraction",    "value": "={{ $json.content[0].text }}" }
+          ]
+        }
+      },
+      "position": [1400, 400]
+    },
+
+    {
+      "id": "create_invoice_record",
+      "name": "Create Invoice Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/invoices",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ po_id: $json.matched_po_id || null, supplier_id: $node['Match Supplier by Email Domain'].json[0].id, invoice_number: $json.invoice_number, invoice_date: $json.invoice_date, amount: parseFloat($json.amount), vat_amount: parseFloat($json.vat_amount || 0), currency: $json.currency || 'EUR', amount_eur: parseFloat($json.amount_eur), vat_rate: $json.vat_rate ? parseFloat($json.vat_rate) : null, reverse_charge: $json.reverse_charge === 'true' || $json.reverse_charge === true, match_result: $json.match_result, match_delta_eur: parseFloat($json.match_delta_eur || 0), status: $json.match_result === 'matched' ? 'matched' : 'disputed', raw_extraction: JSON.parse($json.raw_extraction), parsed_by_model: 'claude-sonnet-4-6' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [1600, 400],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "route_match_result",
+      "name": "Route by Match Result",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $node['Parse Claude Invoice Extraction'].json.match_result }}",
+        "rules": {
+          "rules": [
+            { "value2": "matched",         "outputIndex": 0 },
+            { "value2": "amount_mismatch", "outputIndex": 1 },
+            { "value2": "no_po",           "outputIndex": 1 },
+            { "value2": "no_delivery",     "outputIndex": 1 }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "position": [1800, 400]
+    },
+
+    {
+      "id": "call_match_invoice_rpc",
+      "name": "RPC — Confirm 3-Way Match",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/rpc/match_invoice",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ p_invoice_id: $node['Create Invoice Record'].json[0]?.id || $node['Create Invoice Record'].json?.id }) }}"
+            }
+          ]
+        }
+      },
+      "position": [2000, 280],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "call_payment_instruction_rpc",
+      "name": "RPC — Create Payment Instruction",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/rpc/create_payment_instruction",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ p_invoice_id: $node['Create Invoice Record'].json[0]?.id || $node['Create Invoice Record'].json?.id, p_due_date: new Date(Date.now() + ($node['Parse Claude Invoice Extraction'].json.payment_due_days || 30) * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }) }}"
+            }
+          ]
+        }
+      },
+      "position": [2200, 280],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "write_match_trace",
+      "name": "Write Match Trace Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'intake', value: 'invoice_matched', notes: 'Invoice ' + $node['Parse Claude Invoice Extraction'].json.invoice_number + ' from ' + $node['Match Supplier by Email Domain'].json[0].name + ' matched to PO ' + $node['Parse Claude Invoice Extraction'].json.matched_po_number + '. Payment instruction created. Budget committed → spent.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [2400, 280],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "notify_supplier_payment",
+      "name": "Email Supplier — Invoice Received & Processing",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "procurement@company.com",
+        "toEmail":   "={{ $node['Extract Email Metadata'].json.from_email }}",
+        "subject":   "=RE: {{ $node['Extract Email Metadata'].json.subject }} — Received & Processing",
+        "text":      "=Dear {{ $node['Extract Email Metadata'].json.from_name }},\n\nThank you. Invoice {{ $node['Parse Claude Invoice Extraction'].json.invoice_number }} for {{ $node['Parse Claude Invoice Extraction'].json.currency }} {{ $node['Parse Claude Invoice Extraction'].json.amount }} has been received and matched to PO {{ $node['Parse Claude Invoice Extraction'].json.matched_po_number }}.\n\nPayment will be processed within {{ $node['Parse Claude Invoice Extraction'].json.payment_due_days || 30 }} days per contract terms.\n\nTrueSpend Procurement\nprocurement@company.com"
+      },
+      "position": [2600, 280]
+    },
+
+    {
+      "id": "create_dispute_ticket",
+      "name": "Create Dispute Ticket on Board",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ reference: 'TS-' + new Date().getFullYear() + '-DISP-' + String(Math.floor(Math.random() * 9000) + 1000), source: 'monitoring', status: 'pending_review', title: 'Invoice dispute: ' + $node['Parse Claude Invoice Extraction'].json.invoice_number + ' — ' + $node['Match Supplier by Email Domain'].json[0].name, description: 'Invoice match failed.\\n\\nMatch result: ' + $node['Parse Claude Invoice Extraction'].json.match_result + '\\nInvoice amount: ' + $node['Parse Claude Invoice Extraction'].json.currency + ' ' + $node['Parse Claude Invoice Extraction'].json.amount + '\\nMatched PO: ' + ($node['Parse Claude Invoice Extraction'].json.matched_po_number || 'none') + '\\nDelta: €' + $node['Parse Claude Invoice Extraction'].json.match_delta_eur + '\\n\\nDiscrepancy: ' + ($node['Parse Claude Invoice Extraction'].json.discrepancy_detail || 'See agent analysis below.'), supplier_id: $node['Match Supplier by Email Domain'].json[0].id, amount: parseFloat($node['Parse Claude Invoice Extraction'].json.amount), currency: $node['Parse Claude Invoice Extraction'].json.currency || 'EUR', review_type: 'compliance_flag', review_notes: $node['Parse Claude Invoice Extraction'].json.recommended_action, po_id: $node['Parse Claude Invoice Extraction'].json.matched_po_id || null }) }}"
+            }
+          ]
+        }
+      },
+      "position": [2000, 560],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "write_dispute_trace",
+      "name": "Write Dispute Trace Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ signal: 'intake', value: 'invoice_disputed', notes: 'Invoice ' + $node['Parse Claude Invoice Extraction'].json.invoice_number + ' from ' + $node['Match Supplier by Email Domain'].json[0].name + ' failed 3-way match. Result: ' + $node['Parse Claude Invoice Extraction'].json.match_result + '. Delta: €' + $node['Parse Claude Invoice Extraction'].json.match_delta_eur + '. Dispute ticket created on Operations Board.' }) }}"
+            }
+          ]
+        }
+      },
+      "position": [2200, 560],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    },
+
+    {
+      "id": "log_run_complete",
+      "name": "Log Workflow Run — Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://postgrest-production-7960.up.railway.app/workflow_runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.POSTGREST_JWT }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ workflow_name: 'invoice_processor', started_at: new Date().toISOString(), completed_at: new Date().toISOString(), status: 'success', records_processed: 1, summary: 'Invoice ' + $node['Parse Claude Invoice Extraction'].json.invoice_number + ' — ' + $node['Parse Claude Invoice Extraction'].json.match_result }) }}"
+            }
+          ]
+        }
+      },
+      "position": [2800, 400],
+      "options": { "timeout": 30000 },
+      "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000
+    }
+
+  ],
+
+  "connections": {
+    "Poll Supplier Inbox for Invoices": {
+      "main": [[{ "node": "Log Workflow Run — Start", "type": "main", "index": 0 }]]
+    },
+    "Log Workflow Run — Start": {
+      "main": [[{ "node": "Extract Email Metadata", "type": "main", "index": 0 }]]
+    },
+    "Extract Email Metadata": {
+      "main": [[{ "node": "Match Supplier by Email Domain", "type": "main", "index": 0 }]]
+    },
+    "Match Supplier by Email Domain": {
+      "main": [[{ "node": "Supplier Recognised?", "type": "main", "index": 0 }]]
+    },
+    "Supplier Recognised?": {
+      "main": [
+        [{ "node": "Fetch Open POs for Supplier", "type": "main", "index": 0 }],
+        [{ "node": "Create Unknown Supplier Ticket", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Open POs for Supplier": {
+      "main": [[{ "node": "Claude — Parse Invoice & Match PO", "type": "main", "index": 0 }]]
+    },
+    "Claude — Parse Invoice & Match PO": {
+      "main": [[{ "node": "Parse Claude Invoice Extraction", "type": "main", "index": 0 }]]
+    },
+    "Parse Claude Invoice Extraction": {
+      "main": [[{ "node": "Create Invoice Record", "type": "main", "index": 0 }]]
+    },
+    "Create Invoice Record": {
+      "main": [[{ "node": "Route by Match Result", "type": "main", "index": 0 }]]
+    },
+    "Route by Match Result": {
+      "main": [
+        [{ "node": "RPC — Confirm 3-Way Match", "type": "main", "index": 0 }],
+        [{ "node": "Create Dispute Ticket on Board", "type": "main", "index": 0 }]
+      ]
+    },
+    "RPC — Confirm 3-Way Match": {
+      "main": [[{ "node": "RPC — Create Payment Instruction", "type": "main", "index": 0 }]]
+    },
+    "RPC — Create Payment Instruction": {
+      "main": [[{ "node": "Write Match Trace Log", "type": "main", "index": 0 }]]
+    },
+    "Write Match Trace Log": {
+      "main": [[{ "node": "Email Supplier — Invoice Received & Processing", "type": "main", "index": 0 }]]
+    },
+    "Email Supplier — Invoice Received & Processing": {
+      "main": [[{ "node": "Log Workflow Run — Complete", "type": "main", "index": 0 }]]
+    },
+    "Create Dispute Ticket on Board": {
+      "main": [[{ "node": "Write Dispute Trace Log", "type": "main", "index": 0 }]]
+    },
+    "Write Dispute Trace Log": {
+      "main": [[{ "node": "Log Workflow Run — Complete", "type": "main", "index": 0 }]]
+    }
+  }
+}

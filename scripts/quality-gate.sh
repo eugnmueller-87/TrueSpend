@@ -219,6 +219,67 @@ node -e "
   }
 " && pass ".env.example covers all docker-compose variables" || fail ".env.example missing some docker-compose variables"
 
+# ── 8a. Migrations are dbmate-shaped + ordered (Phase 3) ──────────
+info "Checking migration files (dbmate format + ordering)..."
+node -e "
+  const fs = require('fs');
+  const dir = 'db/migrations';
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql'));
+  let bad = [];
+  const versions = [];
+  for (const f of files) {
+    const m = f.match(/^(\d{6})_[a-z0-9_]+\.sql\$/);
+    if (!m) { bad.push(f + ' — not NNNNNN_slug.sql'); continue; }
+    versions.push(parseInt(m[1], 10));
+    const body = fs.readFileSync(dir + '/' + f, 'utf8');
+    if (!/^-- migrate:up/m.test(body))   bad.push(f + ' — missing -- migrate:up');
+    if (!/^-- migrate:down/m.test(body)) bad.push(f + ' — missing -- migrate:down');
+  }
+  const dupes = versions.filter((v,i) => versions.indexOf(v) !== i);
+  if (dupes.length) bad.push('duplicate versions: ' + [...new Set(dupes)].join(','));
+  if (bad.length) { bad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.error('  ' + versions.length + ' migrations, well-formed and unique');
+" && pass "Migrations: dbmate format + unique ordering" || fail "Migration files malformed (see above) — db/migrations/ must be NNNNNN_slug.sql with up/down markers"
+
+# ── 8b. Workflow guards in sync + prompt-injection repro (Phase 1) ─
+info "Checking workflow guards (LLM-advises-code-decides boundary)..."
+
+if node scripts/sync-workflow-guards.js >/dev/null 2>&1; then
+  pass "Workflow guards in sync with workflows/lib/"
+else
+  fail "Workflow guard DRIFT — run: node scripts/sync-workflow-guards.js --write"
+fi
+
+if node workflows/__tests__/phase1_repro.test.js >/dev/null 2>&1; then
+  pass "Prompt-injection repro: holes proven on pre-fix snapshot, inert after fix"
+else
+  fail "Phase 1 repro/guard test FAILED — node workflows/__tests__/phase1_repro.test.js"
+fi
+
+# ── 8c. Hygiene: no placeholder sender / no bare prod URL in live workflows (Phase 5)
+info "Checking workflow hygiene (sender email + prod URL)..."
+node -e "
+  const fs = require('fs'), path = require('path');
+  const dirs = ['workflows/automatic','workflows/stakeholder','workflows/communication','workflows/monitoring'];
+  const LIT = 'postgrest-production-7960.up.railway.app';
+  let bad = [];
+  for (const d of dirs) {
+    if (!fs.existsSync(d)) continue;
+    for (const f of fs.readdirSync(d).filter(x => x.endsWith('.json'))) {
+      const fp = path.join(d, f);
+      const t = fs.readFileSync(fp, 'utf8');
+      if (t.includes('procurement@company.com')) bad.push(fp + ' — placeholder sender procurement@company.com');
+      // every prod URL literal must be guarded by the env-fallback pattern
+      const bare = t.split(LIT).length - 1;
+      const guarded = (t.match(/POSTGREST_URL \|\| '[^']*'/g) || []).length
+                    + (t.match(/POSTGREST_URL \|\| \"[^\"]*\"/g) || []).length;
+      if (bare > guarded) bad.push(fp + ' — ' + (bare - guarded) + ' bare prod URL literal(s) not behind \$env.POSTGREST_URL');
+    }
+  }
+  if (bad.length) { bad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.error('  live workflows: no placeholder senders, all prod URLs env-guarded');
+" && pass "Workflow hygiene: env-guarded URLs + no placeholder senders" || fail "Workflow hygiene defects (see above) — Phase 5"
+
 # ── 9. Intake Vite build ───────────────────────────────────────
 info "Building intake UI..."
 cd intake

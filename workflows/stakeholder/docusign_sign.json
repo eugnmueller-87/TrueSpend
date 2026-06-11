@@ -11,17 +11,23 @@
       "name": "Sign & Send Triggered",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\n\nconst ticketId = $input.first().json.body?.ticket_id || $input.first().json.ticket_id;\nif (!ticketId) throw new Error('Missing ticket_id in request body');\n\nconst ticketRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId + '&select=id,reference,title,supplier_id,supplier_name,submitted_by,submitted_by_email,value_eur,amount_eur',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\nconst ticket = Array.isArray(ticketRes) ? ticketRes[0] : ticketRes;\nif (!ticket) throw new Error('Ticket not found: ' + ticketId);\n\nlet doc = null;\nif (ticket.supplier_id) {\n  const docsRes = await this.helpers.httpRequest({\n    method: 'GET',\n    url: POSTGREST + '/legal_documents?supplier_id=eq.' + ticket.supplier_id + '&status=in.(draft,pending_signature)&order=created_at.desc&limit=1',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n  });\n  doc = Array.isArray(docsRes) && docsRes.length > 0 ? docsRes[0] : null;\n}\n\nreturn [{ json: { ticketId, ticket, doc } }];"
+        "jsCode": "=const POSTGREST = $env.POSTGREST_URL || '{{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}';\nconst JWT = $env.POSTGREST_JWT;\n\nconst ticketId = $input.first().json.body?.ticket_id || $input.first().json.ticket_id;\nif (!ticketId) throw new Error('Missing ticket_id in request body');\n\nconst ticketRes = await this.helpers.httpRequest({\n  method: 'GET',\n  url: POSTGREST + '/tickets?id=eq.' + ticketId + '&select=id,reference,title,supplier_id,supplier_name,submitted_by,submitted_by_email,value_eur,amount_eur',\n  headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n});\nconst ticket = Array.isArray(ticketRes) ? ticketRes[0] : ticketRes;\nif (!ticket) throw new Error('Ticket not found: ' + ticketId);\n\nlet doc = null;\nif (ticket.supplier_id) {\n  const docsRes = await this.helpers.httpRequest({\n    method: 'GET',\n    url: POSTGREST + '/legal_documents?supplier_id=eq.' + ticket.supplier_id + '&status=in.(draft,pending_signature)&order=created_at.desc&limit=1',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Accept': 'application/json' }\n  });\n  doc = Array.isArray(docsRes) && docsRes.length > 0 ? docsRes[0] : null;\n}\n\nreturn [{ json: { ticketId, ticket, doc } }];"
       },
       "id": "fetch_ticket",
       "name": "Fetch Ticket & Document",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -31,7 +37,10 @@
       "name": "Get DocuSign Token",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
@@ -41,17 +50,23 @@
       "name": "Create Envelope & Get Signing URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 300]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const POSTGREST = $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app';\nconst JWT = $env.POSTGREST_JWT;\nconst { ticketId, envelopeId, signingUrl, ticket } = $input.first().json;\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: POSTGREST + '/trace_log',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n    body: JSON.stringify({\n      signal: 'contract',\n      value: 'DocuSign envelope ' + envelopeId + ' created for ticket ' + ticketId + ' (' + ticket.reference + '). Awaiting signature.',\n      green: true,\n      weight: 1.0,\n      notes: 'Embedded signing URL generated. Signer: ' + (ticket.submitted_by_email || 'truespend user') + '.'\n    })\n  });\n} catch (e) {\n  console.log('Trace log warning:', e.message);\n}\n\nreturn [{ json: { ticketId, envelopeId, signingUrl } }];"
+        "jsCode": "=const POSTGREST = $env.POSTGREST_URL || '{{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}';\nconst JWT = $env.POSTGREST_JWT;\nconst { ticketId, envelopeId, signingUrl, ticket } = $input.first().json;\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: POSTGREST + '/trace_log',\n    headers: { 'Authorization': 'Bearer ' + JWT, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },\n    body: JSON.stringify({\n      signal: 'contract',\n      value: 'DocuSign envelope ' + envelopeId + ' created for ticket ' + ticketId + ' (' + ticket.reference + '). Awaiting signature.',\n      green: true,\n      weight: 1.0,\n      notes: 'Embedded signing URL generated. Signer: ' + (ticket.submitted_by_email || 'truespend user') + '.'\n    })\n  });\n} catch (e) {\n  console.log('Trace log warning:', e.message);\n}\n\nreturn [{ json: { ticketId, envelopeId, signingUrl } }];"
       },
       "id": "log_trace",
       "name": "Log to Trace",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [880, 300]
+      "position": [
+        880,
+        300
+      ]
     },
     {
       "parameters": {
@@ -62,32 +77,77 @@
       "name": "Return Signing URL",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1100, 300]
+      "position": [
+        1100,
+        300
+      ]
     }
   ],
-
   "connections": {
     "Sign & Send Triggered": {
-      "main": [[{ "node": "Fetch Ticket & Document", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Fetch Ticket & Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch Ticket & Document": {
-      "main": [[{ "node": "Get DocuSign Token", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Get DocuSign Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Get DocuSign Token": {
-      "main": [[{ "node": "Create Envelope & Get Signing URL", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Create Envelope & Get Signing URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Create Envelope & Get Signing URL": {
-      "main": [[{ "node": "Log to Trace", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Log to Trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Log to Trace": {
-      "main": [[{ "node": "Return Signing URL", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Return Signing URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "errorWorkflow": ""
   },
-  "tags": ["truespend", "docusign", "signing"]
+  "tags": [
+    "truespend",
+    "docusign",
+    "signing"
+  ]
 }

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Money</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_base.css">
+<style>
+  /* Component styles re-declared inline so each card is self-contained */
+  .btn { font-family:var(--ts-font-sans); font-weight:500; font-size:14px; padding:10px 18px; border-radius:4px; border:1px solid transparent; cursor:pointer; transition:background var(--ts-dur-fast) var(--ts-ease), border-color var(--ts-dur-fast); line-height:1; letter-spacing:-0.005em; }
+  .btn-primary { background:var(--ts-brand-gold); color:#FFFEFB; }
+  .btn-primary:hover { background:var(--ts-brand-gold-deep); }
+  .btn-secondary { background:transparent; color:var(--ts-ink); border-color:var(--ts-line-strong); }
+  .btn-secondary:hover { background:var(--ts-paper-deep); }
+  .btn-tertiary { background:transparent; color:var(--ts-ink-soft); border-color:transparent; padding-left:10px; padding-right:10px; }
+  .btn-tertiary:hover { color:var(--ts-ink); }
+  .btn-danger { background:transparent; color:var(--ts-negative); border-color:var(--ts-negative-soft); }
+  .btn-danger:hover { background:var(--ts-negative-wash); }
+  .btn-sm { padding:7px 12px; font-size:12.5px; }
+  .btn-ink { background:var(--ts-ink-night); color:var(--ts-paper); }
+  .btn-ink:hover { background:#000; }
+
+  .pill { display:inline-flex; align-items:center; gap:6px; font-family:var(--ts-font-sans); font-size:11px; font-weight:500; padding:4px 9px; border-radius:2px; letter-spacing:0.04em; text-transform:uppercase; }
+  .pill .dot { width:6px; height:6px; border-radius:50%; }
+
+  .input { font-family:var(--ts-font-sans); font-size:14px; padding:10px 12px; border-radius:4px; border:1px solid var(--ts-line); background:var(--ts-surface); color:var(--ts-ink); width:100%; outline:none; box-sizing:border-box; transition:border-color var(--ts-dur-fast) var(--ts-ease); }
+  .input::placeholder { color:var(--ts-ink-faint); }
+  .input:focus { border-color:var(--ts-brand-gold); box-shadow:0 0 0 2px var(--ts-brand-gold-wash); }
+</style>
+</head>
+<body>
+
+<div class="pv-eyebrow">Money — tabular, ledger-grade</div>
+<div style="display:flex;gap:42px;align-items:flex-end;">
+  <div>
+    <div style="font-family:var(--ts-font-sans);font-variant-numeric:tabular-nums lining-nums;font-size:44px;font-weight:600;color:var(--ts-ink);letter-spacing:-0.02em;line-height:1;">€576.000</div>
+    <div class="ts-caption" style="margin-top:8px;">Headline figure · sans, semibold, tabular</div>
+  </div>
+  <div>
+    <div style="font-family:var(--ts-font-sans);font-variant-numeric:tabular-nums lining-nums;font-size:22px;font-weight:600;color:var(--ts-ink);letter-spacing:-0.01em;line-height:1;">€11.960</div>
+    <div class="ts-caption" style="margin-top:8px;">Ticket value · 22px</div>
+  </div>
+  <div>
+    <div style="display:flex;align-items:baseline;gap:6px;">
+      <span style="font-family:var(--ts-font-sans);font-variant-numeric:tabular-nums lining-nums;font-size:22px;font-weight:600;color:var(--ts-ink);">94<span style="font-size:14px;color:var(--ts-ink-mute);font-weight:500;">%</span></span>
+    </div>
+    <div class="ts-caption" style="margin-top:8px;">Confidence</div>
+  </div>
+</div>
+<div style="display:flex;gap:18px;margin-top:24px;font-size:12px;color:var(--ts-ink-mute);align-items:center;">
+  <span style="color:var(--ts-positive);font-variant-numeric:tabular-nums;">▲ €42k vs Q3</span>
+  <span style="color:var(--ts-negative);font-variant-numeric:tabular-nums;">▼ €11k vs target</span>
+  <span class="ts-mono">EUR · de-DE</span>
+</div>
+</body></html>

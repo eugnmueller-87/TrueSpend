@@ -1,0 +1,464 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrueSpend</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
+  :root{
+    --paper:#F7F4EE;--card:#fff;--ink:#16201C;--soft:#54605A;--line:#E3DED3;--lsoft:#EDE9E0;
+    --accent:#0E5B4E;--asoft:#E4EFEA;--aink:#0A4136;
+    --amber:#9A6314;--ambersoft:#F7EEDC;--red:#9E2B25;--redsoft:#F6E4E1;--blue:#22507A;--bluesoft:#E6EEF5;
+    --r:14px;--sh:0 1px 2px rgba(22,32,28,.04),0 8px 30px rgba(22,32,28,.06);
+  }
+  *{box-sizing:border-box}html,body{margin:0}
+  body{background:var(--paper);color:var(--ink);font-family:'Hanken Grotesk',sans-serif;-webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 1px 1px,rgba(22,32,28,.025) 1px,transparent 0);background-size:22px 22px}
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+  .rail{border-right:1px solid var(--line);padding:24px 18px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .mark{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;font-family:'Fraunces',serif;font-weight:600;font-size:18px}
+  .brand b{font-weight:600;font-size:16px;letter-spacing:-.2px}.brand span{display:block;font-size:11px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em}
+  .navsec{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);padding:16px 12px 6px}
+  .navitem{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:10px;color:var(--soft);font-weight:500;cursor:pointer;font-size:14px;transition:.15s}
+  .navitem:hover{background:var(--lsoft);color:var(--ink)}.navitem.on{background:var(--accent);color:#fff}
+  .navitem .ic{width:17px;height:17px;flex:none;stroke-width:1.9}.navitem .ct{margin-left:auto;font-size:11.5px;background:rgba(0,0,0,.07);padding:1px 7px;border-radius:99px}
+  .navitem.on .ct{background:rgba(255,255,255,.22)}
+  .rail .foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line)}
+  .whorow{display:flex;align-items:center;gap:9px}
+  .avatar{width:32px;height:32px;border-radius:50%;background:var(--bluesoft);color:var(--blue);display:grid;place-items:center;font-weight:600;font-size:13px;flex:none}
+  .whorow b{font-size:13.5px;color:var(--ink)}.whorow .role{font-size:11.5px;color:var(--soft)}
+  .roleswitch{margin-top:10px;width:100%;font:inherit;font-size:12.5px;color:var(--soft);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 9px;cursor:pointer}
+  .demoNote{font-size:10.5px;color:var(--soft);margin-top:6px;line-height:1.4}
+
+  .main{padding:34px 44px 80px;max-width:1200px}
+  @media(max-width:1020px){.app{grid-template-columns:1fr}.rail{display:none}.main{padding:24px}}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px;gap:20px;flex-wrap:wrap}
+  .head h1{font-family:'Fraunces',serif;font-weight:500;font-size:28px;letter-spacing:-.4px;margin:0 0 3px}
+  .head p{color:var(--soft);margin:0;font-size:14.5px}
+  .layout{display:grid;grid-template-columns:1fr 350px;gap:26px;align-items:start}
+  @media(max-width:1020px){.layout{grid-template-columns:1fr}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh)}
+  .pad{padding:24px}
+  .klabel{display:block;font-size:12px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--soft);margin:0 0 7px}
+  .hint{font-size:12.5px;color:var(--soft);margin-top:6px}
+  textarea,input,select{width:100%;font:inherit;font-size:15px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:11px 13px;outline:none;transition:.15s}
+  textarea{min-height:70px;resize:vertical;line-height:1.5}
+  textarea:focus,input:focus,select:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px var(--asoft)}
+  .field{margin-bottom:18px}.field:last-child{margin-bottom:0}
+  .row3{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:13px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{padding:7px 13px;border:1px solid var(--line);border-radius:99px;background:var(--card);font-size:13.5px;font-weight:500;cursor:pointer;color:var(--soft);transition:.14s}
+  .chip:hover{border-color:var(--accent);color:var(--ink)}.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}.chip.auto{border-style:dashed}
+  .seg{display:inline-flex;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:3px}
+  .seg button{border:0;background:none;font:inherit;font-size:13.5px;font-weight:500;padding:7px 14px;border-radius:8px;cursor:pointer;color:var(--soft)}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .btn{font:inherit;font-weight:600;font-size:14px;border-radius:10px;padding:11px 18px;cursor:pointer;border:1px solid transparent;transition:.15s}
+  .btn.primary{background:var(--accent);color:#fff}.btn.primary:hover{background:var(--aink)}
+  .btn.ghost{background:transparent;color:var(--soft);border-color:var(--line)}.btn.ghost:hover{border-color:var(--ink);color:var(--ink)}
+  .btn.sm{padding:7px 13px;font-size:13px}
+  .btn.danger{background:var(--redsoft);color:var(--red)}.btn.warn{background:var(--ambersoft);color:var(--amber)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .actions{display:flex;justify-content:space-between;margin-top:22px;gap:12px}
+
+  .panel{position:sticky;top:24px;display:flex;flex-direction:column;gap:14px}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden}
+  .pcard h3{margin:0;padding:14px 16px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--soft);border-bottom:1px solid var(--lsoft);display:flex;align-items:center;gap:8px}
+  .pbody{padding:15px 16px}
+  .tier{display:flex;align-items:baseline;gap:9px}.tier b{font-family:'Fraunces',serif;font-size:24px;font-weight:500;line-height:1}.tier span{font-size:12.5px;color:var(--soft)}
+  .meta{font-size:12.5px;color:var(--soft);margin-top:7px}.meta b{color:var(--ink)}
+  .approver{display:flex;gap:9px;padding:10px 0;border-top:1px solid var(--lsoft);font-size:13px}.approver:first-of-type{border-top:0}
+  .approver .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);margin-top:6px;flex:none}.approver .r{font-weight:600}.approver .w{color:var(--soft);font-size:12px}
+  .flag{display:flex;gap:9px;padding:11px 13px;border-radius:10px;font-size:12.5px;margin-top:9px;line-height:1.45}
+  .flag .t{font-weight:600;color:var(--ink)}
+  .flag.amber{background:var(--ambersoft);color:var(--amber)}.flag.red{background:var(--redsoft);color:var(--red)}.flag.blue{background:var(--bluesoft);color:var(--blue)}
+  .empty{color:var(--soft);font-size:13px;line-height:1.5;padding:4px 0}
+  .nudge{border:1px solid var(--accent);background:var(--asoft);border-radius:12px;padding:15px;margin-bottom:18px;animation:pop .25s ease}
+  @keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
+  .nudge b{display:block;margin-bottom:3px}.nudge p{margin:0 0 10px;font-size:13px;color:var(--aink);line-height:1.5}.nudge .nb{display:flex;gap:8px}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:600}
+  .badge.green{background:var(--asoft);color:var(--aink)}.badge.amber{background:var(--ambersoft);color:var(--amber)}.badge.red{background:var(--redsoft);color:var(--red)}.badge.blue{background:var(--bluesoft);color:var(--blue)}.badge.grey{background:var(--lsoft);color:var(--soft)}
+  .dot-r{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+  /* triage / list rows */
+  .trow{border:1px solid var(--line);border-radius:12px;background:var(--card);margin-bottom:12px;overflow:hidden;transition:.15s}
+  .trow:hover{border-color:#cfc8b8}
+  .thead{display:grid;grid-template-columns:1fr 130px 110px 130px 30px;gap:14px;align-items:center;padding:15px 18px;cursor:pointer}
+  .thead .title{font-weight:600;font-size:14.5px}.thead .sub{font-size:12px;color:var(--soft);margin-top:2px}
+  .amt{font-weight:600;font-variant-numeric:tabular-nums}
+  .tbody{border-top:1px solid var(--lsoft);padding:18px;background:var(--paper);display:none}
+  .trow.open .tbody{display:block}
+  .tgrid{display:grid;grid-template-columns:1fr 280px;gap:22px}
+  @media(max-width:760px){.tgrid{grid-template-columns:1fr}.thead{grid-template-columns:1fr 90px 26px}.thead .c-amt,.thead .c-when{display:none}}
+  .auditline{font-size:12px;color:var(--soft);margin-top:10px;padding-top:10px;border-top:1px solid var(--lsoft)}
+  .lockmsg{font-size:12px;color:var(--soft);background:var(--lsoft);border-radius:8px;padding:9px 12px;line-height:1.45;display:flex;gap:8px}
+
+  /* cards grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+  .obj{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:16px;box-shadow:var(--sh)}
+  .obj h4{margin:0 0 2px;font-size:15px}.obj .o-sub{font-size:12.5px;color:var(--soft);margin-bottom:12px}
+  .bar{height:8px;border-radius:99px;background:var(--lsoft);overflow:hidden;margin:8px 0 5px}
+  .bar i{display:block;height:100%;border-radius:99px}
+  .kv{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}.kv span{color:var(--soft)}.kv b{font-variant-numeric:tabular-nums}
+  .ringbox{text-align:center;padding:34px 20px}.ring{width:60px;height:60px;border-radius:50%;background:var(--asoft);display:grid;place-items:center;margin:0 auto 16px}
+  .ring svg{width:28px;height:28px;color:var(--accent);stroke-width:2.4}
+  .ringbox h2{font-family:'Fraunces',serif;font-weight:500;font-size:24px;margin:0 0 4px}
+  .ref{display:inline-block;font-family:ui-monospace,monospace;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:5px 13px;font-size:14px;margin:6px 0 14px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 20px;border-radius:10px;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.2);opacity:0;transition:.3s;z-index:50}
+  .toast.show{opacity:1}
+</style>
+
+<div class="app">
+  <aside class="rail" id="rail"></aside>
+  <main class="main"><div id="screen"></div></main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================= SHARED MODEL
+const ROLES = {
+  requester:   {label:'Requester',  name:'Eugen M.',  init:'EM', cc:'CC-4400'},
+  procurement: {label:'Procurement',name:'Eva Müller', init:'EV', cc:'—'},
+  admin:       {label:'Admin',      name:'Admin',      init:'AD', cc:'—'},
+};
+let role = 'requester';
+const canApprove = () => role==='procurement' || role==='admin';
+const isOps      = () => role==='procurement' || role==='admin';
+
+// one canonical taxonomy (fixes the inconsistency)
+const CATEGORIES = [
+  {id:'saas',     label:'Software / SaaS', kw:['software','saas','licen','subscription','slack','jira','figma','notion','crm','hubspot','zoom','adobe','personio','tool']},
+  {id:'cloud',    label:'Cloud / Infra',   kw:['cloud','aws','azure','gcp','server','compute','hosting','snowflake','database']},
+  {id:'services', label:'Professional services', kw:['consult','agency','contractor','freelanc','services','sow','audit','recruit','implementation']},
+  {id:'hardware', label:'Hardware',        kw:['laptop','monitor','hardware','device','macbook','dell','equipment']},
+  {id:'marketing',label:'Marketing / Media',kw:['ads','campaign','media','event','sponsorship','swag','marketing']},
+  {id:'facilities',label:'Facilities',     kw:['office','furniture','cleaning','rent','utilit','facilit','catering']},
+  {id:'other',    label:'Other', kw:[]},
+];
+const catLabel = id => (CATEGORIES.find(c=>c.id===id)||{}).label || '—';
+
+// one status enum (fixes the two-status-system problem)
+const STATUS = {
+  submitted:{label:'Submitted',badge:'blue'}, in_review:{label:'In review',badge:'blue'},
+  approved:{label:'Approved',badge:'green'}, po_issued:{label:'PO issued',badge:'green'},
+  escalated:{label:'Escalated',badge:'amber'}, rejected:{label:'Rejected',badge:'red'}, closed:{label:'Closed',badge:'grey'},
+};
+
+// budgets as REAL objects (not a Grafana link)
+let BUDGETS = {
+  'CC-4400':{label:'Product · CC-4400', allocated:400000, committed:182000},
+  'CC-2100':{label:'Marketing · CC-2100', allocated:250000, committed:96000},
+  'CC-7000':{label:'IT · CC-7000', allocated:600000, committed:355000},
+};
+const remaining = cc => BUDGETS[cc] ? BUDGETS[cc].allocated - BUDGETS[cc].committed : 0;
+
+// contracts as REAL objects (not a Grafana link) — drives renew + duplicate detection
+let CONTRACTS = [
+  {id:'C-101', supplier:'Slack (Salesforce)', cat:'saas', annual:24000, owner:'IT', cc:'CC-7000', endDays:47, match:['slack']},
+  {id:'C-102', supplier:'Amazon Web Services', cat:'cloud', annual:310000, owner:'Engineering', cc:'CC-7000', endDays:210, match:['aws','amazon web']},
+  {id:'C-103', supplier:'Personio', cat:'saas', annual:38000, owner:'People', cc:'CC-4400', endDays:12, match:['personio','hris']},
+  {id:'C-104', supplier:'Figma', cat:'saas', annual:9000, owner:'Design', cc:'CC-4400', endDays:160, match:['figma']},
+  {id:'C-105', supplier:'Adobe', cat:'saas', annual:21000, owner:'Marketing', cc:'CC-2100', endDays:300, match:['adobe','creative cloud']},
+];
+const rag = d => d<30?{c:'red',t:'Expires in '+d+'d'} : d<90?{c:'amber',t:'Expires in '+d+'d'} : {c:'green',t:d+'d left'};
+const matchContract = text => { const t=(text||'').toLowerCase(); if(!t.trim())return null; return CONTRACTS.find(c=>c.match.some(m=>t.includes(m)))||null; };
+
+// suppliers
+const SUPPLIERS = [
+  {name:'Slack (Salesforce)',cat:'saas',spend:24000,risk:'low'},
+  {name:'Amazon Web Services',cat:'cloud',spend:310000,risk:'low'},
+  {name:'Personio',cat:'saas',spend:38000,risk:'medium'},
+  {name:'Figma',cat:'saas',spend:9000,risk:'low'},
+  {name:'Adobe',cat:'saas',spend:21000,risk:'low'},
+];
+
+// requests (seeded)
+let SEQ = 7740;
+let REQUESTS = [
+  {ref:'TS-7738', desc:'Notion Team plan — 40 seats', amount:14400, cat:'saas', cc:'CC-4400', mode:'recurring', personalData:true, newSupplier:false, status:'in_review', by:'Eugen M.', history:[{t:'Submitted',who:'Eugen M.',role:'Requester',ago:'2h'}]},
+  {ref:'TS-7735', desc:'Dell monitors ×12', amount:3180, cat:'hardware', cc:'CC-7000', mode:'one_time', status:'approved', by:'Tom K.', history:[{t:'Submitted',who:'Tom K.',role:'Requester',ago:'1d'},{t:'Approved',who:'Eva Müller',role:'Procurement',ago:'20h'}]},
+  {ref:'TS-7731', desc:'Brand refresh — design agency, ~3 months on-site', amount:48000, cat:'services', cc:'CC-2100', mode:'one_time', onsite:true, newSupplier:true, status:'escalated', by:'Mara L.', history:[{t:'Submitted',who:'Mara L.',role:'Requester',ago:'2d'},{t:'Escalated to Legal',who:'Eva Müller',role:'Procurement',ago:'1d'}]},
+];
+
+// ============================================================= APPROVAL ENGINE (shared by requester preview + ops board)
+function routing(req){
+  const amt = Number(req.amount)||0, cat=req.cat;
+  const approvers=[], flags=[];
+  let tier,tierName,sla;
+  if(amt<1000){tier='Auto';tierName='Light-touch';sla=0;}
+  else if(amt<10000){tier='1';tierName='Standard';sla=2;}
+  else if(amt<50000){tier='2';tierName='Reviewed';sla=3;}
+  else if(amt<250000){tier='3';tierName='Senior';sla=5;}
+  else{tier='4';tierName='Executive';sla=7;}
+  if(amt>=1000){approvers.push({r:'Cost-centre owner',w:'Owns the budget line'});approvers.push({r:'Procurement',w:'Commercial review'});}
+  if(amt>=10000)approvers.push({r:'Controlling',w:'Above €10k'});
+  if(amt>=50000)approvers.push({r:'Department head',w:'Above €50k'});
+  if(amt>=250000)approvers.push({r:'CFO',w:'Above €250k'});
+  if(cat==='saas'||cat==='cloud')approvers.push({r:'IT Security',w:'New software review'});
+  if(cat==='services')approvers.push({r:'Legal',w:'SOW & liability'});
+  if(cat==='hardware')approvers.push({r:'IT',w:'Asset provisioning'});
+  if((cat==='saas'||cat==='cloud')&&req.personalData){flags.push({sev:'red',t:'DPA required',d:'Handles personal data — Legal/DPO must sign a GDPR data-processing agreement.'});if(!approvers.some(a=>a.r==='Legal'))approvers.push({r:'Legal / DPO',w:'GDPR DPA'});}
+  if(req.newSupplier){flags.push({sev:'amber',t:'New supplier screening',d:'Sanctions/OFAC, LkSG supply-chain & financial-health checks run automatically.'});}
+  if(cat==='services'&&req.onsite){flags.push({sev:'amber',t:'Worker classification',d:'On-site contractor — misclassification review required.'});}
+  const rem = remaining(req.cc);
+  if(amt>rem&&amt>0){flags.push({sev:'red',t:'Over remaining budget',d:'Only '+fmt(rem)+' left in '+req.cc+'. Controlling must approve the overage.'});if(!approvers.some(a=>a.r==='Controlling'))approvers.push({r:'Controlling',w:'Budget overage'});}
+  if(amt>0&&amt<1000)flags.push({sev:'blue',t:'Fast-tracked',d:'Under €1,000 — auto-approved, no queue.'});
+  return {tier,tierName,sla,approvers,flags,amt};
+}
+
+// ============================================================= helpers
+const $=s=>document.querySelector(s);
+const fmt=n=>new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(Number(n)||0);
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+function detectCat(text){const t=(text||'').toLowerCase();for(const c of CATEGORIES)if(c.kw.some(k=>t.includes(k)))return c.id;return null;}
+
+// new-request working state
+let view = 'new';
+let f = freshForm();
+function freshForm(){return{step:0,desc:'',amount:'',cat:null,autoCat:null,mode:'one_time',cc:ROLES.requester.cc,supplier:'',personalData:false,onsite:false,newSupplier:false,renew:null};}
+
+// ============================================================= RAIL
+function renderRail(){
+  const u=ROLES[role];
+  const counts={mine:REQUESTS.filter(r=>r.by===ROLES.requester.name).length,
+    triage:REQUESTS.filter(r=>r.status==='submitted'||r.status==='in_review'||r.status==='escalated').length,
+    contracts:CONTRACTS.filter(c=>c.endDays<90).length};
+  const item=(id,label,icon,ct)=>`<div class="navitem ${view===id?'on':''}" data-v="${id}">${icon}${label}${ct!=null?`<span class="ct">${ct}</span>`:''}</div>`;
+  $('#rail').innerHTML=`
+    <div class="brand"><div class="mark">T</div><div><b>TrueSpend</b><span>${isOps()?'Procurement':'Self-service'}</span></div></div>
+    <div class="navsec">Request</div>
+    ${item('new','New request',ic('plus'))}
+    ${item('mine','My requests',ic('list'),counts.mine)}
+    ${isOps()?`<div class="navsec">Procurement</div>
+      ${item('triage','Triage',ic('board'),counts.triage)}
+      ${item('contracts','Contracts',ic('refresh'),counts.contracts)}
+      ${item('budgets','Budgets',ic('wrench'))}
+      ${item('suppliers','Suppliers',ic('building'))}`:''}
+    <div class="foot">
+      <div class="whorow"><div class="avatar">${u.init}</div><div><b>${u.name}</b><div class="role">${u.label}${u.cc!=='—'?' · '+u.cc:''}</div></div></div>
+      <select class="roleswitch" id="roleSel">
+        <option value="requester" ${role==='requester'?'selected':''}>View as — Requester</option>
+        <option value="procurement" ${role==='procurement'?'selected':''}>View as — Procurement</option>
+        <option value="admin" ${role==='admin'?'selected':''}>View as — Admin</option>
+      </select>
+      <div class="demoNote">Demo switch. In production this is your SSO identity + a role claim in the JWT — and PostgREST RLS enforces it server-side, so the ops screens and approvals can't be reached by changing the client.</div>
+    </div>`;
+  $('#roleSel').onchange=e=>{role=e.target.value; if(!isOps()&&(['triage','contracts','budgets','suppliers'].includes(view)))view='new'; render();};
+  document.querySelectorAll('.navitem').forEach(n=>n.onclick=()=>{view=n.dataset.v; if(view==='new')f=freshForm(); render();});
+}
+function ic(n){const p={plus:'<path d="M12 5v14M5 12h14"/>',list:'<path d="M8 6h13M8 12h13M8 18h10M3 6h.01M3 12h.01M3 18h.01"/>',
+  board:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/>',refresh:'<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  wrench:'<path d="M14.7 6.3a4 4 0 0 0 5.7 5.7l-9.4 9.4a2 2 0 0 1-2.8-2.8z"/>',building:'<rect x="4" y="2" width="16" height="20" rx="1.5"/><path d="M9 22v-4h6v4"/>'}[n];
+  return `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor">${p}</svg>`;}
+
+// ============================================================= ROUTER
+function render(){
+  renderRail();
+  if(view==='new')return f.step>=4?renderDone():renderNew();
+  if(view==='mine')return renderMine();
+  if(!isOps()){view='new';return render();}        // guard ops views by role
+  if(view==='triage')return renderTriage();
+  if(view==='contracts')return renderContracts();
+  if(view==='budgets')return renderBudgets();
+  if(view==='suppliers')return renderSuppliers();
+}
+
+// ============================================================= REQUESTER: NEW
+function renderNew(){
+  const req={amount:f.amount,cat:f.cat||f.autoCat,cc:f.cc,mode:f.mode,personalData:f.personalData,onsite:f.onsite,newSupplier:f.newSupplier};
+  const r=routing(req);
+  const sup=matchContract(f.supplier||f.desc);
+  const showNudge=sup&&f.renew!=='new'&&f.renew!=='renew'&&f.step<=1;
+  $('#screen').innerHTML=`
+  <div class="head"><div><h1>What do you need?</h1><p>Describe it — we route it, flag the risks, and check we don't already have it, before you submit.</p></div></div>
+  <div style="display:flex;gap:6px;margin-bottom:22px">${[0,1,2,3].map(i=>`<div style="flex:1;height:4px;border-radius:99px;background:${f.step>i?'var(--accent)':f.step===i?'rgba(14,91,78,.45)':'var(--line)'}"></div>`).join('')}</div>
+  <div class="layout">
+    <div class="card pad">
+      ${showNudge?nudgeHTML(sup):''}
+      ${f.step===0?stepDescribe():f.step===1?stepDetails():f.step===2?stepCompliance(r):stepReview(r,sup)}
+      <div class="actions">
+        <button class="btn ghost" ${f.step===0?'disabled':''} onclick="nb()">Back</button>
+        ${f.step<3?`<button class="btn primary" ${canNext()?'':'disabled'} onclick="nn()">Continue</button>`:`<button class="btn primary" onclick="nsubmit()">Submit request</button>`}
+      </div>
+    </div>
+    ${panelHTML(r)}
+  </div>`;
+  bindNew();
+}
+function nudgeHTML(sup){const rg=rag(sup.endDays);return `<div class="nudge"><b>We already have ${sup.supplier}.</b>
+  <p>Active contract · ${fmt(sup.annual)}/yr · <span style="color:var(--${rg.c}=='green'?'aink':rg.c)">${rg.t.toLowerCase()}</span> · owned by ${sup.owner}. ${sup.endDays<90?'Up for renewal — renewing avoids duplicate spend.':'A second contract would duplicate spend.'}</p>
+  <div class="nb"><button class="btn primary sm" onclick="chooseRenew()">Renew existing</button><button class="btn ghost sm" onclick="f.renew='new';renderNew()">No, separate</button></div></div>`;}
+function stepDescribe(){
+  const chips=CATEGORIES.map(c=>{const on=f.cat===c.id,auto=!f.cat&&f.autoCat===c.id;return `<div class="chip ${on?'on':''} ${auto?'auto':''}" data-cat="${c.id}">${auto?'✓ ':''}${c.label}</div>`;}).join('');
+  return `<div class="field"><label class="klabel">In one line, what do you need?</label>
+    <textarea id="desc" placeholder="e.g. Slack Business+ for the 28-person product team, annual">${f.desc}</textarea></div>
+    <div class="row3">
+      <div class="field" style="margin:0"><label class="klabel">${f.mode==='recurring'?'Annual ':''}cost</label><input id="amount" inputmode="decimal" placeholder="24000" value="${f.amount}"></div>
+      <div class="field" style="margin:0"><label class="klabel">Charged to</label><select id="cc">${Object.keys(BUDGETS).map(k=>`<option value="${k}" ${f.cc===k?'selected':''}>${k}</option>`).join('')}</select></div>
+      <div class="field" style="margin:0"><label class="klabel">Type</label><div class="seg" id="mode"><button class="${f.mode==='one_time'?'on':''}" data-m="one_time">One-time</button><button class="${f.mode==='recurring'?'on':''}" data-m="recurring">Recurring</button></div></div>
+    </div>
+    <div class="field" style="margin-top:18px"><label class="klabel">Category ${!f.cat&&f.autoCat?'<span style="text-transform:none;font-weight:500;color:var(--accent)">— detected, tap to confirm</span>':''}</label><div class="chips">${chips}</div></div>`;
+}
+function stepDetails(){
+  let extra='';
+  if(f.cat==='saas'||f.cat==='cloud')extra=`<div class="field"><label class="klabel">Processes personal / customer data?</label><div class="seg" id="pd"><button class="${f.personalData?'on':''}" data-pd="1">Yes</button><button class="${!f.personalData?'on':''}" data-pd="0">No</button></div></div>`;
+  else if(f.cat==='services')extra=`<div class="field"><label class="klabel">Anyone working on-site / embedded?</label><div class="seg" id="os"><button class="${f.onsite?'on':''}" data-os="1">Yes</button><button class="${!f.onsite?'on':''}" data-os="0">No</button></div></div>`;
+  return `<p style="font-family:'Fraunces',serif;font-size:20px;margin:0 0 14px">A few details for ${catLabel(f.cat)}</p>
+    <div class="field"><label class="klabel">Preferred supplier — if any</label><input id="supplier" placeholder="Start typing — we check what's on contract" value="${f.supplier}"></div>
+    ${f.supplier&&!matchContract(f.supplier)?`<div class="field"><label class="klabel">New supplier we don't use yet?</label><div class="seg" id="ns"><button class="${f.newSupplier?'on':''}" data-ns="1">Yes</button><button class="${!f.newSupplier?'on':''}" data-ns="0">No</button></div></div>`:''}
+    ${extra}`;
+}
+function stepCompliance(r){return `<p style="font-family:'Fraunces',serif;font-size:20px;margin:0 0 12px">Compliance & risk</p>
+  ${r.flags.length===0?`<div class="empty">Nothing flagged — low risk, straight to routing.</div>`:
+    `<p class="hint" style="margin:-4px 0 14px">Surfaced automatically. Each is handled inside the approval flow — no chasing.</p>`+r.flags.map(x=>`<div class="flag ${x.sev}"><div><span class="t">${x.t}</span><br>${x.d}</div></div>`).join('')}`;}
+function stepReview(r,sup){const kv=(k,v)=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--lsoft)"><span style="color:var(--soft)">${k}</span><b style="text-align:right;max-width:60%">${v}</b></div>`;
+  return `<p style="font-family:'Fraunces',serif;font-size:20px;margin:0 0 12px">Review & submit</p>
+    ${kv('Request',f.desc||'—')}${kv('Category',catLabel(f.cat))}${kv('Value',fmt(f.amount)+(f.mode==='recurring'?' / yr':' one-time'))}${kv('Supplier',f.renew==='renew'&&sup?'↻ Renew '+sup.supplier:(f.supplier||'To be sourced'))}${kv('Charged to',f.cc)}
+    <div style="margin-top:16px;padding:13px 15px;background:var(--asoft);border-radius:10px;font-size:13px;color:var(--aink)">Decision expected in <b>${r.sla===0?'minutes':r.sla+' business days'}</b>. You'll get a reference and live status.</div>`;}
+function panelHTML(r){
+  return `<div class="panel"><div class="pcard"><h3>Routing preview</h3><div class="pbody">
+    ${r.amt>0?`<div class="tier"><b>${r.tier==='Auto'?'Auto':'Tier '+r.tier}</b><span>${r.tierName} · ${fmt(r.amt)}${f.mode==='recurring'?'/yr':''}</span></div>
+      <div class="meta">Decision: <b>${r.sla===0?'same day':r.sla+' business days'}</b> · Budget left in ${f.cc}: <b>${fmt(remaining(f.cc))}</b></div>
+      <div style="margin-top:12px">${r.approvers.map(a=>`<div class="approver"><span class="dot"></span><div><div class="r">${a.r}</div><div class="w">${a.w}</div></div></div>`).join('')||'<div class="empty">No approvals needed.</div>'}</div>`
+    :`<div class="empty">Add an amount and category and the full approval path appears here — before you submit.</div>`}
+  </div></div>
+  ${r.flags.length?`<div class="pcard"><h3>${r.flags.length} flag${r.flags.length>1?'s':''}</h3><div class="pbody" style="padding-top:5px">${r.flags.map(x=>`<div class="flag ${x.sev}" style="margin-top:9px"><span class="t">${x.t}</span></div>`).join('')}</div></div>`:''}</div>`;
+}
+function bindNew(){
+  const d=$('#desc');if(d)d.oninput=e=>{f.desc=e.target.value;f.autoCat=detectCat(f.desc);livePanel();};
+  const a=$('#amount');if(a)a.oninput=e=>{f.amount=e.target.value;livePanel();};
+  const cc=$('#cc');if(cc)cc.onchange=e=>{f.cc=e.target.value;livePanel();};
+  const sp=$('#supplier');if(sp)sp.oninput=e=>{f.supplier=e.target.value;f.newSupplier=!matchContract(f.supplier)&&f.supplier.length>2;renderNew();};
+  document.querySelectorAll('[data-cat]').forEach(el=>el.onclick=()=>{f.cat=el.dataset.cat;renderNew();});
+  document.querySelectorAll('#mode button').forEach(el=>el.onclick=()=>{f.mode=el.dataset.m;renderNew();});
+  document.querySelectorAll('#pd button').forEach(el=>el.onclick=()=>{f.personalData=el.dataset.pd==='1';renderNew();});
+  document.querySelectorAll('#os button').forEach(el=>el.onclick=()=>{f.onsite=el.dataset.os==='1';renderNew();});
+  document.querySelectorAll('#ns button').forEach(el=>el.onclick=()=>{f.newSupplier=el.dataset.ns==='1';renderNew();});
+}
+function livePanel(){const req={amount:f.amount,cat:f.cat||f.autoCat,cc:f.cc,mode:f.mode,personalData:f.personalData,onsite:f.onsite,newSupplier:f.newSupplier};
+  const r=routing(req),holder=document.querySelector('.layout');if(!holder)return;
+  const w=document.createElement('div');w.innerHTML=panelHTML(r);const ex=holder.querySelector('.panel');if(ex)ex.replaceWith(w.firstElementChild);
+  document.querySelectorAll('[data-cat]').forEach(el=>{const auto=!f.cat&&f.autoCat===el.dataset.cat;el.classList.toggle('auto',auto);
+    if(auto&&!el.textContent.startsWith('✓'))el.textContent='✓ '+el.textContent;if(!auto&&el.textContent.startsWith('✓'))el.textContent=el.textContent.replace('✓ ','');});
+}
+function canNext(){if(f.step===0)return f.desc.trim().length>2&&(Number(f.amount)>0)&&(f.cat||f.autoCat);return true;}
+function nn(){if(f.step===0&&!f.cat)f.cat=f.autoCat;f.step++;scrollTo({top:0,behavior:'smooth'});render();}
+function nb(){f.step--;render();}
+function chooseRenew(){const sup=matchContract(f.supplier||f.desc);if(sup){f.supplier=sup.supplier;f.cat=sup.cat;f.newSupplier=false;}f.renew='renew';renderNew();}
+function nsubmit(){
+  const ref='TS-'+(++SEQ);
+  REQUESTS.unshift({ref,desc:f.desc,amount:Number(f.amount)||0,cat:f.cat,cc:f.cc,mode:f.mode,personalData:f.personalData,onsite:f.onsite,newSupplier:f.newSupplier,
+    status: (Number(f.amount)<1000?'approved':'submitted'), by:ROLES.requester.name, history:[{t:'Submitted',who:ROLES.requester.name,role:'Requester',ago:'now'}]});
+  f.step=4;f.ref=ref;render();
+}
+function renderDone(){const r=routing({amount:f.amount,cat:f.cat,cc:f.cc,personalData:f.personalData,onsite:f.onsite,newSupplier:f.newSupplier});
+  $('#screen').innerHTML=`<div class="card ringbox"><div class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg></div>
+    <h2>Request submitted</h2><div class="ref">${f.ref}</div>
+    <p style="color:var(--soft);max-width:420px;margin:0 auto 6px;font-size:14px;line-height:1.6">Routed as ${r.tier==='Auto'?'auto-approval':'Tier '+r.tier}. ${r.approvers[0]?r.approvers[0].r+' notified.':'No approvals needed.'} Track it under My requests.</p>
+    <div style="margin-top:20px"><button class="btn primary" onclick="f=freshForm();view='new';render()">New request</button> <button class="btn ghost" onclick="view='mine';render()">My requests</button></div></div>`;}
+
+// ============================================================= REQUESTER: MINE
+function renderMine(){
+  const mine=REQUESTS.filter(r=>r.by===ROLES.requester.name);
+  $('#screen').innerHTML=`<div class="head"><div><h1>My requests</h1><p>Live status — no chasing, no black box.</p></div></div>
+    <div class="card" style="padding:0">${mine.length?mine.map(rowHTML).join(''):'<div class="pad empty">No requests yet.</div>'}</div>`;
+  wireRows();
+}
+
+// ============================================================= OPS: TRIAGE (shared engine + role-gated actions + audit)
+function renderTriage(){
+  const q=REQUESTS.filter(r=>['submitted','in_review','escalated'].includes(r.status));
+  $('#screen').innerHTML=`<div class="head"><div><h1>Triage</h1><p>${q.length} open · same routing engine the requester saw, now with actions.</p></div></div>
+    <div>${q.length?q.map(rowHTML).join(''):'<div class="card pad empty">Queue is clear. </div>'}</div>`;
+  wireRows();
+}
+function rowHTML(rq){
+  const r=routing(rq),st=STATUS[rq.status];
+  const lastAudit=rq.history[rq.history.length-1];
+  return `<div class="trow" data-ref="${rq.ref}">
+    <div class="thead">
+      <div><div class="title">${rq.desc}</div><div class="sub">${rq.ref} · ${catLabel(rq.cat)} · ${rq.cc} · ${rq.by}</div></div>
+      <div class="c-amt amt">${fmt(rq.amount)}</div>
+      <div class="c-when"><span class="badge ${r.tier==='Auto'?'blue':(r.tier==='4'?'red':'grey')}">${r.tier==='Auto'?'Auto':'Tier '+r.tier}</span></div>
+      <div><span class="badge ${st.badge}">${st.label}</span></div>
+      <div style="text-align:right;color:var(--soft)">▾</div>
+    </div>
+    <div class="tbody">
+      <div class="tgrid">
+        <div>
+          <div class="klabel">Why it routes this way</div>
+          ${r.approvers.map(a=>`<div class="approver"><span class="dot"></span><div><div class="r">${a.r}</div><div class="w">${a.w}</div></div></div>`).join('')||'<div class="empty">No approvals required.</div>'}
+          ${r.flags.map(x=>`<div class="flag ${x.sev}"><div><span class="t">${x.t}</span><br>${x.d}</div></div>`).join('')}
+          <div class="auditline">${rq.history.map(h=>`${h.t} · ${h.who} <span style="opacity:.7">(${h.role})</span> · ${h.ago}`).join('&nbsp;&nbsp;→&nbsp;&nbsp;')}</div>
+        </div>
+        <div>
+          <div class="klabel">Decision</div>
+          ${['submitted','in_review','escalated'].includes(rq.status)?(
+            canApprove()
+              ? `<div style="display:flex;flex-direction:column;gap:8px">
+                   <button class="btn primary sm" onclick="act('${rq.ref}','approve')">Approve · commits ${fmt(rq.amount)}</button>
+                   <button class="btn warn sm" onclick="act('${rq.ref}','escalate')">Escalate</button>
+                   <button class="btn danger sm" onclick="act('${rq.ref}','reject')">Reject</button>
+                 </div>`
+              : `<div class="lockmsg">🔒 Approving requires the Procurement role. Enforced server-side by your JWT claim — switching the client view can't grant it.</div>`
+          ):`<div class="empty">Closed — ${st.label}.</div>`}
+        </div>
+      </div>
+    </div></div>`;
+}
+function wireRows(){document.querySelectorAll('.thead').forEach(h=>h.onclick=()=>h.parentElement.classList.toggle('open'));}
+function act(ref,kind){
+  const rq=REQUESTS.find(r=>r.ref===ref);if(!rq)return;
+  const u=ROLES[role];
+  if(kind==='approve'){rq.status='approved';if(BUDGETS[rq.cc])BUDGETS[rq.cc].committed+=rq.amount;rq.history.push({t:'Approved',who:u.name,role:u.label,ago:'now'});toast('Approved · '+fmt(rq.amount)+' committed to '+rq.cc);}
+  if(kind==='escalate'){rq.status='escalated';rq.history.push({t:'Escalated',who:u.name,role:u.label,ago:'now'});toast('Escalated');}
+  if(kind==='reject'){rq.status='rejected';rq.history.push({t:'Rejected',who:u.name,role:u.label,ago:'now'});toast('Rejected');}
+  render();
+}
+
+// ============================================================= OPS: CONTRACTS (real objects + renew)
+function renderContracts(){
+  const sorted=[...CONTRACTS].sort((a,b)=>a.endDays-b.endDays);
+  $('#screen').innerHTML=`<div class="head"><div><h1>Contracts</h1><p>Real records you can act on — not a dashboard link. ${CONTRACTS.filter(c=>c.endDays<90).length} need attention.</p></div></div>
+    <div class="grid">${sorted.map(c=>{const rg=rag(c.endDays);return `<div class="obj">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h4>${c.supplier}</h4><div class="o-sub">${catLabel(c.cat)} · ${c.id} · ${c.owner}</div></div><span class="badge ${rg.c}"><span class="dot-r" style="background:var(--${rg.c==='green'?'accent':rg.c})"></span>${rg.t}</span></div>
+      <div class="kv"><span>Annual value</span><b>${fmt(c.annual)}</b></div>
+      <div class="kv"><span>Cost centre</span><b>${c.cc}</b></div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn ${c.endDays<90?'primary':'ghost'} sm" onclick="renewContract('${c.id}')">↻ Renew</button>
+        <button class="btn ghost sm" onclick="toast('Opening ${c.supplier} record…')">Open</button>
+      </div></div>`;}).join('')}</div>`;
+}
+function renewContract(id){
+  const c=CONTRACTS.find(x=>x.id===id);if(!c)return;
+  const ref='TS-'+(++SEQ);
+  REQUESTS.unshift({ref,desc:'Renewal — '+c.supplier,amount:c.annual,cat:c.cat,cc:c.cc,mode:'recurring',personalData:c.cat==='saas',newSupplier:false,status:'submitted',by:ROLES[role].name,history:[{t:'Renewal raised',who:ROLES[role].name,role:ROLES[role].label,ago:'now'}]});
+  toast('Renewal '+ref+' raised for '+c.supplier+' → Triage');
+  view='triage';render();
+}
+
+// ============================================================= OPS: BUDGETS (real objects, live commit)
+function renderBudgets(){
+  $('#screen').innerHTML=`<div class="head"><div><h1>Budgets</h1><p>Live commitment per cost centre — approvals draw down here in real time.</p></div></div>
+    <div class="grid">${Object.entries(BUDGETS).map(([cc,b])=>{const rem=b.allocated-b.committed,pct=Math.min(100,Math.round(b.committed/b.allocated*100));
+      const col=pct>90?'red':pct>75?'amber':'accent';
+      return `<div class="obj"><h4>${b.label}</h4><div class="o-sub">${pct}% committed</div>
+      <div class="bar"><i style="width:${pct}%;background:var(--${col})"></i></div>
+      <div class="kv"><span>Allocated</span><b>${fmt(b.allocated)}</b></div>
+      <div class="kv"><span>Committed</span><b>${fmt(b.committed)}</b></div>
+      <div class="kv"><span>Remaining</span><b style="color:var(--${col==='accent'?'aink':col})">${fmt(rem)}</b></div></div>`;}).join('')}</div>
+      <p class="hint" style="margin-top:14px">Approve a request in Triage and watch the matching cost centre draw down here.</p>`;
+}
+
+// ============================================================= OPS: SUPPLIERS
+function renderSuppliers(){
+  $('#screen').innerHTML=`<div class="head"><div><h1>Suppliers</h1><p>On-contract suppliers, spend and third-party risk.</p></div></div>
+    <div class="card" style="padding:0">${SUPPLIERS.map(s=>{const rk={low:'green',medium:'amber',high:'red'}[s.risk];
+      return `<div class="reqrow" style="display:grid;grid-template-columns:1fr 130px 120px;gap:16px;align-items:center;padding:15px 18px;border-bottom:1px solid var(--lsoft)">
+      <div><b style="font-size:14.5px">${s.name}</b><div style="font-size:12px;color:var(--soft)">${catLabel(s.cat)}</div></div>
+      <div class="amt">${fmt(s.spend)}/yr</div>
+      <div><span class="badge ${rk}">${s.risk} risk</span></div></div>`;}).join('')}</div>`;
+}
+
+render();
+</script>

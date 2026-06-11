@@ -49,6 +49,14 @@
             {
               "name": "message_id",
               "value": "={{ $json.messageId }}"
+            },
+            {
+              "name": "in_reply_to",
+              "value": "={{ ($json.headers && ($json.headers['in-reply-to'] || $json.headers['In-Reply-To'])) || $json.inReplyTo || '' }}"
+            },
+            {
+              "name": "references",
+              "value": "={{ ($json.headers && ($json.headers['references'] || $json.headers['References'])) || '' }}"
             }
           ]
         }
@@ -64,7 +72,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/suppliers?contact_email=ilike.{{ encodeURIComponent($json.from_email) }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/suppliers?contact_email=ilike.{{ encodeURIComponent($json.from_email) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -111,7 +119,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/trace_log",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -156,7 +164,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/tickets?supplier_id=eq.{{ $json[0].id }}&status=in.(open,reasoning,pending_confirm,approved,escalated)",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/tickets?supplier_id=eq.{{ $json[0].id }}&status=in.(open,reasoning,pending_confirm,approved,escalated)",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -183,7 +191,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/supplier_emails?supplier_id=eq.{{ $node['Match Supplier in PostgREST'].json[0].id }}&order=received_at.desc&limit=10",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/supplier_emails?supplier_id=eq.{{ $node['Match Supplier in PostgREST'].json[0].id }}&order=received_at.desc&limit=10",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -210,7 +218,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "=https://postgrest-production-7960.up.railway.app/contracts?supplier_id=eq.{{ $node['Match Supplier in PostgREST'].json[0].id }}&expiry_date=gte.{{ new Date().toISOString().split('T')[0] }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/contracts?supplier_id=eq.{{ $node['Match Supplier in PostgREST'].json[0].id }}&expiry_date=gte.{{ new Date().toISOString().split('T')[0] }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -237,7 +245,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/supplier_emails",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -377,12 +385,118 @@
       ]
     },
     {
+      "id": "resolve_thread_parent",
+      "name": "Resolve Thread Parent",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/supplier_emails?message_id=eq.{{ encodeURIComponent($node['Extract Email Data'].json.in_reply_to || '__none__') }}&direction=eq.outbound&select=id,message_id,ticket_id&limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "position": [
+        1500,
+        350
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "validate_reply_decision",
+      "name": "Validate Reply Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// <<<GUARD-BUNDLE:reply_guard.js>>> generated by scripts/sync-workflow-guards.js — DO NOT EDIT HERE; edit workflows/lib/reply_guard.js\n// =============================================================================\n// reply_guard.js — deterministic validation gate for the Supplier Reply Handler.\n//\n// Governing principle: \"LLM advises, deterministic code decides.\"\n// Claude's JSON is ADVICE. This module is the deterministic gate that sits\n// between the model and any action. It:\n//   1. Validates the model output against a strict schema + enum allowlist.\n//      On ANY violation -> { ok:false } -> the workflow routes to a human and\n//      takes NO action.\n//   2. DERIVES related_ticket_id deterministically (never from the model):\n//        a. PRIMARY (Option 1, schema-backed): match the inbound In-Reply-To /\n//           References Message-ID to the parent outbound supplier_emails row and\n//           take its ticket_id (resolved by the workflow, handed in as\n//           `threadParent`);\n//        b. else parse a [TS-YYYY-...] reference from the inbound subject/body,\n//           accept it ONLY if it matches a ticket the supplier actually owns;\n//        c. else, if the supplier has exactly ONE open ticket, bind that;\n//        d. else bind null (no ticket touched).\n//   3. NEVER auto-sends a model-authored body. A SUBSTANTIVE reply (the model's\n//      draft) is queued to the Operations Board as pending_confirm for a human.\n//      A zero-touch acknowledgment is allowed ONLY as a FIXED TEMPLATE with no\n//      model-authored text (ack_template below) — gated to safe resolution_types.\n//\n// This file is the single source of truth. The n8n Code node \"Validate Reply\n// Decision\" contains a copy of validateReplyDecision()'s body (see\n// scripts/sync-workflow-guards.js, which asserts they have not drifted).\n// =============================================================================\n\n\nconst RESOLUTION_TYPES = new Set([\n  'confirmation', 'query_answer', 'invoice_clarification', 'delivery_update',\n  'negotiation', 'dispute', 'escalation_request', 'other',\n])\nconst URGENCIES = new Set(['low', 'medium', 'high', 'critical'])\n\n// A TrueSpend ticket reference looks like TS-2026-DEMO3 / TS-2026-INV-4821 etc.\nconst TICKET_REF_RE = /\\bTS-\\d{4}-[A-Z0-9-]{1,20}\\b/g\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i\n\nfunction isBool(v) { return v === true || v === false }\nfunction isStr(v)  { return typeof v === 'string' }\n\n// Normalize the Set-node string fields back to real types (the Set node stores\n// everything as strings via n8n expressions).\nfunction coerce(modelOutput) {\n  const o = { ...modelOutput }\n  if (o.can_resolve === 'true')  o.can_resolve = true\n  if (o.can_resolve === 'false') o.can_resolve = false\n  if (o.route_to_human === 'true')  o.route_to_human = true\n  if (o.route_to_human === 'false') o.route_to_human = false\n  if (o.route_reason === 'null' || o.route_reason === '') o.route_reason = null\n  if (o.related_ticket_id === 'null' || o.related_ticket_id === '') o.related_ticket_id = null\n  return o\n}\n\n// Deterministic ticket binding — independent of model output.\n// `threadParent` is the outbound supplier_emails row the inbound reply answers,\n// resolved by the workflow via In-Reply-To/References -> message_id (Option 1).\nfunction deriveTicketId({ inbound, supplierOpenTickets, threadParent }) {\n  const byRef = new Map((supplierOpenTickets || []).map(t => [t.reference, t.id]))\n\n  // (a) PRIMARY: thread parent (matched by Message-ID) carries the ticket_id.\n  // Trust it only if that ticket is still one this supplier owns (defense in\n  // depth against a stale/forged parent row).\n  if (threadParent && threadParent.ticket_id) {\n    const ownedIds = new Set((supplierOpenTickets || []).map(t => t.id))\n    if (ownedIds.has(threadParent.ticket_id)) {\n      return { id: threadParent.ticket_id, basis: `thread parent (message_id ${threadParent.message_id || '?'})` }\n    }\n  }\n\n  // (b) reference parsed from the inbound subject/body, validated against owned set\n  const hay = `${inbound.subject || ''}\\n${inbound.body || ''}`\n  const refs = hay.match(TICKET_REF_RE) || []\n  for (const ref of refs) {\n    if (byRef.has(ref)) return { id: byRef.get(ref), basis: `reference ${ref}` }\n  }\n\n  // (c) exactly one open ticket for this supplier -> safe to bind\n  if ((supplierOpenTickets || []).length === 1) {\n    return { id: supplierOpenTickets[0].id, basis: 'sole open ticket for supplier' }\n  }\n\n  // (d) ambiguous / none -> bind nothing\n  return { id: null, basis: 'no deterministic match' }\n}\n\n// Fixed-template acknowledgment — the ONLY zero-touch outbound allowed.\n// No model-authored text; the only interpolated value is the deterministic\n// ticket reference (or a generic phrase if none bound). Enabled only for\n// low-risk resolution types where a \"received, we'll respond\" ack is correct.\nconst ACK_TYPES = new Set(['confirmation', 'query_answer', 'delivery_update', 'other'])\nfunction buildAck({ ticketRef }) {\n  const ref = ticketRef ? ` (ref ${ticketRef})` : ''\n  return {\n    subject: `Re: your message${ref} — received`,\n    body:\n      `Thank you for your message${ref}. We have received it and a member of the ` +\n      `procurement team will follow up shortly.\\n\\nTrueSpend Procurement`,\n  }\n}\n\nfunction validateReplyDecision({ modelOutput, inbound, supplierOpenTickets, threadParent }) {\n  const o = coerce(modelOutput)\n  const errs = []\n\n  // ── strict schema ──\n  if (!isBool(o.can_resolve))           errs.push('can_resolve must be boolean')\n  if (!isBool(o.route_to_human))        errs.push('route_to_human must be boolean')\n  if (!isStr(o.resolution_type) || !RESOLUTION_TYPES.has(o.resolution_type))\n    errs.push(`resolution_type not in allowlist: ${o.resolution_type}`)\n  if (!isStr(o.urgency) || !URGENCIES.has(o.urgency))\n    errs.push(`urgency not in allowlist: ${o.urgency}`)\n  if (!isStr(o.reply_subject)) errs.push('reply_subject must be a string')\n  if (!isStr(o.reply_body))    errs.push('reply_body must be a string')\n\n  // The model may NOT supply a ticket id at all. If it tries to, we ignore it,\n  // but a malformed value is a signal of tampering -> note it (non-fatal; we\n  // derive deterministically regardless).\n  if (o.related_ticket_id != null && !(isStr(o.related_ticket_id) && UUID_RE.test(o.related_ticket_id))) {\n    errs.push('related_ticket_id (model) is malformed (ignored; derived instead)')\n  }\n\n  if (errs.length) {\n    return { ok: false, reason: errs.join('; '), routeToHuman: true }\n  }\n\n  // ── deterministic ticket binding (model value discarded) ──\n  const bind = deriveTicketId({ inbound, supplierOpenTickets, threadParent })\n  const ticketRef = (supplierOpenTickets || []).find(t => t.id === bind.id)?.reference || null\n\n  // ── action policy ──\n  // NEVER auto-send a model-authored body. The model's draft (subject/body) is\n  // carried to the Operations Board as a pending_confirm ticket; a human confirms.\n  // A zero-touch FIXED-TEMPLATE ack is allowed for low-risk types only — no model\n  // text on the wire. Whether to actually send the ack is the workflow's call;\n  // the guard just provides it and marks it safe.\n  const ackAllowed = o.can_resolve === true && o.route_to_human === false\n    && ACK_TYPES.has(o.resolution_type)\n  const ack = ackAllowed ? buildAck({ ticketRef }) : null\n\n  return {\n    ok: true,\n    routeToHuman: false,\n    safeFields: {\n      // The model body NEVER auto-sends. This stays false unconditionally.\n      auto_send: false,\n      // A fixed-template ack MAY auto-send (no model text). Off unless ackAllowed.\n      ack_send: ackAllowed,\n      ack_subject: ack ? ack.subject : null,\n      ack_body: ack ? ack.body : null,\n      related_ticket_id: bind.id,       // <- deterministic, supplier-owned or null\n      ticket_reference: ticketRef,\n      ticket_bind_basis: bind.basis,\n      // draft fields preserved for the human, clearly marked as draft:\n      draft_reply_subject: o.reply_subject,\n      draft_reply_body: o.reply_body,\n      resolution_type: o.resolution_type,\n      urgency: o.urgency,\n      reasoning: o.reasoning,\n      // carried through for the audit-log PATCH (non-action fields):\n      commitments_extracted: o.commitments_extracted,\n      route_to_human: o.route_to_human,\n      route_reason: o.route_reason,\n    },\n  }\n}\n\n// ── n8n wrapper ──\nconst parsed = $node['Parse Claude Response'].json;\nconst ex = $node['Extract Email Data'].json;\nconst supplier = $node['Match Supplier in PostgREST'].json;\nconst openTickets = ($node['Fetch Open Tickets for Supplier'].json) || [];\n// Thread parent resolved by the \"Resolve Thread Parent\" node (may be empty).\nlet threadParent = null;\ntry {\n  const tp = $node['Resolve Thread Parent'].json;\n  threadParent = Array.isArray(tp) ? (tp[0] || null) : (tp && tp.id ? tp : null);\n} catch (e) { threadParent = null; }\nconst decision = validateReplyDecision({\n  modelOutput: parsed,\n  inbound: { subject: ex.subject, body: ex.body, from_email: ex.from_email, message_id: ex.message_id },\n  supplierOpenTickets: openTickets,\n  threadParent,\n});\nreturn [{ json: { ...parsed, ...(decision.safeFields || {}), guard_ok: decision.ok, route_to_human: decision.routeToHuman || !decision.ok, guard_reason: decision.reason || null } }];\n// >>>GUARD-BUNDLE-END"
+      },
+      "position": [
+        1600,
+        350
+      ]
+    },
+    {
+      "id": "queue_reply_for_review",
+      "name": "Queue Reply Draft on Board (RPC)",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/rpc/queue_supplier_reply_review",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.POSTGREST_JWT }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "={{ JSON.stringify({ p_ticket_id: $node['Validate Reply Decision'].json.related_ticket_id, p_supplier_id: $node['Match Supplier in PostgREST'].json[0].id, p_from_email: $node['Extract Email Data'].json.from_email, p_subject: $node['Extract Email Data'].json.subject, p_draft_subject: $node['Validate Reply Decision'].json.draft_reply_subject, p_draft_body: $node['Validate Reply Decision'].json.draft_reply_body, p_reasoning: $node['Validate Reply Decision'].json.reasoning, p_urgency: $node['Validate Reply Decision'].json.urgency }) }}"
+            }
+          ]
+        }
+      },
+      "position": [
+        2000,
+        420
+      ],
+      "options": {
+        "timeout": 30000
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "send_fixed_ack",
+      "name": "Send Fixed-Template Ack",
+      "type": "n8n-nodes-base.emailSend",
+      "parameters": {
+        "fromEmail": "={{ $env.PROCUREMENT_FROM_EMAIL }}",
+        "toEmail": "={{ $node['Extract Email Data'].json.from_email }}",
+        "subject": "={{ $node['Validate Reply Decision'].json.ack_subject }}",
+        "text": "={{ $node['Validate Reply Decision'].json.ack_body }}"
+      },
+      "position": [
+        2200,
+        300
+      ]
+    },
+    {
       "id": "update_commitments",
       "name": "Update Email Record â€” Commitments",
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "PATCH",
-        "url": "=https://postgrest-production-7960.up.railway.app/supplier_emails?id=eq.{{ $node['Log Inbound Email'].json[0]?.id || $node['Log Inbound Email'].json?.id }}",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/supplier_emails?id=eq.{{ $node['Log Inbound Email'].json[0]?.id || $node['Log Inbound Email'].json?.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -423,13 +537,13 @@
     },
     {
       "id": "can_agent_resolve",
-      "name": "Can Agent Resolve?",
+      "name": "Send Fixed Ack?",
       "type": "n8n-nodes-base.if",
       "parameters": {
         "conditions": {
           "boolean": [
             {
-              "value1": "={{ $json.can_resolve }}",
+              "value1": "={{ $node['Validate Reply Decision'].json.ack_send }}",
               "operation": "true"
             }
           ]
@@ -441,27 +555,12 @@
       ]
     },
     {
-      "id": "send_reply_direct",
-      "name": "Send Reply Directly to Supplier",
-      "type": "n8n-nodes-base.emailSend",
-      "parameters": {
-        "fromEmail": "procurement@company.com",
-        "toEmail": "={{ $node['Extract Email Data'].json.from_email }}",
-        "subject": "={{ $node['Parse Claude Response'].json.reply_subject }}",
-        "text": "={{ $node['Parse Claude Response'].json.reply_body }}"
-      },
-      "position": [
-        2000,
-        200
-      ]
-    },
-    {
       "id": "log_outbound_reply",
       "name": "Log Outbound Reply",
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/supplier_emails",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/supplier_emails",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -484,59 +583,14 @@
           "parameters": [
             {
               "name": "body",
-              "value": "={{ JSON.stringify({ supplier_id: $node['Match Supplier in PostgREST'].json[0].id, direction: 'outbound', subject: $node['Parse Claude Response'].json.reply_subject, body_summary: $node['Parse Claude Response'].json.reasoning, received_at: new Date().toISOString() }) }}"
-            }
-          ]
-        }
-      },
-      "position": [
-        2200,
-        200
-      ],
-      "options": {
-        "timeout": 30000
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 1000
-    },
-    {
-      "id": "close_related_ticket",
-      "name": "Close Related Ticket (if any)",
-      "type": "n8n-nodes-base.httpRequest",
-      "parameters": {
-        "method": "PATCH",
-        "url": "=https://postgrest-production-7960.up.railway.app/tickets?id=eq.{{ $node['Parse Claude Response'].json.related_ticket_id }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "Bearer {{ $env.POSTGREST_JWT }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "Prefer",
-              "value": "return=representation"
-            }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "body",
-              "value": "={{ JSON.stringify({ status: 'closed', closed_at: new Date().toISOString() }) }}"
+              "value": "={{ JSON.stringify({ supplier_id: $node['Match Supplier in PostgREST'].json[0].id, ticket_id: $node['Validate Reply Decision'].json.related_ticket_id, direction: 'outbound', subject: $node['Validate Reply Decision'].json.ack_subject, body_summary: 'Fixed-template acknowledgment (auto). Substantive reply, if any, queued for human review.', message_id: 'ts-ack-' + $node['Extract Email Data'].json.message_id, in_reply_to: $node['Extract Email Data'].json.message_id, received_at: new Date().toISOString() }) }}"
             }
           ]
         }
       },
       "position": [
         2400,
-        200
+        300
       ],
       "options": {
         "timeout": 30000
@@ -584,7 +638,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "GET",
-        "url": "https://postgrest-production-7960.up.railway.app/users?role=eq.head_of_procurement&active=eq.true",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/users?role=eq.head_of_procurement&active=eq.true",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -611,7 +665,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
-        "url": "https://postgrest-production-7960.up.railway.app/trace_log",
+        "url": "={{ $env.POSTGREST_URL || 'https://postgrest-production-7960.up.railway.app' }}/trace_log",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
@@ -784,6 +838,28 @@
       "main": [
         [
           {
+            "node": "Resolve Thread Parent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Thread Parent": {
+      "main": [
+        [
+          {
+            "node": "Validate Reply Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Reply Decision": {
+      "main": [
+        [
+          {
             "node": "Update Email Record â€” Commitments",
             "type": "main",
             "index": 0
@@ -795,32 +871,32 @@
       "main": [
         [
           {
-            "node": "Can Agent Resolve?",
+            "node": "Send Fixed Ack?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Can Agent Resolve?": {
+    "Send Fixed Ack?": {
       "main": [
         [
           {
-            "node": "Send Reply Directly to Supplier",
+            "node": "Send Fixed-Template Ack",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Route by Urgency",
+            "node": "Queue Reply Draft on Board (RPC)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send Reply Directly to Supplier": {
+    "Send Fixed-Template Ack": {
       "main": [
         [
           {
@@ -835,7 +911,18 @@
       "main": [
         [
           {
-            "node": "Close Related Ticket (if any)",
+            "node": "Queue Reply Draft on Board (RPC)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Reply Draft on Board (RPC)": {
+      "main": [
+        [
+          {
+            "node": "Route by Urgency",
             "type": "main",
             "index": 0
           }

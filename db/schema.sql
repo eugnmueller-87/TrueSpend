@@ -3,9 +3,17 @@
 -- Version: 2.0
 -- Last updated: 2026-05-27
 --
--- This is the single source of truth for the entire database.
--- Apply to Railway PostgreSQL with:
---   psql $DATABASE_URL -f db/schema.sql
+-- ⚠️  STALE — NOT the source of truth (Phase 3, ADR-007). This hand-written file
+--     predates the I-1/I-2 hardening and is missing ~50 live objects (dispatch_queue,
+--     action_ledger, the truespend_app role, 13 RPCs, RLS policies, CHECK
+--     constraints, the column-level tickets grants). DO NOT rebuild prod from it.
+--     The CANONICAL schema is the ordered migration chain in db/migrations/
+--     (run via dbmate / scripts/db-migrate.sh). This file will be REPLACED by a
+--     generated `dbmate dump` snapshot (header: "GENERATED — do not hand-edit")
+--     once the gated prod reconciliation + dump are run. Until then, treat it as
+--     historical reference only.
+--
+-- (Legacy note) Originally applied with:  psql $DATABASE_URL -f db/schema.sql
 --
 -- Covers:
 --   Core: branches, cost_centers, users, suppliers, contracts
