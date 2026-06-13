@@ -47,7 +47,7 @@ The interface is one board. It shows what needs you. The agent is silent on ever
 
 ---
 
-## The problems it destroys
+## The problems it solves
 
 **The contract expiry spreadsheet**
 A €3M renewal gets noticed 28 days out. No brief exists. The vendor account team has been preparing for six months. You walk into the negotiation blind. TrueSpend watches every contract from 18 months out, extracts every clause, calculates the real TCO, builds the negotiating position, and has the brief ready before you need it.
@@ -142,12 +142,14 @@ No Slack. One clean Operations Board. The agent is silent on everything it handl
 
 ---
 
-## Workflows (14)
+## Workflows (17)
 
 | File | Trigger | Function |
 |------|---------|----------|
 | `intake_receiver.json` | Webhook (UI or Jira) | 5-signal reasoning → auto / one-touch / escalate |
-| `supplier_reply_handler.json` | IMAP | Reads supplier email, replies directly or routes to board |
+| `chat_assistant.json` | Webhook (`/chat`) | Ask assistant — scope gate → pre-fetched DB bundle → Claude (read-only, data-only) |
+| `board_action.json` | Webhook (`/board-action`) | Server-side money/budget/user writes off the browser token (privileged JWT) |
+| `supplier_reply_handler.json` | IMAP | Reads supplier email → schema-validated guard → queues a draft to the board (no model-authored auto-send) |
 | `docusign_sign.json` | Webhook (Sign button) | DocuSign JWT Grant → embedded signing URL |
 | `docusign_callback.json` | DocuSign event | Envelope signed → ticket approved, legal doc updated |
 | `contract_watcher.json` | Daily 07:00 | Expiring contracts → auto-renew or agent brief |
@@ -159,6 +161,7 @@ No Slack. One clean Operations Board. The agent is silent on everything it handl
 | `asset_depreciation.json` | Monthly 1st 06:00 | Depreciation engine → warranty alerts → replacement tickets |
 | `llm_consumption.json` | Daily 06:30 | AI spend tracking per team/model → anomaly tickets |
 | `rag_embedder.json` | Every 6h | Legal docs → OpenAI embeddings → `document_embeddings` |
+| `dispatch_drain.json` | Scheduled | Drains the `dispatch_queue` outbox → email / ERP / Slack via SECURITY DEFINER RPCs |
 | `vps_monitor.json` | Scheduled | VPS health → alert ticket on anomaly |
 
 All workflows: 120s timeout, 3× retry, full `trace_log` per signal. Status transitions call SECURITY DEFINER RPCs — no workflow writes `tickets.status` directly.
@@ -301,7 +304,7 @@ node scripts/generate_jwt.js
 
 ### 3. n8n
 
-Import all 6 JSONs from `workflows/`. After import:
+Import all 17 JSONs from `workflows/`. After import:
 - PostgREST nodes → Header Auth "Authorization-TrueSpend"
 - Claude nodes → Header Auth with `x-api-key: $ANTHROPIC_API_KEY`
 - Email nodes → IMAP/SMTP credentials
@@ -373,19 +376,17 @@ Everything else is the agent's job.
 ```
 TrueSpend/
 ├── db/
-│   ├── schema.sql                  ← Complete schema, single source of truth
-│   ├── seed/                       ← 7 seed files (01–07, load in order)
+│   ├── migrations/                 ← Canonical schema — ordered dbmate migrations (NNNNNN_*.sql)
+│   ├── schema.sql                  ← Generated snapshot (dbmate dump) — not the source of truth
+│   ├── seed/                       ← Numbered seed files (load in order)
 │   └── templates/
 │       ├── nda_mutual_de.txt       ← Mutual NDA, German law, TrueSpend GmbH
 │       └── dpa_de.txt              ← Art. 28 GDPR DPA with TOM annex
-├── workflows/
-│   ├── stakeholder/intake_receiver.json
-│   ├── communication/supplier_reply_handler.json
-│   └── automatic/
-│       ├── contract_watcher.json
-│       ├── reorder_trigger.json
-│       ├── hyperscaler_monitor.json
-│       └── supplier_onboarding.json
+├── workflows/                      ← 17 n8n workflows (see table above)
+│   ├── stakeholder/                ← intake_receiver · chat_assistant · board_action · docusign_*
+│   ├── communication/              ← supplier_reply_handler
+│   ├── automatic/                  ← watchers, processors, depreciation, dispatch_drain, …
+│   └── lib/                        ← deterministic guards (reply_guard · invoice_guard)
 ├── intake/                         ← React + Vite + Tailwind Operations Board
 ├── infra/docker-compose.yml        ← Local n8n + Grafana
 ├── scripts/
