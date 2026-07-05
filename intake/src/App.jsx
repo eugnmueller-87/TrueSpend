@@ -173,6 +173,13 @@ const BOARD_SECTIONS = [
   { id: 'con', Icon: IconZap,     title: 'Quick confirm',      urgent: false, status: 'pending_confirm',    hint: 'Standard request — one-touch and the agent does the rest.' },
 ]
 
+// The statuses the board can actually render (one section each). The
+// `open_tickets_board` view also returns terminal/in-flight rows ('open',
+// 'approved') that have NO section — counting those but not rendering them is
+// what produced "1 item need you / Across 0 sections" with nothing to click.
+// Deriving the board set from the sections keeps the count and the rows in sync.
+const BOARD_STATUSES = new Set(BOARD_SECTIONS.map(s => s.status))
+
 // CATALOG constant removed — now fetched live from catalog_by_supplier view
 
 const FORM_CONFIG = {
@@ -1249,13 +1256,16 @@ const OperationsBoard = ({ sectionJump, onCountChange, roleGroup, user }) => {
   const load = useCallback(async () => {
     try {
       const data = await pgFetch('/open_tickets_board?order=created_at.asc')
-      let filtered = data
+      // Only rows the board has a section for. The view also returns 'open' /
+      // 'approved' tickets (see BOARD_STATUSES) which render in zero sections;
+      // including them here made the "need you" count disagree with the rows.
+      let filtered = data.filter(t => BOARD_STATUSES.has(t.status))
       // IT Manager: only IT-category tickets
-      if (isIT) filtered = data.filter(t => IT_CATEGORIES.has(t.category))
+      if (isIT) filtered = filtered.filter(t => IT_CATEGORIES.has(t.category))
       // Controlling: scoped to their own branch
-      if (isControlling && user?.branchId) filtered = data.filter(t => !t.branch_id || t.branch_id === user.branchId)
-      // Procurement Manager: scoped to their own branch (all statuses)
-      if (isProcurement && user?.branchId) filtered = data.filter(t => !t.branch_id || t.branch_id === user.branchId)
+      if (isControlling && user?.branchId) filtered = filtered.filter(t => !t.branch_id || t.branch_id === user.branchId)
+      // Procurement Manager: scoped to their own branch
+      if (isProcurement && user?.branchId) filtered = filtered.filter(t => !t.branch_id || t.branch_id === user.branchId)
       setTickets(filtered)
       onCountChange(filtered.length)
     } catch {
